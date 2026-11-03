@@ -1,0 +1,66 @@
+cmake_minimum_required(VERSION 3.22)
+
+project(GLOWTAG VERSION 0.1.0 LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
+
+# Use a local JUCE checkout if one is given (-DGLOWTAG_JUCE_DIR=/path/to/JUCE),
+# otherwise download the pinned release.
+set(GLOWTAG_JUCE_DIR "" CACHE PATH "Path to a local JUCE checkout")
+if(GLOWTAG_JUCE_DIR)
+    add_subdirectory(${GLOWTAG_JUCE_DIR} JUCE)
+else()
+    include(FetchContent)
+    FetchContent_Declare(JUCE
+        GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+        GIT_TAG 8.0.4
+        GIT_SHALLOW ON)
+    FetchContent_MakeAvailable(JUCE)
+endif()
+
+juce_add_gui_app(Glowtag
+    PRODUCT_NAME "GLOWTAG"
+    COMPANY_NAME "Jack Millar"
+    BUNDLE_ID "com.jackmillar.glowtag"
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT "GLOWTAG uses audio input to record and sample.")
+
+target_sources(Glowtag PRIVATE
+    Source/Main.cpp
+    Source/MainComponent.cpp
+    Source/Theme.cpp
+    Source/Engine/AudioEngine.cpp
+    Source/Engine/Project.cpp
+    Source/UI/GlowLookAndFeel.cpp
+    Source/UI/Icons.cpp
+    Source/UI/TopBar.cpp
+    Source/UI/BrowserPanel.cpp
+    Source/UI/TrackList.cpp
+    Source/UI/ArrangerView.cpp
+    Source/UI/DevicePanel.cpp
+    Source/UI/StatusBar.cpp
+    Source/UI/MixerView.cpp
+    Source/UI/EditorView.cpp)
+
+target_include_directories(Glowtag PRIVATE Source)
+
+target_compile_definitions(Glowtag PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:Glowtag,JUCE_PRODUCT_NAME>"
+    JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:Glowtag,JUCE_VERSION>")
+
+target_link_libraries(Glowtag
+    PRIVATE
+        juce::juce_audio_utils
+        juce::juce_audio_devices
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_dsp
+        juce::juce_gui_extra
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags)
