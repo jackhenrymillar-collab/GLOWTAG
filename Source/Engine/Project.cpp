@@ -40,6 +40,29 @@ Project::Project()
         t->sound = d.sound;
         t->clips = d.clips;
         t->steps = patternFromString (d.pat);
+
+        // Starting patch for each kind of track; every module wires itself in as it is added
+        auto& p = t->patch;
+        switch (d.kind)
+        {
+            case TrackKind::Sampler:
+                for (auto m : { ModuleType::Sampler, ModuleType::Filter, ModuleType::LFO, ModuleType::Delay, ModuleType::EQ })
+                    p.add (m);
+                break;
+            case TrackKind::Midi:
+                for (auto m : { ModuleType::Synth, ModuleType::Filter, ModuleType::LFO, ModuleType::Reverb })
+                    p.add (m);
+                break;
+            case TrackKind::Audio:
+                for (auto m : { ModuleType::Drums, ModuleType::Compressor, ModuleType::EQ })
+                    p.add (m);
+                break;
+            case TrackKind::Automation:
+                for (auto m : { ModuleType::Filter, ModuleType::LFO })
+                    p.add (m);
+                break;
+        }
+        p.tidy();
         tracks.push_back (std::move (t));
     }
 }

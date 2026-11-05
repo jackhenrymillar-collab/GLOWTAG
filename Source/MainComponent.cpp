@@ -12,6 +12,7 @@ MainComponent::MainComponent()
     topBar.onPlayStop = [this] { togglePlay(); };
     topBar.onCommandPalette = [this] { showCommandPalette(); };
     arranger.onOpenEditor = [this] { setMode (Mode::Edit); };
+    browser.onAddDevice = [this] (ModuleType t) { if (mode == Mode::Mix) setMode (Mode::Arrange); devices.addModule (t); };
 
     Theme::get().addChangeListener (this);
     ctx.addChangeListener (this);
@@ -154,7 +155,7 @@ void MainComponent::resized()
     switch (mode)
     {
         case Mode::Arrange:
-            devices.setBounds (r.removeFromBottom (236));
+            devices.setBounds (r.removeFromBottom (276));
             trackList.setBounds (r.removeFromLeft (210));
             arranger.setBounds (r);
             break;
@@ -162,7 +163,7 @@ void MainComponent::resized()
             mixer.setBounds (r);
             break;
         case Mode::Edit:
-            devices.setBounds (r.removeFromBottom (236));
+            devices.setBounds (r.removeFromBottom (276));
             editor.setBounds (r);
             break;
     }

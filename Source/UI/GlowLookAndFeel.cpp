@@ -31,6 +31,8 @@ void GlowLookAndFeel::refreshColours()
     setColour (juce::TextEditor::backgroundColourId, th.display);
     setColour (juce::TextEditor::outlineColourId, th.line);
     setColour (juce::TextEditor::textColourId, th.text);
+    setColour (juce::ScrollBar::thumbColourId, th.line.brighter (0.15f));
+    setColour (juce::ScrollBar::trackColourId, juce::Colours::transparentBlack);
 }
 
 void GlowLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&,

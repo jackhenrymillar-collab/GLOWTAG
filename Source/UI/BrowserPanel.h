@@ -15,6 +15,10 @@ public:
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+
+    // Double-clicking a device adds it to the selected track, wired in automatically
+    std::function<void (ModuleType)> onAddDevice;
 
     struct Item { juce::String name, detail; Icon icon; Pal pal; };
 
