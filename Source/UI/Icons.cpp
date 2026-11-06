@@ -116,6 +116,16 @@ namespace
                 { circle (32, 32, 17) },
                 { circle (32, 32, 9), 0.6f },
                 { circle (32, 32, 3.5f), 1.0f, true } };
+            case Icon::Loop: return {
+                { svg ("M14 34a18 18 0 0 1 30-14l4 4") },
+                { svg ("M50 30a18 18 0 0 1-30 14l-4-4") },
+                { svg ("M48 14v10h-10M16 50V40h10"), 0.8f },
+                { circle (32, 32, 3), 0.5f, true } };
+            case Icon::Metronome: return {
+                { svg ("M24 10h16l10 44H14z") },
+                { svg ("M32 46l12-30"), 0.9f },
+                { circle (40, 26, 3.5f), 0.6f, true },
+                { svg ("M18 44h28"), 0.45f } };
         }
         return {};
     }

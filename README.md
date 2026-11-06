@@ -31,21 +31,47 @@ If you already have JUCE checked out, add `-DGLOWTAG_JUCE_DIR=/path/to/JUCE` to 
 
 | Key | Action |
 | --- | --- |
-| Space | Play / stop |
+| Space | Play / stop. Stop returns to where play started; stop again to go to the start |
+| A W S E D F T G Y H U J K O L P | Play notes on the selected track (Z and X change octave) |
+| R | Arm recording. Notes you play while playing are recorded into the selected track |
+| Delete | Delete the selected clip (Arrange) or note (Edit) |
+| Cmd D | Duplicate the selected clip |
 | 1 / 2 / 3 | Arrange / Mix / Edit |
 | Cmd K | Command palette (views, transport, theme) |
 | Up / Down | Select track |
 
-- Drag the tempo in the LCD up or down to change BPM.
-- Click a theme swatch to change the colour, or turn on Rainbow.
-- In Edit, click the piano roll with the pencil to add or remove notes. The beat changes live.
-- Double-click the arranger to open the selected track in Edit.
-- The device panel is modular. Each module you add wires itself in (effects go at the end of the
-  chain, an LFO patches into the last module's first free knob). Drag between jacks to patch,
-  pull a plugged-in jack to re-wire it, double-click a cable to remove it, drag a module's header
-  to move it, and right-click a module to remove it. Double-click a device in the browser to add it.
-  Tidy lines everything up in signal order.
-- Mixer faders, pan knobs and mute / solo all affect the sound.
+Any MIDI keyboard that is plugged in plays and records into the selected track too.
+
+**Arrange**
+- Click the ruler to move the playhead. Drag along the strip under the bar numbers to set the loop, and toggle looping with the loop button in the top bar.
+- Drag clips to move them (between lanes too), drag their right edge to resize, Alt-drag to copy, and right-click for duplicate, delete and loop length.
+- Double-click an empty lane to make a new clip, or a clip to open it in Edit.
+- Drop audio files (wav, aiff, flac, mp3) onto a lane to make audio clips.
+- Cmd + scroll zooms, scroll moves along the timeline.
+
+**Edit** (piano roll for the selected clip)
+- Pencil: click to draw a note and drag right to set its length. Drag notes to move them, drag the right edge to resize.
+- Scissors split a note, the velocity tool drags velocity, and the lane under the grid sets velocity per column.
+- Double-click a note (or press Delete) to remove it. Scroll moves up and down the keyboard.
+- Loop sets how often the clip's notes repeat inside it.
+
+**Devices** (bottom panel) is modular. Each module you add wires itself in (effects go at the end of the
+chain, an LFO patches into the last module's first free knob). Drag between jacks to patch,
+pull a plugged-in jack to re-wire it, double-click a cable to remove it, drag a module's header
+to move it, and right-click a module to remove it. Double-click a device in the browser to add it.
+Tidy lines everything up in signal order.
+
+**Mix**: faders, pan knobs and mute / solo all affect the sound.
+
+## Tests
+
+Offline checks for the engine (transport, loop, clips, live MIDI, recording, patching):
+
+```sh
+cmake -B build -G Xcode -DGLOWTAG_TESTS=ON
+cmake --build build --target GlowtagTests --config Debug
+./build/GlowtagTests_artefacts/Debug/GlowtagTests
+```
 
 ## Code layout
 
@@ -67,7 +93,7 @@ Source/
 
 ## Roadmap
 
-1. **Foundation** (this version): app shell, audio engine, themed UI with Arrange, Mix and Edit.
-2. **Core engine**: real transport and timeline, MIDI and audio clips, MIDI keyboard recording.
+1. **Foundation** (done): app shell, audio engine, themed UI with Arrange, Mix and Edit.
+2. **Core engine** (this version): timeline with MIDI and audio clips, loop, metronome, piano roll editing, MIDI keyboard playing and recording.
 3. **Sampling and devices**: sampler and chopper, drum machine, synth, effects, a working device chain.
 4. **Mix, Edit and polish**: full mixer routing, full piano roll, AU / VST hosting, saving projects.

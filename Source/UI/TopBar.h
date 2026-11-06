@@ -28,6 +28,8 @@ private:
     IconButton playButton { "Play", Icon::Play, Pal::Green };
     IconButton stopButton { "Stop", Icon::Stop, Pal::Sky };
     IconButton recButton  { "Record", Icon::Record, Pal::Rose };
+    IconButton loopButton { "Loop", Icon::Loop, Pal::Gold };
+    IconButton metroButton { "Metronome", Icon::Metronome, Pal::Sky };
     juce::TextButton rainbowButton { "Rainbow" };
     juce::TextButton commandButton { "Cmd K" };
 

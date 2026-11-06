@@ -1,24 +1,56 @@
 #pragma once
 
-#include <juce_core/juce_core.h>
+#include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
-#include <array>
+#include <memory>
 #include <vector>
 #include "Patch.h"
 
-// Built-in sounds the demo engine can play until the real instruments land.
-enum class Sound { Kick, Snare, Hat, Clap, Chop, Bass, Keys, Silent };
+// Built-in sounds the engine plays until the real instruments arrive in step 3.
+enum class Sound { Kick, Snare, Hat, Clap, Perc, Chop, Bass, Keys, Pad, Silent };
 
 enum class TrackKind { Audio, Sampler, Midi, Automation };
 
-struct Clip
+// Times are in beats (quarter notes). The project is in 4/4.
+constexpr double beatsPerBar = 4.0;
+
+struct Note
 {
-    int startBar = 0;
-    int lengthBars = 4;
-    juce::String name;
+    double start = 0.0;     // beats from the start of the clip's loop
+    double length = 0.25;   // beats
+    int pitch = 60;
+    float velocity = 0.8f;
 };
 
-// One track. Fields the audio thread reads are atomics so the UI can change them live.
+// A decoded audio file plus a small overview for drawing its waveform
+struct AudioData
+{
+    juce::AudioBuffer<float> buffer;
+    double sampleRate = 44100.0;
+    juce::String fileName;
+    std::vector<float> peaks;  // 0..1, evenly spaced across the file
+
+    double lengthSeconds() const { return buffer.getNumSamples() / sampleRate; }
+    static std::shared_ptr<const AudioData> load (const juce::File&);
+};
+
+enum class ClipKind { Midi, Audio };
+
+struct Clip
+{
+    double start = 0.0;       // beats on the timeline
+    double length = 16.0;     // beats
+    double loopLength = 4.0;  // MIDI content repeats every loopLength beats
+    juce::String name;
+    ClipKind kind = ClipKind::Midi;
+    std::vector<Note> notes;
+    std::shared_ptr<const AudioData> audio;
+
+    double end() const { return start + length; }
+};
+
+// One track. Mixer fields are atomics so the UI can change them live.
+// Clips are edited on the message thread while holding Project::lock; the audio thread reads them under it.
 struct Track
 {
     juce::String name;
@@ -26,16 +58,15 @@ struct Track
     int colourIndex = 0;           // index into the theme palette (see Pal)
     Sound sound = Sound::Silent;
     std::vector<Clip> clips;
-    Patch patch;                   // modular device chain (edited on the message thread)
+    Patch patch;                   // modular device patch (message thread only for now)
 
-    std::atomic<uint16_t> steps { 0 }; // 16-step pattern, bit n = step n
     std::atomic<bool> muted { false };
     std::atomic<bool> soloed { false };
     std::atomic<float> volume { 0.8f }; // linear gain
     std::atomic<float> pan { 0.0f };    // -1 .. 1
     std::atomic<float> meter { 0.0f };  // peak level written by the audio thread
 
-    bool stepOn (int step) const { return (steps.load() >> step) & 1u; }
+    int clipAt (double beat) const;     // index or -1
 };
 
 class Project
@@ -43,13 +74,13 @@ class Project
 public:
     Project();
 
-    static constexpr int numBars = 16;
-    static constexpr int stepsPerBar = 16;
+    static constexpr int lengthBars = 64;
 
     std::vector<std::unique_ptr<Track>> tracks;
     std::atomic<double> bpm { 124.0 };
 
-    bool isAudible (int trackIndex) const;
+    // Guards every track's clips. Hold it briefly on the message thread when changing clips.
+    juce::SpinLock lock;
 
-    static uint16_t patternFromString (const char* sixteenChars);
+    bool isAudible (int trackIndex) const;
 };
