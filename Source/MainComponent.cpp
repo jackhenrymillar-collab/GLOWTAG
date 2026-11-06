@@ -13,6 +13,7 @@ MainComponent::MainComponent()
     topBar.onCommandPalette = [this] { showCommandPalette(); };
     arranger.onOpenEditor = [this] { setMode (Mode::Edit); };
     browser.onAddDevice = [this] (ModuleType t) { if (mode == Mode::Mix) setMode (Mode::Arrange); devices.addModule (t); };
+    browser.onLoadSample = [this] (const juce::String& name) { if (mode == Mode::Mix) setMode (Mode::Arrange); devices.loadSample (name); };
 
     Theme::get().addChangeListener (this);
     ctx.addChangeListener (this);

@@ -2,14 +2,16 @@
 
 #include <juce_audio_devices/juce_audio_devices.h>
 #include "Project.h"
+#include "Graph.h"
+#include <map>
 
-// Plays the arrangement: MIDI clips trigger the built-in voices sample-accurately,
-// audio clips stream their files, and incoming MIDI plays (and can record into) the
-// selected track. Transport: play from anywhere, loop region, metronome.
+// Plays the arrangement through each track's modular patch: MIDI clips and live MIDI drive the
+// instruments in the patch, audio clips enter at Track In, and the patch output goes to the mixer.
+// Transport: play from anywhere, loop region, metronome, recording of live notes.
 class AudioEngine : public juce::AudioSource
 {
 public:
-    explicit AudioEngine (Project& p) : project (p) { midiInput.reset (44100.0); }
+    explicit AudioEngine (Project& p);
 
     void prepareToPlay (int samplesPerBlockExpected, double sampleRate) override;
     void releaseResources() override {}
@@ -31,7 +33,15 @@ public:
     // Live MIDI from hardware inputs and the computer keyboard
     juce::MidiMessageCollector midiInput;
 
-    // Loudness of the last kick, for the music-reactive glow (0..1)
+    // Patches (message thread). Call rebuildTrack after changing a track's modules or cables;
+    // knob turns go straight to the running graph through setKnob.
+    void rebuildTrack (int track);
+    void rebuildAll();
+    void setKnob (int track, int moduleId, int knob, float value);
+    Node* liveNode (int track, int moduleId);          // for UI readouts; may be null
+    std::shared_ptr<const AudioData> resolveSample (const juce::String& nameOrPath);
+
+    // Loudness of the last kick-ish hit, for the music-reactive glow (0..1)
     float getPulse() const { return pulse.load(); }
 
     // Notes played while recording, read back on the message thread
@@ -39,46 +49,37 @@ public:
     int readRecorded (RecordedEvent* dest, int max);
 
 private:
-    struct Voice
+    struct TrackSlot
     {
-        bool active = false;
-        Sound sound = Sound::Silent;
-        int track = 0;
-        int pitch = 60;
-        float velocity = 1.0f;
-        double t = 0.0;
-        double phase = 0.0, phase2 = 0.0;
-        float freq = 0.0f;
-        float lp = 0.0f;
-        float prevNoise = 0.0f;
-        double gateSamples = 0.0;     // samples until release; < 0 = held (live note)
-        bool releasing = false;
-        float env = 0.0f;
-        bool click = false;           // metronome tick
-        bool accent = false;
+        juce::SpinLock lock;
+        std::shared_ptr<Graph> current;     // used by the audio thread
+        std::shared_ptr<Graph> pending;     // built on the message thread, picked up at the next block
+        std::shared_ptr<Graph> retired;     // dropped by the audio thread, freed on the message thread
+        std::shared_ptr<Graph> ui;          // the message thread's handle for knob changes
+        juce::AudioBuffer<float> input, output;
     };
 
     struct Event { int offset; int track; int pitch; float velocity; double lengthBeats; bool click; bool accent; };
+    struct Click { bool active = false; double phase = 0.0; float t = 0.0f; bool accent = false; };
 
-    void startVoice (const Event&);
-    void releaseLiveNote (int track, int pitch);
-    float renderVoice (Voice& v);
-    void mixAudioClips (juce::AudioBuffer<float>&, int startSample, int numSamples, double startBeat, double beatsPerSample,
-                        std::array<float, 32>& peaks);
+    void renderAudioClips (TrackSlot&, Track&, int offset, int numSamples, double startBeat, double beatsPerSample);
+    void pushRecorded (const RecordedEvent&);
 
     Project& project;
     double sr = 44100.0;
+    int blockSize = 512;
+    std::vector<std::unique_ptr<TrackSlot>> slots;
+    std::map<juce::String, std::shared_ptr<const AudioData>> fileCache;
+
     std::atomic<bool> playing { false };
     std::atomic<double> position { 0.0 };
     std::atomic<double> requestedPosition { -1.0 };
     double playStartPosition = 0.0;
     std::atomic<float> pulse { 0.0f };
-    std::array<Voice, 96> voices {};
     std::vector<Event> events;
+    std::array<Click, 4> clicks;
     juce::MidiBuffer liveMidi;
-    juce::Random random;
 
     juce::AbstractFifo recordFifo { 1024 };
     std::array<RecordedEvent, 1024> recordBuffer {};
-    void pushRecorded (const RecordedEvent&);
 };

@@ -7,7 +7,8 @@
 // A track's modular device patch: modules joined by audio and modulation cables.
 // New modules wire themselves in automatically; any cable can be re-patched by hand.
 
-enum class ModuleType { Input, Output, Sampler, Synth, Drums, Filter, Delay, Reverb, EQ, Compressor, LFO };
+enum class ModuleType { Input, Output, Sampler, Synth, Drums, Filter, Drive, Delay, Reverb, EQ, Compressor, LFO };
+constexpr int numModuleTypes = 12;
 
 // Jacks on a module
 namespace Port
@@ -39,6 +40,8 @@ struct Module
     ModuleType type = ModuleType::Filter;
     juce::Point<float> position;                      // top-left on the patch canvas
     std::vector<float> knobValues;
+    juce::String sampleName;                          // Sampler: built-in sample name, or a file path
+    std::array<juce::String, 16> padNames;            // Drum Rack: sample per pad
 };
 
 struct Cable
@@ -65,6 +68,7 @@ public:
     // Add a module and wire it in: audio modules go at the end of the chain (just before
     // the output); an LFO patches into the first free knob of the last module in the chain.
     int add (ModuleType);
+    int addAt (ModuleType, juce::Point<float>);
 
     // Remove a module, joining its neighbours back up so the sound keeps flowing.
     void remove (int id);

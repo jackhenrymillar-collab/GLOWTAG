@@ -34,6 +34,8 @@ target_sources(Glowtag PRIVATE
     Source/Engine/AudioEngine.cpp
     Source/Engine/Project.cpp
     Source/Engine/Patch.cpp
+    Source/Engine/Graph.cpp
+    Source/Engine/Samples.cpp
     Source/UI/GlowLookAndFeel.cpp
     Source/UI/Icons.cpp
     Source/UI/TopBar.cpp
@@ -74,7 +76,9 @@ if(GLOWTAG_TESTS)
         Tests/EngineTests.cpp
         Source/Engine/AudioEngine.cpp
         Source/Engine/Project.cpp
-        Source/Engine/Patch.cpp)
+        Source/Engine/Patch.cpp
+        Source/Engine/Graph.cpp
+        Source/Engine/Samples.cpp)
     target_include_directories(GlowtagTests PRIVATE Source)
     target_compile_definitions(GlowtagTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
     target_link_libraries(GlowtagTests PRIVATE

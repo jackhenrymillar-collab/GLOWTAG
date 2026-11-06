@@ -1,4 +1,5 @@
 #include "BrowserPanel.h"
+#include "../Engine/Samples.h"
 
 namespace
 {
@@ -11,23 +12,21 @@ namespace
         { "Reverb",     "Rooms to halls",         Icon::Reverb,     Pal::Ice },
         { "EQ",         "Four-band parametric",   Icon::EQ,         Pal::Gold },
         { "Compressor", "Glue and punch",         Icon::Compressor, Pal::Green },
+        { "Drive",      "Tube, tape, fuzz, fold", Icon::Drive,      Pal::Amber },
         { "LFO",        "Modulate any knob",      Icon::LFO,        Pal::Violet },
     };
 
     const ModuleType deviceTypes[] = { ModuleType::Sampler, ModuleType::Synth, ModuleType::Drums, ModuleType::Filter,
                                        ModuleType::Delay, ModuleType::Reverb, ModuleType::EQ, ModuleType::Compressor,
-                                       ModuleType::LFO };
+                                       ModuleType::Drive, ModuleType::LFO };
 
-    const std::vector<BrowserPanel::Item> samples = {
-        { "Kick Tight 01",  "Drums / 0.4 s",  Icon::Drums,   Pal::Rose },
-        { "Snare Crack",    "Drums / 0.3 s",  Icon::Drums,   Pal::Green },
-        { "Hat Closed 04",  "Drums / 0.1 s",  Icon::Drums,   Pal::Sky },
-        { "Clap Stack",     "Drums / 0.5 s",  Icon::Drums,   Pal::Gold },
-        { "Vox Hook Am",    "Vocals / 2 bars", Icon::Sampler, Pal::Violet },
-        { "Soul Chop 92",   "Loops / 4 bars",  Icon::Sampler, Pal::Amber },
-        { "Sub Drop",       "FX / 1.2 s",     Icon::Synth,   Pal::Blue },
-        { "Vinyl Crackle",  "Texture / 8 s",  Icon::Sampler, Pal::Ice },
-    };
+    Pal palForCategory (const juce::String& c)
+    {
+        if (c == "Drums") return Pal::Amber;
+        if (c == "Vocals") return Pal::Violet;
+        if (c == "FX") return Pal::Sky;
+        return Pal::Ice;
+    }
 
     const std::vector<BrowserPanel::Item> presets = {
         { "Neon Keys",      "Synth",      Icon::Synth,   Pal::Blue },
@@ -57,7 +56,15 @@ BrowserPanel::BrowserPanel (AppContext& c) : ctx (c)
 
 const std::vector<BrowserPanel::Item>& BrowserPanel::items() const
 {
-    return tab == 0 ? samples : (tab == 1 ? devices : presets);
+    if (tab == 0)
+    {
+        if (sampleItems.empty())
+            for (auto& e : Samples::bank())
+                sampleItems.push_back ({ e.name, e.category + " / " + juce::String (e.data->lengthSeconds(), 2) + " s",
+                                         e.category == "Drums" ? Icon::Drums : Icon::Sampler, palForCategory (e.category) });
+        return sampleItems;
+    }
+    return tab == 1 ? devices : presets;
 }
 
 void BrowserPanel::resized()
@@ -74,8 +81,8 @@ void BrowserPanel::resized()
 
 juce::Rectangle<int> BrowserPanel::itemBounds (int index) const
 {
-    const int h = tab == 1 ? 60 : 44;
-    return { listArea.getX(), listArea.getY() + index * (h + 8), listArea.getWidth(), h };
+    const int h = tab == 1 ? 54 : 34;
+    return { listArea.getX(), listArea.getY() + index * (h + (tab == 1 ? 6 : 4)), listArea.getWidth(), h };
 }
 
 int BrowserPanel::itemAt (juce::Point<int> p) const
@@ -109,6 +116,8 @@ void BrowserPanel::mouseDoubleClick (const juce::MouseEvent& e)
     const int i = itemAt (e.getPosition());
     if (tab == 1 && i >= 0 && i < (int) std::size (deviceTypes) && onAddDevice)
         onAddDevice (deviceTypes[i]);
+    else if (tab == 0 && i >= 0 && onLoadSample)
+        onLoadSample (items()[(size_t) i].name);
 }
 
 void BrowserPanel::paint (juce::Graphics& g)
@@ -155,13 +164,13 @@ void BrowserPanel::paint (juce::Graphics& g)
             g.fillRoundedRectangle (r, 8.0f);
             g.setColour (lit ? c.withAlpha (0.7f) : th.line2);
             g.drawRoundedRectangle (r.reduced (0.5f), 8.0f, 1.0f);
-            Glow::drawIcon (g, it.icon, r.removeFromLeft (44.0f).reduced (11.0f), c);
+            Glow::drawIcon (g, it.icon, r.removeFromLeft (34.0f).reduced (8.0f), c);
             g.setColour (th.text);
-            g.setFont (th.body (13.0f));
-            g.drawText (it.name, r.removeFromTop (r.getHeight() * 0.55f).toNearestInt(), juce::Justification::bottomLeft);
+            g.setFont (th.body (12.5f));
+            g.drawText (it.name, r.withTrimmedRight (90).toNearestInt(), juce::Justification::centredLeft);
             g.setColour (th.muted);
-            g.setFont (th.label (9.5f));
-            g.drawText (it.detail.toUpperCase(), r.toNearestInt(), juce::Justification::topLeft);
+            g.setFont (th.label (8.5f));
+            g.drawText (it.detail.toUpperCase(), r.withTrimmedRight (8).toNearestInt(), juce::Justification::centredRight);
         }
     }
 }

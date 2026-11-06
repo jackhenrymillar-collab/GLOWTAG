@@ -55,7 +55,12 @@ Any MIDI keyboard that is plugged in plays and records into the selected track t
 - Double-click a note (or press Delete) to remove it. Scroll moves up and down the keyboard.
 - Loop sets how often the clip's notes repeat inside it.
 
-**Devices** (bottom panel) is modular. Each module you add wires itself in (effects go at the end of the
+**Devices** (bottom panel) is a modular patch that really runs the sound. Instruments are virtual
+analog: the Synth has two drifting band-limited oscillators and a sub through a transistor ladder
+filter with analog-curve envelopes, the Sampler plays built-in or dropped samples, and the Drum Rack
+has sixteen pads (click to hear, right-click to choose a sample, drop a file on a pad). Effects:
+Filter (ladder), Drive (tube / tape / fuzz / fold), Delay (tempo-synced, ping-pong), Reverb, EQ,
+Compressor, and an LFO that can modulate any knob. The panel is modular. Each module you add wires itself in (effects go at the end of the
 chain, an LFO patches into the last module's first free knob). Drag between jacks to patch,
 pull a plugged-in jack to re-wire it, double-click a cable to remove it, drag a module's header
 to move it, and right-click a module to remove it. Double-click a device in the browser to add it.
@@ -94,6 +99,7 @@ Source/
 ## Roadmap
 
 1. **Foundation** (done): app shell, audio engine, themed UI with Arrange, Mix and Edit.
-2. **Core engine** (this version): timeline with MIDI and audio clips, loop, metronome, piano roll editing, MIDI keyboard playing and recording.
-3. **Sampling and devices**: sampler and chopper, drum machine, synth, effects, a working device chain.
+2. **Core engine** (done): timeline with MIDI and audio clips, loop, metronome, piano roll editing, MIDI keyboard playing and recording.
+3. **Sounds and devices** (this version): virtual analog synth, sampler, drum rack and effects running through the modular patch.
+3b. **Eurorack rolling sequencer**: a per-track alternative to clips, with module-style visuals (next).
 4. **Mix, Edit and polish**: full mixer routing, full piano roll, AU / VST hosting, saving projects.

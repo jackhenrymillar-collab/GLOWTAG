@@ -121,6 +121,13 @@ namespace
                 { svg ("M50 30a18 18 0 0 1-30 14l-4-4") },
                 { svg ("M48 14v10h-10M16 50V40h10"), 0.8f },
                 { circle (32, 32, 3), 0.5f, true } };
+            case Icon::Drive: return {
+                { svg ("M22 54V22a10 10 0 0 1 20 0v32") },
+                { svg ("M22 54h20"), 0.8f },
+                { svg ("M28 46V26M36 46V26"), 0.5f },
+                { circle (32, 18, 3), 0.5f, true },
+                { svg ("M10 30c4 2 4 6 0 8M54 30c-4 2-4 6 0 8"), 0.6f },
+                { svg ("M12 58h40"), 0.4f } };
             case Icon::Metronome: return {
                 { svg ("M24 10h16l10 44H14z") },
                 { svg ("M32 46l12-30"), 0.9f },
