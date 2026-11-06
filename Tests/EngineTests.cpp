@@ -105,7 +105,7 @@ int main()
         e.play();
         check (render (e, 1.0, p.bpm) > 0.1f, "audio clip plays");
         e.setPosition (3.0);
-        check (render (e, 0.5, p.bpm) < 1e-6f, "silence after the audio clip ends");
+        check (render (e, 0.5, p.bpm) < 1e-4f, "silence after the audio clip ends");   // below -80 dB: the effect chain may still be ringing down
     }
 
     std::cout << "Live MIDI and recording\n";

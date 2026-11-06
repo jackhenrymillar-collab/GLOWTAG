@@ -27,6 +27,17 @@ open build/Glowtag_artefacts/Release/GLOWTAG.app
 
 If you already have JUCE checked out, add `-DGLOWTAG_JUCE_DIR=/path/to/JUCE` to the first command.
 
+Without the Xcode app, Apple's Command Line Tools are enough (`xcode-select --install`):
+
+```sh
+cmake -B build -DCMAKE_BUILD_TYPE=Release    # plain Makefiles instead of -G Xcode
+cmake --build build -j
+open build/Glowtag_artefacts/GLOWTAG.app
+```
+
+If CMake complains about the SDK, point it at the one your tools ship, e.g.
+`SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk cmake -B build ...`.
+
 ## Using it
 
 | Key | Action |

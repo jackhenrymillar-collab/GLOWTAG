@@ -185,7 +185,6 @@ private:
     std::array<int, 4> held { -1, -1, -1, -1 };
     int nextVoice = 0;
     int lastPitch = 60;
-    float heldPitchCv = 0.0f;
     int sustainTicks = 0;
 };
 

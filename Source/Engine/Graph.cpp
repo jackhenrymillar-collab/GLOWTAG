@@ -328,15 +328,15 @@ namespace
     struct DelayNode : public Node
     {
         enum { Time, Feedback, Tone, Mix };
-        std::vector<float> bufL, bufR;
+        std::vector<float> lineL, lineR;
         int write = 0;
         OnePole toneL, toneR;
         float smoothedDelay = 0.0f;
 
         DelayNode (const Module& m, double sampleRate) : Node (m, sampleRate)
         {
-            bufL.assign ((size_t) (sr * 4.0), 0.0f);
-            bufR.assign ((size_t) (sr * 4.0), 0.0f);
+            lineL.assign ((size_t) (sr * 4.0), 0.0f);
+            lineR.assign ((size_t) (sr * 4.0), 0.0f);
             toneL.prepare (sr); toneR.prepare (sr);
         }
 
@@ -353,7 +353,7 @@ namespace
         {
             static const float divisions[] = { 0.25f, 1.0f / 3.0f, 0.5f, 0.75f, 1.0f, 1.5f, 2.0f };
             const float beats = divisions[juce::jlimit (0, 6, (int) (k (Time) * 6.999f))];
-            const float target = juce::jmin ((float) bufL.size() - 2.0f, beats * 60.0f / (float) bpm * (float) sr);
+            const float target = juce::jmin ((float) lineL.size() - 2.0f, beats * 60.0f / (float) bpm * (float) sr);
             const float fb = k (Feedback) * 0.95f, mix = k (Mix);
             toneL.setLowpass (expMap (k (Tone), 800.0f, 16000.0f));
             toneR.a = toneL.a;
@@ -362,10 +362,10 @@ namespace
             for (int i = 0; i < n; ++i)
             {
                 smoothedDelay += (target - smoothedDelay) * 0.0005f;     // glides like a tape head moving
-                const float dl = read (bufL, smoothedDelay), dr = read (bufR, smoothedDelay);
-                bufL[(size_t) write] = fastTanh (l[i] + toneL.lowpass (dr) * fb);   // ping-pong cross feedback
-                bufR[(size_t) write] = fastTanh (r[i] + toneR.lowpass (dl) * fb);
-                write = (write + 1) % (int) bufL.size();
+                const float dl = read (lineL, smoothedDelay), dr = read (lineR, smoothedDelay);
+                lineL[(size_t) write] = fastTanh (l[i] + toneL.lowpass (dr) * fb);   // ping-pong cross feedback
+                lineR[(size_t) write] = fastTanh (r[i] + toneR.lowpass (dl) * fb);
+                write = (write + 1) % (int) lineL.size();
                 l[i] += dl * mix;
                 r[i] += dr * mix;
             }
