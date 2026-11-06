@@ -65,3 +65,19 @@ target_link_libraries(Glowtag
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+# Offline engine checks: cmake -DGLOWTAG_TESTS=ON, then run GlowtagTests
+option(GLOWTAG_TESTS "Build the engine tests" OFF)
+if(GLOWTAG_TESTS)
+    juce_add_console_app(GlowtagTests PRODUCT_NAME "GlowtagTests")
+    target_sources(GlowtagTests PRIVATE
+        Tests/EngineTests.cpp
+        Source/Engine/AudioEngine.cpp
+        Source/Engine/Project.cpp
+        Source/Engine/Patch.cpp)
+    target_include_directories(GlowtagTests PRIVATE Source)
+    target_compile_definitions(GlowtagTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries(GlowtagTests PRIVATE
+        juce::juce_audio_devices juce::juce_audio_formats juce::juce_audio_utils
+        PUBLIC juce::juce_recommended_config_flags)
+endif()

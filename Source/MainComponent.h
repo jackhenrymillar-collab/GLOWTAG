@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_utils/juce_audio_utils.h>
+#include <map>
 #include "Engine/Project.h"
 #include "Engine/AudioEngine.h"
 #include "UI/AppContext.h"
@@ -30,6 +31,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
+    bool keyStateChanged (bool isKeyDown) override;
 
     enum class Mode { Arrange, Mix, Edit };
     void setMode (Mode);
@@ -39,6 +41,20 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void togglePlay();
     void showCommandPalette();
+    void enableMidiInputs();
+    void drainRecording();
+    void addRecordedNote (int pitch, double start, double length, float velocity);
+    void sendLiveNote (int pitch, bool on);
+    static void stopKeyboardFocus (juce::Component&);
+
+    // Computer keyboard as a piano: A W S E D F T G Y H U J K O L P
+    static int keyToSemitone (juce::juce_wchar);
+    std::map<juce::juce_wchar, int> heldKeys;    // key -> note playing
+    int keyboardOctave = 5;                      // C5 = MIDI 60 on the A key
+
+    std::map<int, std::pair<double, float>> recordingHeld;   // pitch -> start beat, velocity
+    int takeCount = 0;
+    int midiInputCount = 0;
 
     Project project;
     AudioEngine engine { project };

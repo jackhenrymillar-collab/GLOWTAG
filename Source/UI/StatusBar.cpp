@@ -24,5 +24,5 @@ void StatusBar::paint (juce::Graphics& g)
     g.setColour (th.muted);
     g.setFont (th.label (9.5f));
     g.drawText (info, r, juce::Justification::centredLeft);
-    g.drawText ("SPACE  PLAY / STOP     1 2 3  VIEWS     CMD K  COMMANDS", r, juce::Justification::centredRight);
+    g.drawText ("SPACE  PLAY     A-K  PLAY NOTES     Z X  OCTAVE     R  RECORD     1 2 3  VIEWS     CMD K  COMMANDS", r, juce::Justification::centredRight);
 }

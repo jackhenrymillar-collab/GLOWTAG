@@ -16,9 +16,19 @@ TopBar::TopBar (AppContext& c) : ctx (c)
     modeButtons[0].setToggleState (true, juce::dontSendNotification);
 
     playButton.onClick = [this] { if (onPlayStop) onPlayStop(); };
+    playButton.setTooltip ("Play / stop (Space)");
     stopButton.onClick = [this] { ctx.engine.stop(); };
+    stopButton.setTooltip ("Stop. Press again to go back to the start");
     recButton.setClickingTogglesState (true);
-    for (auto* b : { &playButton, &stopButton, &recButton })
+    recButton.setTooltip ("Record: play notes on a MIDI keyboard (or the A-K keys) while playing");
+    recButton.onClick = [this] { ctx.engine.recordArmed = recButton.getToggleState(); };
+    loopButton.setClickingTogglesState (true);
+    loopButton.setTooltip ("Loop the region marked on the ruler");
+    loopButton.onClick = [this] { ctx.engine.looping = loopButton.getToggleState(); };
+    metroButton.setClickingTogglesState (true);
+    metroButton.setTooltip ("Metronome");
+    metroButton.onClick = [this] { ctx.engine.metronome = metroButton.getToggleState(); };
+    for (auto* b : { &playButton, &stopButton, &recButton, &loopButton, &metroButton })
         addAndMakeVisible (*b);
 
     rainbowButton.setClickingTogglesState (true);
@@ -39,6 +49,11 @@ void TopBar::setMode (int mode)
 void TopBar::tick()
 {
     playButton.setToggleState (ctx.engine.isPlaying(), juce::dontSendNotification);
+    recButton.setToggleState (ctx.engine.recordArmed.load(), juce::dontSendNotification);
+    loopButton.setToggleState (ctx.engine.looping.load(), juce::dontSendNotification);
+    metroButton.setToggleState (ctx.engine.metronome.load(), juce::dontSendNotification);
+    recButton.glow = ctx.engine.recordArmed.load() && ctx.engine.isPlaying() ? 1.0f : 0.0f;
+    recButton.repaint();
     playButton.glow = ctx.engine.getPulse();
     rainbowButton.setToggleState (Theme::get().isRainbow(), juce::dontSendNotification);
     playButton.repaint();
@@ -69,12 +84,15 @@ void TopBar::resized()
     swatchArea = r.removeFromRight (Theme::get().choices().size() * 22);
 
     // Transport and LCD sit together in the middle
-    const int transportW = 3 * 50 + 12 + 340;
+    const int transportW = 3 * 50 + 12 + 340 + 12 + 2 * 46;
     auto mid = r.withSizeKeepingCentre (juce::jmin (transportW, r.getWidth()), r.getHeight());
     playButton.setBounds (mid.removeFromLeft (50).reduced (3, 0));
     stopButton.setBounds (mid.removeFromLeft (50).reduced (3, 0));
     recButton.setBounds (mid.removeFromLeft (50).reduced (3, 0));
     mid.removeFromLeft (12);
+    metroButton.setBounds (mid.removeFromRight (46).reduced (3, 2));
+    loopButton.setBounds (mid.removeFromRight (46).reduced (3, 2));
+    mid.removeFromRight (12);
     lcdArea = mid;
     tempoArea = lcdArea.withWidth (100);
 }
@@ -107,11 +125,11 @@ void TopBar::paint (juce::Graphics& g)
         g.drawRoundedRectangle (r.reduced (0.5f), 8.0f, 1.0f);
 
         const auto c = th.pal (Pal::Green);
-        const double steps = juce::jmax (0.0, ctx.playheadSteps());
-        const int bar = (int) (steps / 16.0) % Project::numBars + 1;
-        const int beat = (int) (steps / 4.0) % 4 + 1;
-        const int sixteenth = (int) steps % 4 + 1;
-        const double secs = ctx.engine.getSecondsPlayed();
+        const double beats = ctx.playheadBeats();
+        const int bar = (int) (beats / beatsPerBar) + 1;
+        const int beat = (int) std::fmod (beats, beatsPerBar) + 1;
+        const int sixteenth = (int) std::fmod (beats * 4.0, 4.0) + 1;
+        const double secs = beats * 60.0 / ctx.project.bpm.load();
 
         struct Cell { juce::String value, caption; };
         const Cell cells[] = {
