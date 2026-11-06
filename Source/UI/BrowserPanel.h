@@ -19,6 +19,8 @@ public:
 
     // Double-clicking a device adds it to the selected track, wired in automatically
     std::function<void (ModuleType)> onAddDevice;
+    // Double-clicking a sample loads it into the selected track's sampler
+    std::function<void (const juce::String& sampleName)> onLoadSample;
 
     struct Item { juce::String name, detail; Icon icon; Pal pal; };
 
@@ -30,6 +32,7 @@ private:
     juce::Rectangle<int> listArea;
 
     const std::vector<Item>& items() const;
+    mutable std::vector<Item> sampleItems;
     juce::Rectangle<int> itemBounds (int index) const;
     int itemAt (juce::Point<int>) const;
 };

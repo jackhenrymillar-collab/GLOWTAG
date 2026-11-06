@@ -5,7 +5,7 @@
 // Detailed glowing line-art icons, drawn in a 64 x 64 design space
 // (ported from the mockup's SVG symbols).
 enum class Icon { Sampler, Synth, Drums, Filter, Delay, Reverb, EQ, Compressor, LFO,
-                  Pencil, Cursor, Scissors, Velocity, Play, Stop, Record, Loop, Metronome };
+                  Pencil, Cursor, Scissors, Velocity, Play, Stop, Record, Loop, Metronome, Drive };
 
 namespace Glow
 {

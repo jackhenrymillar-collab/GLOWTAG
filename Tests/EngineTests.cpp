@@ -3,6 +3,8 @@
 #include "Engine/Project.h"
 #include "Engine/AudioEngine.h"
 #include "Engine/Patch.h"
+#include "Engine/Graph.h"
+#include "Engine/Samples.h"
 #include <iostream>
 
 namespace
@@ -111,7 +113,7 @@ int main()
         for (auto& t : p.tracks) t->clips.clear();
         AudioEngine e (p);
         e.prepareToPlay (block, sr);
-        e.liveTrack = 6; // Keys
+        e.liveTrack = 6; // Keys (synth)
         e.recordArmed = true;
         e.play();
         render (e, 0.5, p.bpm);
@@ -142,6 +144,73 @@ int main()
         check (into >= 0 && p.cables[(size_t) into].fromModule == f, "removing a module joins its neighbours");
         check (p.connect (Patch::inputId, Port::audioOut, Patch::outputId, Port::audioIn), "manual re-wire works");
         check (! p.connect (l, Port::modOut, Patch::outputId, Port::audioIn), "modulation can't go into an audio input");
+    }
+
+    std::cout << "Graph: virtual analog synth and effects\n";
+    {
+        auto resolve = [] (const juce::String& n) { return Samples::find (n); };
+        auto renderGraph = [] (Graph& g, int blocks, double bpm = 120.0)
+        {
+            std::vector<float> zl (block, 0.0f), zr (block, 0.0f), ol (block), orr (block);
+            float peak = 0.0f;
+            for (int b = 0; b < blocks; ++b)
+            {
+                g.process (zl.data(), zr.data(), ol.data(), orr.data(), block, bpm);
+                for (float v : ol) peak = juce::jmax (peak, std::abs (v));
+            }
+            return peak;
+        };
+
+        Patch synthPatch;
+        const int synthId = synthPatch.add (ModuleType::Synth);
+        Graph synth (synthPatch, sr, resolve);
+        check (synth.hasInstrument(), "synth patch has an instrument");
+        check (renderGraph (synth, 4) < 1e-6f, "synth is silent with no notes");
+        synth.noteOn (48, 0.9f, -1.0);
+        const float held = renderGraph (synth, 20);
+        check (held > 0.05f && held <= 1.0f, "held synth note sounds and stays in range");
+        synth.noteOff (48);
+        renderGraph (synth, 200);
+        check (renderGraph (synth, 4) < 1e-4f, "synth note releases to silence");
+
+        // Low cutoff should be quieter than open cutoff
+        synth.find (synthId)->knob[3] = 0.0f;
+        synth.noteOn (48, 0.9f, -1.0);
+        const float dark = renderGraph (synth, 20);
+        synth.allNotesOff(); renderGraph (synth, 200);
+        synth.find (synthId)->knob[3] = 1.0f;
+        synth.noteOn (48, 0.9f, -1.0);
+        const float bright = renderGraph (synth, 20);
+        check (dark < bright, "ladder filter: closed cutoff is quieter than open");
+
+        Patch drumPatch;
+        drumPatch.add (ModuleType::Drums);
+        Graph drums (drumPatch, sr, resolve);
+        drums.noteOn (36, 1.0f, 0.0);
+        check (renderGraph (drums, 4) > 0.1f, "drum rack kick plays a built-in sample");
+
+        Patch samplerPatch;
+        const int sid = samplerPatch.add (ModuleType::Sampler);
+        samplerPatch.find (sid)->sampleName = "Vox Ahh";
+        Graph sampler (samplerPatch, sr, resolve);
+        sampler.noteOn (60, 1.0f, -1.0);
+        check (renderGraph (sampler, 10) > 0.05f, "sampler plays the vowel sample");
+
+        // Effects chain keeps the signal bounded, LFO modulates
+        Patch fx;
+        fx.add (ModuleType::Drums);
+        fx.add (ModuleType::Drive);
+        fx.add (ModuleType::Delay);
+        fx.add (ModuleType::Reverb);
+        fx.add (ModuleType::EQ);
+        fx.add (ModuleType::Compressor);
+        const int lfoId = fx.add (ModuleType::LFO);
+        Graph chain (fx, sr, resolve);
+        chain.noteOn (38, 1.0f, 0.0);
+        const float p = renderGraph (chain, 30);
+        check (p > 0.01f && p < 4.0f, "full effect chain passes a bounded signal");
+        check (std::abs (chain.find (lfoId)->display.load()) > 0.0f, "LFO is running");
+        check (Samples::bank().size() >= 16, "sample bank has at least sixteen sounds");
     }
 
     std::cout << (failures == 0 ? "\nAll passed\n" : "\nSome checks failed\n");

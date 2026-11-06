@@ -5,15 +5,17 @@ const ModuleInfo& moduleInfo (ModuleType t)
     // Pal indices: Rose 0, Green 1, Sky 2, Gold 3, Violet 4, Blue 5, Amber 6, Ice 7
     static const ModuleInfo input      { "Track In",   1, false, true,  false, {}, 74.0f };
     static const ModuleInfo output     { "Out",        1, true,  false, false, {}, 74.0f };
-    static const ModuleInfo sampler    { "Sampler",    0, true,  true,  false, { { "Start", 0.1f }, { "Length", 0.7f }, { "Pitch", 0.5f }, { "Attack", 0.05f }, { "Release", 0.4f }, { "Gain", 0.8f } }, 230.0f };
-    static const ModuleInfo synth      { "Synth",      4, true,  true,  false, { { "Wave", 0.3f }, { "Detune", 0.2f }, { "Cutoff", 0.6f }, { "Attack", 0.1f }, { "Release", 0.5f }, { "Gain", 0.8f } }, 230.0f };
-    static const ModuleInfo drums      { "Drum Rack",  6, true,  true,  false, { { "Tune", 0.5f }, { "Decay", 0.5f }, { "Swing", 0.1f }, { "Gain", 0.8f } }, 200.0f };
-    static const ModuleInfo filter     { "Filter",     2, true,  true,  false, { { "Cutoff", 0.65f }, { "Res", 0.3f }, { "Drive", 0.2f } }, 170.0f };
-    static const ModuleInfo delay      { "Delay",      5, true,  true,  false, { { "Time", 0.5f }, { "Feedback", 0.4f }, { "Mix", 0.25f } }, 170.0f };
-    static const ModuleInfo reverb     { "Reverb",     7, true,  true,  false, { { "Size", 0.6f }, { "Damp", 0.4f }, { "Mix", 0.3f } }, 170.0f };
-    static const ModuleInfo eq         { "EQ",         3, true,  true,  false, { { "Low", 0.1f }, { "Mid", -0.2f }, { "High", 0.3f }, { "Output", 0.7f } }, 200.0f };
-    static const ModuleInfo compressor { "Compressor", 1, true,  true,  false, { { "Thresh", 0.5f }, { "Ratio", 0.4f }, { "Attack", 0.2f }, { "Makeup", 0.5f } }, 200.0f };
-    static const ModuleInfo lfo        { "LFO",        4, false, false, true,  { { "Rate", 0.4f }, { "Depth", 0.6f }, { "Shape", 0.2f } }, 170.0f };
+    static const ModuleInfo sampler    { "Sampler",    0, true,  true,  false, { { "Start", 0.0f }, { "Length", 1.0f }, { "Pitch", 0.5f }, { "Attack", 0.0f }, { "Release", 0.3f }, { "Gain", 0.8f } }, 300.0f };
+    static const ModuleInfo synth      { "Synth",      4, true,  true,  false, { { "Wave", 0.0f }, { "Sub", 0.3f }, { "Detune", 0.15f }, { "Cutoff", 0.6f }, { "Res", 0.25f }, { "Env", 0.4f },
+                                                                                 { "Attack", 0.02f }, { "Decay", 0.3f }, { "Sustain", 0.6f }, { "Release", 0.3f }, { "Drive", 0.2f }, { "Gain", 0.7f } }, 330.0f };
+    static const ModuleInfo drums      { "Drum Rack",  6, true,  true,  false, { { "Tune", 0.5f }, { "Decay", 0.7f }, { "Snap", 0.3f }, { "Gain", 0.8f } }, 300.0f };
+    static const ModuleInfo filter     { "Filter",     2, true,  true,  false, { { "Cutoff", 0.65f }, { "Res", 0.3f }, { "Drive", 0.2f }, { "Mode", 0.0f } }, 200.0f };
+    static const ModuleInfo drive      { "Drive",      6, true,  true,  false, { { "Drive", 0.4f }, { "Tone", 0.6f }, { "Mix", 0.8f }, { "Type", 0.0f } }, 200.0f };
+    static const ModuleInfo delay      { "Delay",      5, true,  true,  false, { { "Time", 0.5f }, { "Feedback", 0.4f }, { "Tone", 0.5f }, { "Mix", 0.25f } }, 200.0f };
+    static const ModuleInfo reverb     { "Reverb",     7, true,  true,  false, { { "Size", 0.6f }, { "Damp", 0.4f }, { "Width", 0.8f }, { "Mix", 0.3f } }, 200.0f };
+    static const ModuleInfo eq         { "EQ",         3, true,  true,  false, { { "Low", 0.0f }, { "Mid", 0.0f }, { "High", 0.0f }, { "Output", 0.7f } }, 200.0f };
+    static const ModuleInfo compressor { "Compressor", 1, true,  true,  false, { { "Thresh", 0.5f }, { "Ratio", 0.4f }, { "Attack", 0.2f }, { "Release", 0.4f }, { "Makeup", 0.3f } }, 240.0f };
+    static const ModuleInfo lfo        { "LFO",        4, false, false, true,  { { "Rate", 0.4f }, { "Depth", 0.6f }, { "Shape", 0.0f } }, 170.0f };
 
     switch (t)
     {
@@ -23,6 +25,7 @@ const ModuleInfo& moduleInfo (ModuleType t)
         case ModuleType::Synth:      return synth;
         case ModuleType::Drums:      return drums;
         case ModuleType::Filter:     return filter;
+        case ModuleType::Drive:      return drive;
         case ModuleType::Delay:      return delay;
         case ModuleType::Reverb:     return reverb;
         case ModuleType::EQ:         return eq;
@@ -34,8 +37,16 @@ const ModuleInfo& moduleInfo (ModuleType t)
 
 Patch::Patch()
 {
-    modules.push_back ({ inputId, ModuleType::Input, { 12.0f, top }, {} });
-    modules.push_back ({ outputId, ModuleType::Output, { 12.0f + 74.0f + gap, top }, {} });
+    Module in;
+    in.id = inputId;
+    in.type = ModuleType::Input;
+    in.position = { 12.0f, top };
+    Module out;
+    out.id = outputId;
+    out.type = ModuleType::Output;
+    out.position = { 12.0f + 74.0f + gap, top };
+    modules.push_back (in);
+    modules.push_back (out);
     connect (inputId, Port::audioOut, outputId, Port::audioIn);
 }
 
@@ -99,10 +110,15 @@ juce::Point<float> Patch::nextFreePosition() const
 
 int Patch::add (ModuleType type)
 {
+    return addAt (type, nextFreePosition());
+}
+
+int Patch::addAt (ModuleType type, juce::Point<float> position)
+{
     Module m;
     m.id = nextId++;
     m.type = type;
-    m.position = nextFreePosition();
+    m.position = position;
     for (auto& k : moduleInfo (type).knobs)
         m.knobValues.push_back (k.second);
     modules.push_back (m);

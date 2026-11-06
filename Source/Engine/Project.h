@@ -6,9 +6,6 @@
 #include <vector>
 #include "Patch.h"
 
-// Built-in sounds the engine plays until the real instruments arrive in step 3.
-enum class Sound { Kick, Snare, Hat, Clap, Perc, Chop, Bass, Keys, Pad, Silent };
-
 enum class TrackKind { Audio, Sampler, Midi, Automation };
 
 // Times are in beats (quarter notes). The project is in 4/4.
@@ -56,9 +53,8 @@ struct Track
     juce::String name;
     TrackKind kind = TrackKind::Audio;
     int colourIndex = 0;           // index into the theme palette (see Pal)
-    Sound sound = Sound::Silent;
     std::vector<Clip> clips;
-    Patch patch;                   // modular device patch (message thread only for now)
+    Patch patch;                   // modular device patch; the engine builds a Graph from it
 
     std::atomic<bool> muted { false };
     std::atomic<bool> soloed { false };
