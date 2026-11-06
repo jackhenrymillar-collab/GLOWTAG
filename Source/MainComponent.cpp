@@ -7,6 +7,7 @@ MainComponent::MainComponent()
 
     for (auto* c : std::initializer_list<juce::Component*> { &topBar, &browser, &trackList, &arranger, &devices, &mixer, &editor, &status })
         addAndMakeVisible (c);
+    addChildComponent (sequencer);
 
     topBar.onModeChange = [this] (int m) { setMode ((Mode) m); };
     topBar.onPlayStop = [this] { togglePlay(); };
@@ -14,6 +15,14 @@ MainComponent::MainComponent()
     arranger.onOpenEditor = [this] { setMode (Mode::Edit); };
     browser.onAddDevice = [this] (ModuleType t) { if (mode == Mode::Mix) setMode (Mode::Arrange); devices.addModule (t); };
     browser.onLoadSample = [this] (const juce::String& name) { if (mode == Mode::Mix) setMode (Mode::Arrange); devices.loadSample (name); };
+    browser.onAddSequencer = [this] (SeqType t)
+    {
+        // Adding a sequencer module switches the track to its rack
+        if (mode == Mode::Mix) setMode (Mode::Arrange);
+        ctx.selected().rolling = true;
+        ctx.clipsChanged();
+        sequencer.addModule (t);
+    };
 
     Theme::get().addChangeListener (this);
     ctx.addChangeListener (this);
@@ -67,6 +76,7 @@ void MainComponent::setMode (Mode m)
     mixer.setVisible (m == Mode::Mix);
     editor.setVisible (m == Mode::Edit);
     devices.setVisible (m != Mode::Mix);
+    sequencer.setVisible (rackShown && m != Mode::Mix);
     resized();
     repaint();
 }
@@ -279,6 +289,7 @@ void MainComponent::timerCallback()
     if (arranger.isVisible()) arranger.tick();
     if (trackList.isVisible()) trackList.tick();
     if (devices.isVisible()) devices.tick();
+    if (sequencer.isVisible()) sequencer.tick();
     if (mixer.isVisible()) mixer.tick();
     if (editor.isVisible()) editor.tick();
 
@@ -306,6 +317,15 @@ void MainComponent::timerCallback()
 
 void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 {
+    // The sequencer rack appears under the arrangement when the selected track is rolling
+    const bool wantRack = ctx.selected().rolling.load();
+    if (wantRack != rackShown)
+    {
+        rackShown = wantRack;
+        sequencer.setVisible (rackShown && mode != Mode::Mix);
+        resized();
+    }
+
     // Theme or selection changed: refresh colours and redraw everything
     lookAndFeel.refreshColours();
     sendLookAndFeelChange();
@@ -329,7 +349,8 @@ void MainComponent::resized()
     switch (mode)
     {
         case Mode::Arrange:
-            devices.setBounds (r.removeFromBottom (276));
+            devices.setBounds (r.removeFromBottom (rackShown ? 240 : 276));
+            if (rackShown) sequencer.setBounds (r.removeFromBottom (SequencerPanel::preferredHeight));
             trackList.setBounds (r.removeFromLeft (210));
             arranger.setBounds (r);
             break;
@@ -337,7 +358,8 @@ void MainComponent::resized()
             mixer.setBounds (r);
             break;
         case Mode::Edit:
-            devices.setBounds (r.removeFromBottom (276));
+            devices.setBounds (r.removeFromBottom (rackShown ? 240 : 276));
+            if (rackShown) sequencer.setBounds (r.removeFromBottom (SequencerPanel::preferredHeight));
             editor.setBounds (r);
             break;
     }

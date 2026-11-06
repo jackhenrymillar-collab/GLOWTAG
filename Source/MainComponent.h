@@ -11,6 +11,7 @@
 #include "UI/TrackList.h"
 #include "UI/ArrangerView.h"
 #include "UI/DevicePanel.h"
+#include "UI/SequencerPanel.h"
 #include "UI/StatusBar.h"
 #include "UI/MixerView.h"
 #include "UI/EditorView.h"
@@ -67,11 +68,13 @@ private:
     TrackList trackList { ctx };
     ArrangerView arranger { ctx };
     DevicePanel devices { ctx };
+    SequencerPanel sequencer { ctx };
     MixerView mixer { ctx };
     EditorView editor { ctx };
     StatusBar status;
 
     Mode mode = Mode::Arrange;
+    bool rackShown = false;
     int statusCounter = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)

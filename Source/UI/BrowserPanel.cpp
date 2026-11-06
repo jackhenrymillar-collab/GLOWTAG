@@ -28,19 +28,24 @@ namespace
         return Pal::Ice;
     }
 
-    const std::vector<BrowserPanel::Item> presets = {
-        { "Neon Keys",      "Synth",      Icon::Synth,   Pal::Blue },
-        { "Brick Sub",      "Synth",      Icon::Synth,   Pal::Amber },
-        { "Night Choir",    "Sampler",    Icon::Sampler, Pal::Violet },
-        { "Tape Echo",      "Delay",      Icon::Delay,   Pal::Sky },
-        { "Alley Verb",     "Reverb",     Icon::Reverb,  Pal::Ice },
-        { "Drum Bus Glue",  "Compressor", Icon::Compressor, Pal::Green },
+    const std::vector<BrowserPanel::Item> sequencers = {
+        { "Rolling 16", "16 steps, five directions",     Icon::Steps,     Pal::Sky },
+        { "Circadian",  "Day-and-night modulation",      Icon::Circadian, Pal::Amber },
+        { "Euclid",     "Hits spread round the circle",  Icon::Euclid,    Pal::Gold },
+        { "Chance",     "Probability gate and drift",    Icon::Chance,    Pal::Rose },
+        { "Tide LFO",   "Synced, a 16th to 8 bars",      Icon::Tide,      Pal::Sky },
+        { "Quantise",   "Onto any scale",                Icon::Quantise,  Pal::Ice },
+        { "Turing",     "Shift-register melodies",       Icon::Turing,    Pal::Violet },
+        { "Mutate",     "Slow pitch wander",             Icon::Mutate,    Pal::Violet },
+        { "Burst",      "Ratchets from one trigger",     Icon::Burst,     Pal::Amber },
     };
+    const SeqType sequencerTypes[] = { SeqType::Steps, SeqType::Circadian, SeqType::Euclid, SeqType::Chance, SeqType::Tide,
+                                       SeqType::Quantise, SeqType::Turing, SeqType::Mutate, SeqType::Burst };
 }
 
 BrowserPanel::BrowserPanel (AppContext& c) : ctx (c)
 {
-    const char* names[] = { "Samples", "Devices", "Presets" };
+    const char* names[] = { "Samples", "Devices", "Sequence" };
     for (int i = 0; i < 3; ++i)
     {
         auto& b = tabs[i];
@@ -64,7 +69,7 @@ const std::vector<BrowserPanel::Item>& BrowserPanel::items() const
                                          e.category == "Drums" ? Icon::Drums : Icon::Sampler, palForCategory (e.category) });
         return sampleItems;
     }
-    return tab == 1 ? devices : presets;
+    return tab == 1 ? devices : sequencers;
 }
 
 void BrowserPanel::resized()
@@ -81,8 +86,8 @@ void BrowserPanel::resized()
 
 juce::Rectangle<int> BrowserPanel::itemBounds (int index) const
 {
-    const int h = tab == 1 ? 54 : 34;
-    return { listArea.getX(), listArea.getY() + index * (h + (tab == 1 ? 6 : 4)), listArea.getWidth(), h };
+    const int h = tab == 0 ? 34 : 54;
+    return { listArea.getX(), listArea.getY() + index * (h + (tab == 0 ? 4 : 6)), listArea.getWidth(), h };
 }
 
 int BrowserPanel::itemAt (juce::Point<int> p) const
@@ -118,6 +123,8 @@ void BrowserPanel::mouseDoubleClick (const juce::MouseEvent& e)
         onAddDevice (deviceTypes[i]);
     else if (tab == 0 && i >= 0 && onLoadSample)
         onLoadSample (items()[(size_t) i].name);
+    else if (tab == 2 && i >= 0 && i < (int) std::size (sequencerTypes) && onAddSequencer)
+        onAddSequencer (sequencerTypes[i]);
 }
 
 void BrowserPanel::paint (juce::Graphics& g)
@@ -142,7 +149,7 @@ void BrowserPanel::paint (juce::Graphics& g)
         const auto c = th.pal (it.pal);
         const bool lit = i == hovered || i == chosen;
 
-        if (tab == 1)
+        if (tab != 0)
         {
             // Device card, like the ability cards: framed panel, icon, serif title, numeral
             Glow::drawPanel (g, r, lit ? c : c.withMultipliedAlpha (0.65f), 10.0f, i == chosen ? 1.0f : 0.0f);

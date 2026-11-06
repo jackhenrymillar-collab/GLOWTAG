@@ -39,6 +39,13 @@ public:
     void rebuildAll();
     void setKnob (int track, int moduleId, int knob, float value);
     Node* liveNode (int track, int moduleId);          // for UI readouts; may be null
+
+    // Sequencer racks (message thread). rebuildSequencer after changing modules or cables;
+    // knobs and steps go straight to the running rack.
+    void rebuildSequencer (int track);
+    void setSeqKnob (int track, int moduleId, int knob, float value);
+    void setSeqStep (int track, int moduleId, int step, int pitch, bool on);
+    SeqNode* liveSeqNode (int track, int moduleId);    // for UI readouts; may be null
     std::shared_ptr<const AudioData> resolveSample (const juce::String& nameOrPath);
 
     // Loudness of the last kick-ish hit, for the music-reactive glow (0..1)
@@ -56,6 +63,8 @@ private:
         std::shared_ptr<Graph> pending;     // built on the message thread, picked up at the next block
         std::shared_ptr<Graph> retired;     // dropped by the audio thread, freed on the message thread
         std::shared_ptr<Graph> ui;          // the message thread's handle for knob changes
+        std::shared_ptr<SeqRuntime> seq, seqPending, seqRetired, seqUi;
+        bool seqWasActive = false;
         juce::AudioBuffer<float> input, output;
     };
 
@@ -77,6 +86,10 @@ private:
     double playStartPosition = 0.0;
     std::atomic<float> pulse { 0.0f };
     std::vector<Event> events;
+    struct Segment { int startSample; double startBeat; };
+    std::vector<Segment> segments;      // where the loop wrapped inside this block
+    bool wasPlaying = false;
+    void runSequencers (int numSamples, double beatsPerSample, bool isPlaying, bool jumped);
     std::array<Click, 4> clicks;
     juce::MidiBuffer liveMidi;
 

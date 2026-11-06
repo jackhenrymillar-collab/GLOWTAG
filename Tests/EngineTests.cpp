@@ -5,6 +5,7 @@
 #include "Engine/Patch.h"
 #include "Engine/Graph.h"
 #include "Engine/Samples.h"
+#include "Engine/Sequencer.h"
 #include <iostream>
 
 namespace
@@ -211,6 +212,139 @@ int main()
         check (p > 0.01f && p < 4.0f, "full effect chain passes a bounded signal");
         check (std::abs (chain.find (lfoId)->display.load()) > 0.0f, "LFO is running");
         check (Samples::bank().size() >= 16, "sample bank has at least sixteen sounds");
+    }
+
+
+    std::cout << "Rolling sequencer rack\n";
+    {
+        SeqRack rack;
+        check (rack.modules.size() == 4 && rack.find (SeqRack::clockId) && rack.find (SeqRack::outId), "new rack has clock, steps, quantise and out");
+        const auto& oi = seqInfo (SeqType::Out);
+        check (rack.cableInto (SeqRack::outId, oi.portIndex ("Gate")) >= 0 && rack.cableInto (SeqRack::outId, oi.portIndex ("Pitch")) >= 0,
+               "out has pitch and gate patched by default");
+
+        const int euclid = rack.add (SeqType::Euclid);
+        const int gateFeed = rack.cableInto (SeqRack::outId, oi.portIndex ("Gate"));
+        check (gateFeed >= 0 && rack.cables[(size_t) gateFeed].fromModule == euclid, "euclid takes over the gate when added");
+        check (rack.cableInto (euclid, seqInfo (SeqType::Euclid).portIndex ("Clk")) >= 0, "euclid is clocked automatically");
+
+        const int chance = rack.add (SeqType::Chance);
+        const auto& chi = seqInfo (SeqType::Chance);
+        check (rack.cables[(size_t) rack.cableInto (SeqRack::outId, oi.portIndex ("Gate"))].fromModule == chance
+               && rack.cables[(size_t) rack.cableInto (chance, chi.portIndex ("Trig"))].fromModule == euclid,
+               "chance slips in between euclid and out");
+
+        rack.remove (chance);
+        check (rack.cables[(size_t) rack.cableInto (SeqRack::outId, oi.portIndex ("Gate"))].fromModule == euclid, "removing chance heals the gate path");
+
+        const int tide = rack.add (SeqType::Tide);
+        check (rack.cableInto (euclid, seqInfo (SeqType::Euclid).portIndex ("Hits cv")) >= 0 || rack.cableInto (SeqRack::outId, oi.portIndex ("Mod")) >= 0,
+               "a modulator lands on a free cv input");
+        juce::ignoreUnused (tide);
+        check (rack.indexOf (SeqRack::outId) == (int) rack.modules.size() - 1 && rack.indexOf (SeqRack::clockId) == 0, "clock stays first and out stays last");
+    }
+
+    std::cout << "Rolling sequencer engine\n";
+    {
+        // Count the clocks and notes over one bar at 120 bpm
+        SeqRack rack;
+        for (auto& m : rack.modules)
+            if (m.type == SeqType::Steps) m.stepOn.fill (true);
+        SeqRuntime rt (rack);
+        int notesOn = 0, notesOff = 0;
+        auto sink = [&] (int, float, bool on) { if (on) ++notesOn; else ++notesOff; };
+        const double beatsPerTick = 32.0 * 120.0 / 60.0 / sr;
+        const int ticks = (int) std::ceil (4.0 / beatsPerTick);
+        for (int i = 0; i < ticks; ++i)
+            rt.process ({ i * beatsPerTick, beatsPerTick, 43200.0, i == 0 }, sink);
+        check (notesOn == 16, "sixteen steps play in one bar of sixteenths");
+        check (notesOff >= 15, "gates close again");
+
+        // Quantise pulls pitches onto D dorian
+        SeqRack q;
+        SeqRuntime qrt (q);
+        SeqNode* quant = nullptr;
+        for (auto& m : q.modules) if (m.type == SeqType::Quantise) quant = qrt.find (m.id);
+        check (quant != nullptr, "quantiser found in runtime");
+        const auto& qi = seqInfo (SeqType::Quantise);
+        quant->in[(size_t) qi.portIndex ("In")] = 1.0f;     // C# is not in D dorian
+        quant->plugged[(size_t) qi.portIndex ("Trig")] = false;
+        quant->process ({ -1.0, beatsPerTick, 0.0, false });
+        const float out = quant->out[(size_t) qi.portIndex ("Out")];
+        check (std::abs (out - 0.0f) < 0.01f || std::abs (out - 2.0f) < 0.01f, "quantiser moves C# to a scale note");
+
+        // Euclid 5/16 = x...x..x..x..x..
+        SeqRack er;
+        const int eid = er.add (SeqType::Euclid);
+        SeqRuntime ert (er);
+        auto* eu = ert.find (eid);
+        const auto& ei = seqInfo (SeqType::Euclid);
+        juce::String pattern;
+        for (int step = 0; step < 16; ++step)
+        {
+            eu->in[(size_t) ei.portIndex ("Clk")] = 1.0f;
+            eu->process ({ -1.0, beatsPerTick, 0.0, false });
+            pattern << (eu->out[(size_t) ei.portIndex ("Gate")] > 0.5f ? "x" : ".");
+            eu->in[(size_t) ei.portIndex ("Clk")] = 0.0f;
+            for (int t = 0; t < 40; ++t) eu->process ({ -1.0, beatsPerTick, 0.0, false });
+        }
+        check (pattern == "x...x..x..x..x..", ("euclid 5/16 pattern is " + pattern).toRawUTF8());
+
+        // Circadian daylight: noon is the peak, midnight the trough
+        SeqRack cr;
+        const int cid = cr.add (SeqType::Circadian);
+        SeqRuntime crt (cr);
+        auto* circ = crt.find (cid);
+        const auto& ci = seqInfo (SeqType::Circadian);
+        circ->knob[4] = 1.0f;   // Follow: Daylight
+        circ->knob[3] = 1.0f;   // Shape: Sun
+        circ->process ({ -1.0, beatsPerTick, 12.0 * 3600.0, false });
+        const float noon = circ->out[(size_t) ci.portIndex ("Cv")], noonGate = circ->out[(size_t) ci.portIndex ("Noon")];
+        circ->process ({ -1.0, beatsPerTick, 0.0, false });
+        const float midnight = circ->out[(size_t) ci.portIndex ("Cv")];
+        check (noon > 0.99f && midnight < 0.01f && noonGate > 0.5f, "circadian follows the time of day");
+
+        // Turing with probability zero loops the same melody
+        SeqRack tr;
+        const int tid = tr.add (SeqType::Turing);
+        SeqRuntime trt (tr);
+        auto* tur = trt.find (tid);
+        tur->knob[0] = 0.0f;
+        tur->knob[1] = 1.0f;    // 16 steps
+        const auto& ti = seqInfo (SeqType::Turing);
+        std::vector<float> first, second;
+        for (int step = 0; step < 32; ++step)
+        {
+            tur->in[(size_t) ti.portIndex ("Clk")] = 1.0f;
+            tur->process ({ -1.0, beatsPerTick, 0.0, false });
+            (step < 16 ? first : second).push_back (tur->out[(size_t) ti.portIndex ("Cv")]);
+            tur->in[(size_t) ti.portIndex ("Clk")] = 0.0f;
+            tur->process ({ -1.0, beatsPerTick, 0.0, false });
+        }
+        check (first == second, "locked turing machine repeats its loop");
+
+        // Through the engine: a rolling synth track makes sound while a track in clip mode uses its clips
+        Project p;
+        AudioEngine e (p);
+        e.prepareToPlay (block, sr);
+        e.looping = false;
+        int synthTrack = -1;
+        for (size_t i = 0; i < p.tracks.size(); ++i)
+            for (auto& m : p.tracks[i]->patch.modules)
+                if (m.type == ModuleType::Synth && synthTrack < 0) synthTrack = (int) i;
+        check (synthTrack >= 0, "project has a synth track");
+        for (size_t i = 0; i < p.tracks.size(); ++i)
+            if ((int) i != synthTrack) p.tracks[i]->muted = true;
+        p.tracks[(size_t) synthTrack]->clips.clear();
+        e.rebuildAll();
+        e.play();
+        check (render (e, 4.0, p.bpm) < 1e-6f, "synth track with no clips is silent in clip mode");
+        p.tracks[(size_t) synthTrack]->rolling = true;
+        check (render (e, 4.0, p.bpm) > 0.02f, "switching the track to SEQ makes the rack play the synth");
+        p.tracks[(size_t) synthTrack]->rolling = false;
+        render (e, 0.5, p.bpm);
+        check (render (e, 2.0, p.bpm) < 0.02f, "switching back to clips stops the rack");
+        check (e.liveSeqNode (synthTrack, SeqRack::clockId) != nullptr, "live rack is reachable for the UI");
     }
 
     std::cout << (failures == 0 ? "\nAll passed\n" : "\nSome checks failed\n");

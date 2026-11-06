@@ -42,7 +42,98 @@ void AudioEngine::rebuildTrack (int track)
 void AudioEngine::rebuildAll()
 {
     for (size_t i = 0; i < slots.size(); ++i)
+    {
         rebuildTrack ((int) i);
+        rebuildSequencer ((int) i);
+    }
+}
+
+void AudioEngine::rebuildSequencer (int track)
+{
+    if (track < 0 || track >= (int) slots.size())
+        return;
+    auto& slot = *slots[(size_t) track];
+    auto rt = std::make_shared<SeqRuntime> (project.tracks[(size_t) track]->seq);
+    std::shared_ptr<SeqRuntime> old;
+    {
+        const juce::SpinLock::ScopedLockType sl (slot.lock);
+        old = std::move (slot.seqRetired);
+        slot.seqPending = rt;
+        slot.seqUi = rt;
+    }
+    old.reset();
+}
+
+void AudioEngine::setSeqKnob (int track, int moduleId, int knob, float value)
+{
+    if (auto* n = liveSeqNode (track, moduleId))
+        if (knob >= 0 && knob < (int) n->knob.size())
+            n->knob[(size_t) knob] = value;
+}
+
+void AudioEngine::setSeqStep (int track, int moduleId, int step, int pitch, bool on)
+{
+    if (auto* n = liveSeqNode (track, moduleId))
+        if (step >= 0 && step < seqSteps)
+        {
+            n->stepPitch[(size_t) step] = pitch;
+            n->stepOn[(size_t) step] = on;
+        }
+}
+
+SeqNode* AudioEngine::liveSeqNode (int track, int moduleId)
+{
+    if (track < 0 || track >= (int) slots.size())
+        return nullptr;
+    if (auto rt = slots[(size_t) track]->seqUi)
+        return rt->find (moduleId);
+    return nullptr;
+}
+
+void AudioEngine::runSequencers (int numSamples, double beatsPerSample, bool isPlaying, bool jumped)
+{
+    // Wall clock for the Circadian module: seconds since local midnight
+    const auto now = juce::Time::getCurrentTime();
+    const double seconds = now.getHours() * 3600.0 + now.getMinutes() * 60.0 + now.getSeconds() + now.getMilliseconds() / 1000.0;
+
+    for (size_t ti = 0; ti < slots.size(); ++ti)
+    {
+        auto& slot = *slots[ti];
+        auto* rt = slot.seq.get();
+        if (rt == nullptr)
+            continue;
+        const bool active = project.tracks[ti]->rolling.load();
+        auto sink = [&] (int offset)
+        {
+            return [&, offset] (int pitch, float velocity, bool on)
+            {
+                events.push_back ({ offset, (int) ti, pitch, velocity, on ? -1.0 : -3.0, false, false });
+            };
+        };
+        if (! active)
+        {
+            if (slot.seqWasActive) rt->allNotesOff (sink (0));
+            slot.seqWasActive = false;
+            continue;
+        }
+        if ((! isPlaying && wasPlaying) || jumped)
+            rt->allNotesOff (sink (0));
+        slot.seqWasActive = true;
+
+        size_t seg = 0;
+        for (int s = 0; s < numSamples; s += subBlock)
+        {
+            while (seg + 1 < segments.size() && segments[seg + 1].startSample <= s) ++seg;
+            SeqTick tick;
+            tick.beat = isPlaying ? segments[seg].startBeat + (s - segments[seg].startSample) * beatsPerSample : -1.0;
+            tick.beatsPerTick = juce::jmin (subBlock, numSamples - s) * beatsPerSample;
+            tick.seconds = seconds + s / sr;
+            tick.reset = (jumped && s == 0) || (seg > 0 && segments[seg].startSample > s - subBlock);
+            rt->process (tick, sink (s));
+        }
+        if (auto* g = slot.current.get())
+            g->externalMod = rt->modOut.load();
+    }
 }
 
 void AudioEngine::setKnob (int track, int moduleId, int knob, float value)
@@ -175,6 +266,11 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             s->retired = std::move (s->current);
             s->current = std::move (s->pending);
         }
+        if (sl.isLocked() && s->seqPending != nullptr)
+        {
+            s->seqRetired = std::move (s->seq);
+            s->seq = std::move (s->seqPending);
+        }
         s->input.clear();
         s->output.clear();
     }
@@ -195,6 +291,8 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     midiInput.removeNextBlockOfMessages (liveMidi, numSamples);
     const int live = juce::jlimit (0, (int) project.tracks.size() - 1, liveTrack.load());
 
+    segments.clear();
+    segments.push_back ({ 0, pos });
     {
         const juce::SpinLock::ScopedLockType sl (project.lock);
 
@@ -219,8 +317,11 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
                 for (size_t ti = 0; ti < project.tracks.size(); ++ti)
                 {
                     auto& track = *project.tracks[ti];
+                    const bool rolling = track.rolling.load();
                     for (auto& clip : track.clips)
                     {
+                        if (rolling && clip.kind == ClipKind::Midi)
+                            continue;
                         if (clip.kind != ClipKind::Midi || clip.end() <= pos || clip.start >= segEnd || clip.loopLength <= 0.0)
                             continue;
                         const double from = juce::jmax (pos, clip.start), to = juce::jmin (segEnd, clip.end());
@@ -247,9 +348,15 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
 
                 done += segSamples;
                 pos = wrap ? ls : segEnd;
+                if (wrap && done < numSamples)
+                    segments.push_back ({ done, pos });
             }
         }
     }
+
+    // Rolling sequencers add their notes at sub-block offsets
+    runSequencers (numSamples, beatsPerSample, isPlaying, req >= 0.0);
+    wasPlaying = isPlaying;
 
     // Live notes at their own offsets; note-offs are applied in the per-track loop below
     const double blockStartBeat = req >= 0.0 ? req : position.load();

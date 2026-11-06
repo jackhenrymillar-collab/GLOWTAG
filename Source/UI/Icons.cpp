@@ -128,6 +128,62 @@ namespace
                 { circle (32, 18, 3), 0.5f, true },
                 { svg ("M10 30c4 2 4 6 0 8M54 30c-4 2-4 6 0 8"), 0.6f },
                 { svg ("M12 58h40"), 0.4f } };
+            case Icon::Clock: return {
+                { circle (32, 34, 24) },
+                { svg ("M32 34V18M32 34l11 7"), 0.9f },
+                { svg ("M24 8h16"), 0.6f },
+                { circle (32, 34, 2.5f), 0.7f, true },
+                { svg ("M32 12v4M54 34h-4M32 56v-4M10 34h4"), 0.45f } };
+            case Icon::Steps: return {
+                { svg ("M8 54h48"), 0.4f },
+                { svg ("M12 50V30M24 50V18M36 50V38M48 50V24") },
+                { rect (8, 27, 8, 6, 2), 0.9f, true }, { rect (20, 15, 8, 6, 2), 0.9f, true },
+                { rect (32, 35, 8, 6, 2), 0.9f, true }, { rect (44, 21, 8, 6, 2), 0.9f, true },
+                { circle (12, 58, 2), 0.5f, true }, { circle (24, 58, 2), 0.5f, true },
+                { circle (36, 58, 2), 0.5f, true }, { circle (48, 58, 2), 0.5f, true } };
+            case Icon::Euclid: return {
+                { circle (32, 32, 24), 0.5f },
+                { svg ("M32 8L52 20L50 44L32 56L14 44L12 20Z"), 0.9f },
+                { circle (32, 8, 3.5f), 1.0f, true }, { circle (52, 20, 3.5f), 1.0f, true }, { circle (50, 44, 3.5f), 1.0f, true },
+                { circle (32, 56, 3.5f), 1.0f, true }, { circle (14, 44, 3.5f), 1.0f, true }, { circle (12, 20, 3.5f), 1.0f, true } };
+            case Icon::Turing: return {
+                { rect (8, 24, 48, 16, 4) },
+                { svg ("M20 24v16M32 24v16M44 24v16"), 0.6f },
+                { circle (14, 32, 2.5f), 1.0f, true }, { circle (38, 32, 2.5f), 1.0f, true }, { circle (50, 32, 2.5f), 1.0f, true },
+                { svg ("M56 32h4v-18H32M8 32H4v18h24"), 0.5f },
+                { svg ("M28 50l4 0-2-3zM36 14l-4 0 2 3z"), 0.6f, true } };
+            case Icon::Burst: return {
+                { svg ("M8 52h8V28H8zM22 52h6V20h-6zM34 52h5V26h-5zM45 52h4V36h-4z") },
+                { svg ("M12 24v-8M25 16v-6M36 22v-8"), 0.5f },
+                { circle (12, 14, 2), 0.7f, true }, { circle (25, 8, 2), 0.7f, true }, { circle (36, 12, 2), 0.7f, true },
+                { svg ("M6 58h52"), 0.4f } };
+            case Icon::Chance: return {
+                { rect (12, 12, 40, 40, 8) },
+                { circle (22, 22, 3), 1.0f, true }, { circle (42, 22, 3), 1.0f, true },
+                { circle (32, 32, 3), 1.0f, true },
+                { circle (22, 42, 3), 1.0f, true }, { circle (42, 42, 3), 1.0f, true },
+                { rect (18, 18, 28, 28, 4), 0.25f } };
+            case Icon::Quantise: return {
+                { rect (6, 14, 52, 36, 4) },
+                { svg ("M19 14v36M32 14v36M45 14v36"), 0.6f },
+                { rect (14, 14, 8, 20, 1), 0.9f, true }, { rect (27, 14, 8, 20, 1), 0.9f, true }, { rect (46, 14, 8, 20, 1), 0.9f, true },
+                { svg ("M6 56h52"), 0.4f } };
+            case Icon::Mutate: return {
+                { svg ("M8 44c12 0 12-24 24-24s12 24 24 24") },
+                { svg ("M8 20c12 0 12 24 24 24s12-24 24-24"), 0.5f },
+                { circle (32, 20, 3), 0.9f, true }, { circle (32, 44, 3), 0.5f, true },
+                { circle (8, 44, 2.5f), 0.6f, true }, { circle (56, 44, 2.5f), 0.6f, true } };
+            case Icon::Circadian: return {
+                { svg ("M6 44h52"), 0.6f },
+                { svg ("M16 44a16 16 0 0 1 32 0") },
+                { svg ("M32 14v-6M14 22l-4-4M50 22l4-4M10 36H4M60 36h-6"), 0.7f },
+                { circle (32, 28, 3), 0.8f, true },
+                { svg ("M12 54h40"), 0.35f } };
+            case Icon::Tide: return {
+                { svg ("M4 36c7-14 14-14 21 0s14 14 21 0 10-12 14-6") },
+                { svg ("M4 46c7-10 14-10 21 0s14 10 21 0 10-8 14-4"), 0.45f },
+                { svg ("M4 26c7-6 14-6 21 0s14 6 21 0 10-4 14-2"), 0.3f },
+                { circle (46, 36, 3), 0.9f, true } };
             case Icon::Metronome: return {
                 { svg ("M24 10h16l10 44H14z") },
                 { svg ("M32 46l12-30"), 0.9f },

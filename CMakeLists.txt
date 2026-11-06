@@ -36,6 +36,7 @@ target_sources(Glowtag PRIVATE
     Source/Engine/Patch.cpp
     Source/Engine/Graph.cpp
     Source/Engine/Samples.cpp
+    Source/Engine/Sequencer.cpp
     Source/UI/GlowLookAndFeel.cpp
     Source/UI/Icons.cpp
     Source/UI/TopBar.cpp
@@ -43,6 +44,7 @@ target_sources(Glowtag PRIVATE
     Source/UI/TrackList.cpp
     Source/UI/ArrangerView.cpp
     Source/UI/DevicePanel.cpp
+    Source/UI/SequencerPanel.cpp
     Source/UI/StatusBar.cpp
     Source/UI/MixerView.cpp
     Source/UI/EditorView.cpp)
@@ -78,7 +80,8 @@ if(GLOWTAG_TESTS)
         Source/Engine/Project.cpp
         Source/Engine/Patch.cpp
         Source/Engine/Graph.cpp
-        Source/Engine/Samples.cpp)
+        Source/Engine/Samples.cpp
+        Source/Engine/Sequencer.cpp)
     target_include_directories(GlowtagTests PRIVATE Source)
     target_compile_definitions(GlowtagTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
     target_link_libraries(GlowtagTests PRIVATE
