@@ -480,7 +480,38 @@ void ArrangerView::paint (juce::Graphics& g)
     {
         auto& t = *ctx.project.tracks[(size_t) i];
         const auto c = th.pal (t.colourIndex);
-        const float alpha = ctx.project.isAudible (i) ? 1.0f : 0.4f;
+        const bool rolling = t.rolling.load();
+        const float alpha = (ctx.project.isAudible (i) ? 1.0f : 0.4f) * (rolling ? 0.3f : 1.0f);
+
+        if (rolling)
+        {
+            // The rack plays live: a banner across the lane with the running step lights
+            const float y = (float) (Layout::rulerHeight + i * Layout::rowHeight);
+            auto band = juce::Rectangle<float> (0.0f, y + 4.0f, w, (float) Layout::rowHeight - 9.0f);
+            g.setColour (c.withAlpha (0.06f));
+            g.fillRect (band);
+            g.setColour (c.withAlpha (0.35f));
+            g.drawHorizontalLine ((int) band.getY(), 0.0f, w);
+            g.drawHorizontalLine ((int) band.getBottom(), 0.0f, w);
+            int pos = -1, length = seqSteps;
+            for (auto& m : t.seq.modules)
+                if (m.type == SeqType::Steps)
+                    if (auto* n = ctx.engine.liveSeqNode (i, m.id)) { pos = (int) n->display[0].load(); length = SeqKnob::count (n->knob[4].load(), 1, seqSteps); break; }
+            g.setColour (th.text.withAlpha (0.85f));
+            Glow::drawSpacedText (g, juce::String::fromUTF8 ("ROLLING  \xc2\xb7  ") + t.name.toUpperCase() + juce::String::fromUTF8 ("  \xc2\xb7  ")
+                                     + juce::String (length) + juce::String::fromUTF8 (" STEP  \xc2\xb7  \xe2\x88\x9e"),
+                                  band.withTrimmedLeft (12.0f), th.label (8.5f), 1.6f, juce::Justification::centredLeft);
+            for (int s = 0; s < length; ++s)
+            {
+                const float x = band.getRight() - 24.0f - (float) (length - 1 - s) * 9.0f;
+                const bool lit = s == pos && ctx.engine.isPlaying();
+                g.setColour (lit ? c : c.withAlpha (0.3f));
+                g.fillEllipse (x - (lit ? 3.0f : 2.0f), band.getCentreY() - (lit ? 3.0f : 2.0f), lit ? 6.0f : 4.0f, lit ? 6.0f : 4.0f);
+            }
+            g.setColour (th.muted.withAlpha (0.7f));
+            g.setFont (th.label (7.5f));
+            g.drawText ("LIVE FROM RACK", band.withTrimmedRight (12.0f + 9.0f * (float) length + 20.0f).toNearestInt(), juce::Justification::centredRight);
+        }
 
         for (size_t ci = 0; ci < t.clips.size(); ++ci)
         {

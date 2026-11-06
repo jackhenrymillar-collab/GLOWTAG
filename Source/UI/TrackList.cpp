@@ -28,6 +28,18 @@ TrackList::TrackList (AppContext& c) : ctx (c)
         auto* s = soloButtons.add (new SmallToggle ("S", Pal::Gold));
         s->onClick = [s, track] { track->soloed = s->getToggleState(); };
         addAndMakeVisible (s);
+
+        // Instrument tracks can swap their clips for the rolling sequencer rack
+        auto* q = seqButtons.add (new SmallToggle ("SEQ", Pal::Sky));
+        q->setTooltip ("Clips or rolling sequencer");
+        q->onClick = [this, q, track, i]
+        {
+            track->rolling = q->getToggleState();
+            ctx.selectTrack ((int) i);
+            ctx.clipsChanged();
+        };
+        addChildComponent (q);
+        q->setVisible (track->kind == TrackKind::Midi || track->kind == TrackKind::Sampler);
     }
 }
 
@@ -45,6 +57,8 @@ void TrackList::resized()
         soloButtons[i]->setBounds (r.removeFromRight (22));
         r.removeFromRight (4);
         muteButtons[i]->setBounds (r.removeFromRight (22));
+        r.removeFromRight (6);
+        seqButtons[i]->setBounds (r.removeFromRight (30));
     }
 }
 
@@ -56,6 +70,7 @@ void TrackList::tick()
         auto& t = *ctx.project.tracks[(size_t) i];
         muteButtons[i]->setToggleState (t.muted.load(), juce::dontSendNotification);
         soloButtons[i]->setToggleState (t.soloed.load(), juce::dontSendNotification);
+        seqButtons[i]->setToggleState (t.rolling.load(), juce::dontSendNotification);
     }
     repaint();
 }
@@ -98,13 +113,13 @@ void TrackList::paint (juce::Graphics& g)
         g.setColour (c.withAlpha (audible ? 1.0f : 0.35f));
         g.fillRoundedRectangle (r.getX() + 6.0f, r.getY() + 9.0f, 3.0f, r.getHeight() - 18.0f, 1.5f);
 
-        auto text = r.withTrimmedLeft (18.0f).withTrimmedRight (72.0f).reduced (0.0f, 7.0f);
+        auto text = r.withTrimmedLeft (18.0f).withTrimmedRight (108.0f).reduced (0.0f, 7.0f);
         g.setColour (audible ? th.text : th.muted);
         g.setFont (th.body (13.0f));
         g.drawText (t.name, text.removeFromTop (text.getHeight() * 0.55f).toNearestInt(), juce::Justification::centredLeft);
         g.setColour (th.muted.withAlpha (0.8f));
         g.setFont (th.label (8.0f));
-        g.drawText (kindName (t.kind), text.toNearestInt(), juce::Justification::centredLeft);
+        g.drawText (t.rolling.load() ? juce::String ("ROLLING SEQ") : kindName (t.kind), text.toNearestInt(), juce::Justification::centredLeft);
 
         // Meter
         drawMeter (g, juce::Rectangle<float> (r.getRight() - 14.0f, r.getY() + 10.0f, 5.0f, r.getHeight() - 20.0f),

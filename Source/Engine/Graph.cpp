@@ -588,10 +588,13 @@ void Graph::process (const float* inL, const float* inR, float* outL, float* out
 
 void Graph::processSubBlock (const float* inL, const float* inR, float* outL, float* outR, int n, double bpm)
 {
+    const float ext = externalMod.load();
     for (auto& node : nodes)
     {
         // Gather audio from cables into this node's input, and modulation into its knobs
         node->mod.fill (0.0f);
+        if (ext > 0.0001f && node->isInstrument())
+            node->mod[(size_t) (node->type == ModuleType::Synth ? 3 : 0)] += ext * 0.6f;
         if (node.get() == input)
         {
             std::copy (inL, inL + n, node->bufL.begin());

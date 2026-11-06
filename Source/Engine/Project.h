@@ -5,6 +5,7 @@
 #include <memory>
 #include <vector>
 #include "Patch.h"
+#include "Sequencer.h"
 
 enum class TrackKind { Audio, Sampler, Midi, Automation };
 
@@ -55,6 +56,8 @@ struct Track
     int colourIndex = 0;           // index into the theme palette (see Pal)
     std::vector<Clip> clips;
     Patch patch;                   // modular device patch; the engine builds a Graph from it
+    SeqRack seq;                   // Eurorack-style rolling sequencer (message thread only)
+    std::atomic<bool> rolling { false };   // true: the rack plays this track instead of its clips
 
     std::atomic<bool> muted { false };
     std::atomic<bool> soloed { false };

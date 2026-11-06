@@ -70,6 +70,10 @@ public:
     Node* find (int moduleId);
     bool hasInstrument() const { return instrument; }
 
+    // Sequencer rack's Mod output (0..1): added to the instrument's character knob
+    // (Synth cutoff, Sampler start, Drum Rack tune) each sub-block.
+    std::atomic<float> externalMod { 0.0f };
+
 private:
     struct Link { Node* from; int fromPort; Node* to; int toPort; };
     std::vector<std::unique_ptr<Node>> nodes;   // in processing order

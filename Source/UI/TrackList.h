@@ -16,7 +16,7 @@ public:
 
 private:
     AppContext& ctx;
-    juce::OwnedArray<SmallToggle> muteButtons, soloButtons;
+    juce::OwnedArray<SmallToggle> muteButtons, soloButtons, seqButtons;
 
     juce::Rectangle<int> rowBounds (int index) const;
 };
