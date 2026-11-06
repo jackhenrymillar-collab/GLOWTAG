@@ -40,6 +40,11 @@ If you already have JUCE checked out, add `-DGLOWTAG_JUCE_DIR=/path/to/JUCE` to 
 - Click a theme swatch to change the colour, or turn on Rainbow.
 - In Edit, click the piano roll with the pencil to add or remove notes. The beat changes live.
 - Double-click the arranger to open the selected track in Edit.
+- The device panel is modular. Each module you add wires itself in (effects go at the end of the
+  chain, an LFO patches into the last module's first free knob). Drag between jacks to patch,
+  pull a plugged-in jack to re-wire it, double-click a cable to remove it, drag a module's header
+  to move it, and right-click a module to remove it. Double-click a device in the browser to add it.
+  Tidy lines everything up in signal order.
 - Mixer faders, pan knobs and mute / solo all affect the sound.
 
 ## Code layout
@@ -51,6 +56,7 @@ Source/
   Theme.*               colours (one-colour shades or Rainbow) and fonts
   Engine/
     Project.*           tracks, clips, step patterns, tempo
+    Patch.*             modular device patch per track: modules, jacks, cables, auto-wiring
     AudioEngine.*       sample-accurate step sequencer with built-in drum and synth voices
   UI/
     Icons.*             glowing line-art icons and panel drawing

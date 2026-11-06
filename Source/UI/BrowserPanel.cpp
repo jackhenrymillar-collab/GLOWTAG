@@ -11,7 +11,12 @@ namespace
         { "Reverb",     "Rooms to halls",         Icon::Reverb,     Pal::Ice },
         { "EQ",         "Four-band parametric",   Icon::EQ,         Pal::Gold },
         { "Compressor", "Glue and punch",         Icon::Compressor, Pal::Green },
+        { "LFO",        "Modulate any knob",      Icon::LFO,        Pal::Violet },
     };
+
+    const ModuleType deviceTypes[] = { ModuleType::Sampler, ModuleType::Synth, ModuleType::Drums, ModuleType::Filter,
+                                       ModuleType::Delay, ModuleType::Reverb, ModuleType::EQ, ModuleType::Compressor,
+                                       ModuleType::LFO };
 
     const std::vector<BrowserPanel::Item> samples = {
         { "Kick Tight 01",  "Drums / 0.4 s",  Icon::Drums,   Pal::Rose },
@@ -69,7 +74,7 @@ void BrowserPanel::resized()
 
 juce::Rectangle<int> BrowserPanel::itemBounds (int index) const
 {
-    const int h = tab == 1 ? 64 : 44;
+    const int h = tab == 1 ? 60 : 44;
     return { listArea.getX(), listArea.getY() + index * (h + 8), listArea.getWidth(), h };
 }
 
@@ -97,6 +102,13 @@ void BrowserPanel::mouseDown (const juce::MouseEvent& e)
 {
     chosen = itemAt (e.getPosition());
     repaint();
+}
+
+void BrowserPanel::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    const int i = itemAt (e.getPosition());
+    if (tab == 1 && i >= 0 && i < (int) std::size (deviceTypes) && onAddDevice)
+        onAddDevice (deviceTypes[i]);
 }
 
 void BrowserPanel::paint (juce::Graphics& g)

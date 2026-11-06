@@ -33,6 +33,7 @@ target_sources(Glowtag PRIVATE
     Source/Theme.cpp
     Source/Engine/AudioEngine.cpp
     Source/Engine/Project.cpp
+    Source/Engine/Patch.cpp
     Source/UI/GlowLookAndFeel.cpp
     Source/UI/Icons.cpp
     Source/UI/TopBar.cpp
