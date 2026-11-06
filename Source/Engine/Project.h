@@ -4,6 +4,7 @@
 #include <atomic>
 #include <array>
 #include <vector>
+#include "Patch.h"
 
 // Built-in sounds the demo engine can play until the real instruments land.
 enum class Sound { Kick, Snare, Hat, Clap, Chop, Bass, Keys, Silent };
@@ -25,6 +26,7 @@ struct Track
     int colourIndex = 0;           // index into the theme palette (see Pal)
     Sound sound = Sound::Silent;
     std::vector<Clip> clips;
+    Patch patch;                   // modular device chain (edited on the message thread)
 
     std::atomic<uint16_t> steps { 0 }; // 16-step pattern, bit n = step n
     std::atomic<bool> muted { false };
