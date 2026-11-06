@@ -202,7 +202,7 @@ void ModuleCard::paint (juce::Graphics& g)
             g.setFont (th.label (7.0f));
             g.drawText (litPad >= 0 ? module().padNames[(size_t) litPad].isNotEmpty() ? module().padNames[(size_t) litPad].toUpperCase() : Samples::defaultPads()[(size_t) litPad].toUpperCase()
                                     : juce::String ("PADS 36 - 51"),
-                        extraArea.removeFromBottom (12), juce::Justification::centred);
+                        extraArea.withTrimmedTop (extraArea.getHeight() - 12), juce::Justification::centred);
             break;
         }
         case ModuleType::LFO:
@@ -231,7 +231,7 @@ void ModuleCard::paint (juce::Graphics& g)
             g.fillRoundedRectangle (a.withHeight (a.getHeight() * gr), 3.0f);
             g.setColour (th.muted);
             g.setFont (th.label (7.0f));
-            g.drawText ("GR", extraArea.removeFromBottom (12).expanded (8, 0), juce::Justification::centred);
+            g.drawText ("GR", extraArea.withTrimmedTop (extraArea.getHeight() - 12).expanded (8, 0), juce::Justification::centred);
             break;
         }
         case ModuleType::Input: case ModuleType::Output: case ModuleType::Synth: case ModuleType::Filter:
