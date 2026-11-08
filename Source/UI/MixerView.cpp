@@ -5,6 +5,7 @@ namespace
     constexpr int minStripWidth = 74;
     constexpr int maxStripWidth = 100;
     constexpr int stripGap = 6;
+    constexpr int numInsertSlots = 8;   // insert boxes shown per strip
 }
 
 ChannelStrip::ChannelStrip (AppContext& c, int s)
@@ -91,7 +92,7 @@ void ChannelStrip::resized()
 {
     auto r = getLocalBounds().reduced (8, 10);
     r.removeFromTop (8);                          // colour cap
-    insertArea = r.removeFromTop (54);
+    insertArea = r.removeFromTop (numInsertSlots * 18 - 2);
     r.removeFromTop (6);
     sendArea = r.removeFromTop (30);
     if (! sends.isEmpty())
@@ -138,12 +139,12 @@ void ChannelStrip::paint (juce::Graphics& g)
     // Insert slots: the devices in this slot's patch, in chain order
     const auto inserts = insertNames();
     auto ins = insertArea.toFloat();
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < numInsertSlots; ++i)
     {
         auto box = ins.removeFromTop (16.0f);
         ins.removeFromTop (2.0f);
         const bool filled = i < inserts.size();
-        const bool more = i == 2 && inserts.size() > 3;
+        const bool more = i == numInsertSlots - 1 && inserts.size() > numInsertSlots;
         g.setColour (th.display);
         g.fillRoundedRectangle (box, 3.0f);
         g.setColour (filled ? c.withAlpha (0.45f) : th.line2);
@@ -152,7 +153,7 @@ void ChannelStrip::paint (juce::Graphics& g)
         {
             g.setColour (th.text.withAlpha (0.8f));
             g.setFont (th.label (7.5f));
-            g.drawFittedText (more ? "+" + juce::String (inserts.size() - 2) + " MORE" : inserts[i].toUpperCase(),
+            g.drawFittedText (more ? "+" + juce::String (inserts.size() - numInsertSlots + 1) + " MORE" : inserts[i].toUpperCase(),
                               box.toNearestInt().reduced (3, 0), juce::Justification::centred, 1);
         }
     }
