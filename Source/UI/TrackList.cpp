@@ -10,6 +10,8 @@ namespace
             case TrackKind::Sampler:    return "SAMPLER";
             case TrackKind::Midi:       return "INSTRUMENT";
             case TrackKind::Automation: return "AUTOMATION";
+            case TrackKind::Return:     return "RETURN";
+            case TrackKind::Master:     return "MASTER";
         }
         return {};
     }
@@ -17,6 +19,15 @@ namespace
 
 TrackList::TrackList (AppContext& c) : ctx (c)
 {
+    rebuild();
+}
+
+void TrackList::rebuild()
+{
+    builtGeneration = ctx.generation;
+    muteButtons.clear();
+    soloButtons.clear();
+    seqButtons.clear();
     for (size_t i = 0; i < ctx.project.tracks.size(); ++i)
     {
         auto* track = ctx.project.tracks[i].get();
@@ -41,6 +52,7 @@ TrackList::TrackList (AppContext& c) : ctx (c)
         addChildComponent (q);
         q->setVisible (track->kind == TrackKind::Midi || track->kind == TrackKind::Sampler);
     }
+    resized();
 }
 
 juce::Rectangle<int> TrackList::rowBounds (int index) const
@@ -64,6 +76,8 @@ void TrackList::resized()
 
 void TrackList::tick()
 {
+    if (builtGeneration != ctx.generation || muteButtons.size() != (int) ctx.project.tracks.size())
+        rebuild();
     // Keep buttons in sync if mute / solo changed elsewhere (e.g. the mixer)
     for (int i = 0; i < muteButtons.size(); ++i)
     {

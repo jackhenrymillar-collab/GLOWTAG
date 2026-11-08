@@ -184,6 +184,12 @@ namespace
                 { svg ("M4 46c7-10 14-10 21 0s14 10 21 0 10-8 14-4"), 0.45f },
                 { svg ("M4 26c7-6 14-6 21 0s14 6 21 0 10-4 14-2"), 0.3f },
                 { circle (46, 36, 3), 0.9f, true } };
+            case Icon::Plugin: return {
+                // A plug: body, two pins and a lead that curls away
+                { svg ("M20 18h24v16a12 12 0 0 1-24 0z") },
+                { svg ("M26 18v-8M38 18v-8"), 0.9f },
+                { svg ("M32 46v6c0 4 6 4 8 0s4-6 10-4"), 0.5f },
+                { circle (32, 28, 3), 0.7f, true } };
             case Icon::Metronome: return {
                 { svg ("M24 10h16l10 44H14z") },
                 { svg ("M32 46l12-30"), 0.9f },

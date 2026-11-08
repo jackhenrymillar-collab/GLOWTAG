@@ -34,11 +34,18 @@ public:
     juce::MidiMessageCollector midiInput;
 
     // Patches (message thread). Call rebuildTrack after changing a track's modules or cables;
-    // knob turns go straight to the running graph through setKnob.
+    // knob turns go straight to the running graph through setKnob. Track indices are project
+    // slots: tracks, then Return A, Return B and Master.
     void rebuildTrack (int track);
     void rebuildAll();
+    void projectChanged();          // tracks were added, removed or replaced
+    // Replace the song safely: the audio thread is held off while `load` swaps the project's tracks,
+    // then every slot is rebuilt. Returns what `load` returned.
+    bool replaceProject (const std::function<bool()>& load);
     void setKnob (int track, int moduleId, int knob, float value);
     Node* liveNode (int track, int moduleId);          // for UI readouts; may be null
+    std::shared_ptr<Graph> uiGraph (int track);        // keeps a graph (and its plugins) alive while an editor is open
+    void capturePluginStates();                        // hosted plugins' state back into the project, before saving
 
     // Sequencer racks (message thread). rebuildSequencer after changing modules or cables;
     // knobs and steps go straight to the running rack.
@@ -77,7 +84,9 @@ private:
     Project& project;
     double sr = 44100.0;
     int blockSize = 512;
+    juce::SpinLock engineLock;      // held by the audio thread per block, and while the slots are rebuilt
     std::vector<std::unique_ptr<TrackSlot>> slots;
+    void makeSlots();
     std::map<juce::String, std::shared_ptr<const AudioData>> fileCache;
 
     std::atomic<bool> playing { false };
@@ -86,6 +95,7 @@ private:
     double playStartPosition = 0.0;
     std::atomic<float> pulse { 0.0f };
     std::vector<Event> events;
+    std::vector<float> slotPeaks;
     struct Segment { int startSample; double startBeat; };
     std::vector<Segment> segments;      // where the loop wrapped inside this block
     bool wasPlaying = false;

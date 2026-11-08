@@ -37,6 +37,7 @@ target_sources(Glowtag PRIVATE
     Source/Engine/Graph.cpp
     Source/Engine/Samples.cpp
     Source/Engine/Sequencer.cpp
+    Source/Engine/PluginHost.cpp
     Source/UI/GlowLookAndFeel.cpp
     Source/UI/Icons.cpp
     Source/UI/TopBar.cpp
@@ -54,6 +55,8 @@ target_include_directories(Glowtag PRIVATE Source)
 target_compile_definitions(Glowtag PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_PLUGINHOST_AU=1
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:Glowtag,JUCE_PRODUCT_NAME>"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:Glowtag,JUCE_VERSION>")
 
@@ -81,10 +84,11 @@ if(GLOWTAG_TESTS)
         Source/Engine/Patch.cpp
         Source/Engine/Graph.cpp
         Source/Engine/Samples.cpp
-        Source/Engine/Sequencer.cpp)
+        Source/Engine/Sequencer.cpp
+        Source/Engine/PluginHost.cpp)
     target_include_directories(GlowtagTests PRIVATE Source)
-    target_compile_definitions(GlowtagTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_compile_definitions(GlowtagTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_PLUGINHOST_VST3=1 JUCE_PLUGINHOST_AU=1)
     target_link_libraries(GlowtagTests PRIVATE
-        juce::juce_audio_devices juce::juce_audio_formats juce::juce_audio_utils
+        juce::juce_audio_devices juce::juce_audio_formats juce::juce_audio_utils juce::juce_audio_processors juce::juce_gui_extra
         PUBLIC juce::juce_recommended_config_flags)
 endif()

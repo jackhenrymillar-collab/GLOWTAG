@@ -193,6 +193,7 @@ void TopBar::mouseDrag (const juce::MouseEvent& e)
     {
         const double bpm = juce::jlimit (40.0, 240.0, dragStartBpm - e.getDistanceFromDragStartY() * 0.25);
         ctx.project.bpm = std::round (bpm * 10.0) / 10.0;
+        ctx.touched();
         repaint (lcdArea);
     }
 }

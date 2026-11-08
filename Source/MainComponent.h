@@ -17,13 +17,27 @@
 #include "UI/EditorView.h"
 
 // The whole window: owns the project, the audio engine and every view.
+// Also the application's menu bar model (File / View / Transport) on the Mac.
 class MainComponent : public juce::AudioAppComponent,
+                      public juce::MenuBarModel,
                       private juce::Timer,
                       private juce::ChangeListener
 {
 public:
     MainComponent();
     ~MainComponent() override;
+
+    // Files. Each asks about unsaved changes first where that matters.
+    void newProject();
+    void openProject();
+    void openFile (const juce::File&);
+    void saveProject (bool saveAs);
+    void requestQuit();              // asks to save if needed, then quits
+
+    // MenuBarModel
+    juce::StringArray getMenuBarNames() override;
+    juce::PopupMenu getMenuForIndex (int, const juce::String&) override;
+    void menuItemSelected (int, int) override;
 
     void prepareToPlay (int samplesPerBlockExpected, double sampleRate) override;
     void getNextAudioBlock (const juce::AudioSourceChannelInfo&) override;
@@ -44,6 +58,14 @@ private:
     void showCommandPalette();
     void enableMidiInputs();
     void drainRecording();
+    void confirmDiscard (std::function<void()> then);   // save / don't save / cancel when the project is dirty
+    void updateTitle();
+    void rememberFile (const juce::File&);
+    juce::File lastFile() const;
+    std::unique_ptr<juce::PropertiesFile> settings;
+    juce::RecentlyOpenedFilesList recent;
+    std::unique_ptr<juce::FileChooser> chooser;
+    juce::String shownTitle;
     void addRecordedNote (int pitch, double start, double length, float velocity);
     void sendLiveNote (int pitch, bool on);
     static void stopKeyboardFocus (juce::Component&);
@@ -75,6 +97,7 @@ private:
 
     Mode mode = Mode::Arrange;
     bool rackShown = false;
+    int seenGeneration = 0;
     int statusCounter = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)

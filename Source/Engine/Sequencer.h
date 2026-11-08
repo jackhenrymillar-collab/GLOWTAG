@@ -112,6 +112,9 @@ public:
     static const std::vector<Scale>& scales();
     static const char* noteName (int semitone);
 
+    juce::var toVar() const;
+    void fromVar (const juce::var&);
+
 private:
     int nextId = 3;
     void insertInline (int id, int inPort, int outPort, int targetModule, int targetPort);

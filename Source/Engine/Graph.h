@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_audio_processors/juce_audio_processors.h>
 #include "Patch.h"
 #include "Project.h"
 #include "../DSP/Analog.h"
@@ -37,6 +38,10 @@ public:
     virtual void allNotesOff() {}
     virtual bool isInstrument() const { return false; }
 
+    // Plugin modules: the hosted processor, for its editor window
+    virtual juce::AudioProcessor* hostedPlugin() { return nullptr; }
+    virtual void captureState (Module&) {}
+
     // Process `n` (<= subBlock) samples in place
     virtual void process (float* l, float* r, int n, double bpm) = 0;
 
@@ -69,6 +74,9 @@ public:
 
     Node* find (int moduleId);
     bool hasInstrument() const { return instrument; }
+
+    // Copy hosted plugins' state back into the patch, before saving
+    void capturePluginState (Patch&);
 
     // Sequencer rack's Mod output (0..1): added to the instrument's character knob
     // (Synth cutoff, Sampler start, Drum Rack tune) each sub-block.

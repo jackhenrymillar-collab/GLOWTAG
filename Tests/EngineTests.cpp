@@ -336,6 +336,7 @@ int main()
         for (size_t i = 0; i < p.tracks.size(); ++i)
             if ((int) i != synthTrack) p.tracks[i]->muted = true;
         p.tracks[(size_t) synthTrack]->clips.clear();
+        for (auto& send : p.tracks[(size_t) synthTrack]->send) send = 0.0f;   // keep the reverb return out of the measurement
         e.rebuildAll();
         e.play();
         check (render (e, 4.0, p.bpm) < 1e-6f, "synth track with no clips is silent in clip mode");
@@ -345,6 +346,92 @@ int main()
         render (e, 0.5, p.bpm);
         check (render (e, 2.0, p.bpm) < 0.02f, "switching back to clips stops the rack");
         check (e.liveSeqNode (synthTrack, SeqRack::clockId) != nullptr, "live rack is reachable for the UI");
+    }
+
+
+    std::cout << "Saving and loading\n";
+    {
+        Project p;
+        p.bpm = 99.0;
+        p.tracks[0]->send[0] = 0.4f;
+        p.tracks[0]->volume = 0.5f;
+        p.tracks[0]->rolling = true;
+        const int euclidId = p.tracks[0]->seq.add (SeqType::Euclid);
+        auto* euclid = p.tracks[0]->seq.find (euclidId);
+        check (euclid != nullptr, "added module is found by its id");
+        if (euclid != nullptr) euclid->knobs[0] = 0.75f;
+        const int numModules = (int) p.tracks[0]->patch.modules.size();
+        const int numCables = (int) p.tracks[0]->patch.cables.size();
+        const int numClips = (int) p.tracks[1]->clips.size();
+        const juce::File f = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("glowtag-test.glowtag");
+        check (p.saveTo (f), "project saves to disk");
+        check (! p.dirty && p.file == f, "saving clears the dirty flag and remembers the file");
+
+        Project q;
+        q.makeEmpty();
+        check (q.tracks.size() != p.tracks.size() || q.bpm.load() != 99.0, "empty project differs from the saved one");
+        check (q.loadFrom (f), "project loads from disk");
+        check (q.tracks.size() == p.tracks.size(), "loaded project has the same number of tracks");
+        check (std::abs (q.bpm.load() - 99.0) < 1e-9, "tempo round-trips");
+        check (q.tracks[0]->name == p.tracks[0]->name && q.tracks[0]->kind == p.tracks[0]->kind, "track name and kind round-trip");
+        check (std::abs (q.tracks[0]->send[0].load() - 0.4f) < 1e-6f && std::abs (q.tracks[0]->volume.load() - 0.5f) < 1e-6f, "mixer settings round-trip");
+        check (q.tracks[0]->rolling.load(), "SEQ switch round-trips");
+        check ((int) q.tracks[0]->patch.modules.size() == numModules && (int) q.tracks[0]->patch.cables.size() == numCables, "device patch round-trips");
+        auto* e2 = q.tracks[0]->seq.find (euclidId);
+        check (e2 != nullptr && e2->type == SeqType::Euclid && std::abs (e2->knobs[0] - 0.75f) < 1e-6f, "sequencer rack round-trips");
+        check (q.tracks[0]->seq.cables.size() == p.tracks[0]->seq.cables.size(), "rack cables round-trip");
+        check ((int) q.tracks[1]->clips.size() == numClips, "clips round-trip");
+        if (numClips > 0)
+            check (q.tracks[1]->clips[0].notes.size() == p.tracks[1]->clips[0].notes.size(), "notes round-trip");
+        check (q.returns[0] != nullptr && q.master != nullptr && q.master->kind == TrackKind::Master, "returns and master round-trip");
+        check (q.returns[0]->patch.modules.size() == p.returns[0]->patch.modules.size(), "return bus patch round-trips");
+        check (! q.fromVar (juce::var()), "garbage is rejected");
+        f.deleteFile();
+    }
+
+    std::cout << "Mixer routing\n";
+    {
+        Project p;
+        AudioEngine e (p);
+        e.prepareToPlay (block, sr);
+        e.looping = false;
+        check (p.numSlots() == (int) p.tracks.size() + 3, "slots cover tracks, two returns and the master");
+        check (&p.slot (p.masterSlot()) == p.master.get() && &p.slot (p.returnSlot (1)) == p.returns[1].get(), "slot lookup reaches the buses");
+        check (p.isAudible (p.masterSlot()), "master is always audible");
+        e.rebuildAll();
+        e.play();
+        const float full = render (e, 4.0, p.bpm);
+        check (full > 0.05f, "demo plays through the master");
+        check (p.master->meter.load() > 0.0f, "master meter moves");
+        e.stop();
+        p.master->volume = 0.0f;
+        e.play();
+        check (render (e, 2.0, p.bpm) < 1e-6f, "master fader at zero silences everything");
+        e.stop();
+        p.master->volume = 0.8f;
+
+        // Only the return bus is heard when every track is muted but one track is feeding Return A
+        for (auto& t : p.tracks) { t->muted = true; for (auto& s : t->send) s = 0.0f; }
+        int src = -1;
+        for (size_t i = 0; i < p.tracks.size(); ++i)
+            if (! p.tracks[i]->clips.empty() && p.tracks[i]->clips[0].kind == ClipKind::Midi && src < 0) src = (int) i;
+        check (src >= 0, "project has a MIDI track to send from");
+        p.tracks[(size_t) src]->muted = false;
+        p.tracks[(size_t) src]->volume = 0.0f;       // nothing direct to the master
+        p.tracks[(size_t) src]->send[0] = 1.0f;
+        p.returns[0]->muted = true;
+        p.returns[1]->muted = true;   // Return B still carries a delay tail from the renders above
+        e.play();
+        check (render (e, 4.0, p.bpm) < 1e-6f, "sends are post-fader: fader down means no send");
+        p.tracks[(size_t) src]->volume = 0.8f;
+        render (e, 2.0, p.bpm);
+        const float direct = render (e, 2.0, p.bpm);
+        p.returns[0]->muted = false;
+        render (e, 2.0, p.bpm);
+        const float withReturn = render (e, 2.0, p.bpm);
+        check (withReturn > direct * 1.05f, "unmuting Return A adds the reverb to the mix");
+        e.stop();
+        check (p.master->meter.load() == 0.0f && p.returns[0]->meter.load() == 0.0f, "stop clears the bus meters");
     }
 
     std::cout << (failures == 0 ? "\nAll passed\n" : "\nSome checks failed\n");

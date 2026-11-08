@@ -104,7 +104,7 @@ private:
     Rail rail;
     juce::OwnedArray<SeqModuleView> views;
     std::unique_ptr<SeqCableLayer> cables;
-    int builtFor = -1;
+    int builtFor = -1, builtGeneration = -1;
 
     void rebuild();
     void layoutRail();

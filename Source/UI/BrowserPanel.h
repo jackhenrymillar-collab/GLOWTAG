@@ -3,9 +3,10 @@
 #include "AppContext.h"
 #include "Widgets.h"
 
-// Left-hand browser: Samples / Devices / Sequencers tabs.
-// Devices shows the instrument and effect cards with their line-art icons.
-class BrowserPanel : public juce::Component
+// Left-hand browser: Samples / Devices / Sequence / Plugins tabs.
+// Devices shows the instrument and effect cards with their line-art icons; Plugins lists the
+// AU and VST3 plugins found on this machine.
+class BrowserPanel : public juce::Component, private juce::Timer
 {
 public:
     explicit BrowserPanel (AppContext&);
@@ -23,18 +24,26 @@ public:
     std::function<void (const juce::String& sampleName)> onLoadSample;
     // Double-clicking a sequencer module adds it to the selected track's rack
     std::function<void (SeqType)> onAddSequencer;
+    // Double-clicking a plugin adds it to the selected track's patch
+    std::function<void (const juce::PluginDescription&)> onAddPlugin;
 
     struct Item { juce::String name, detail; Icon icon; Pal pal; };
 
 private:
     AppContext& ctx;
-    juce::TextButton tabs[3];
+    static constexpr int numTabs = 4;
+    juce::TextButton tabs[numTabs];
+    juce::TextButton scanButton { "Scan for plugins" };
     int tab = 1;
     int hovered = -1, chosen = -1;
     juce::Rectangle<int> listArea;
 
     const std::vector<Item>& items() const;
     mutable std::vector<Item> sampleItems;
+    mutable std::vector<Item> pluginItems;
+    mutable juce::Array<juce::PluginDescription> pluginList;
+    void refreshPlugins() const;
+    void timerCallback() override;
     juce::Rectangle<int> itemBounds (int index) const;
     int itemAt (juce::Point<int>) const;
 };

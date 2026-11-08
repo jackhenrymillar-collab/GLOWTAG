@@ -415,6 +415,64 @@ void SeqRack::remove (int id)
     modules.erase (modules.begin() + indexOf (id));
 }
 
+juce::var SeqRack::toVar() const
+{
+    auto* o = new juce::DynamicObject();
+    juce::Array<juce::var> ms, cs;
+    for (auto& m : modules)
+    {
+        auto* mo = new juce::DynamicObject();
+        mo->setProperty ("id", m.id);
+        mo->setProperty ("type", (int) m.type);
+        juce::Array<juce::var> knobs, pitches, gates;
+        for (float k : m.knobs) knobs.add (k);
+        for (int p : m.stepPitch) pitches.add (p);
+        for (bool g : m.stepOn) gates.add (g ? 1 : 0);
+        mo->setProperty ("knobs", knobs);
+        if (m.type == SeqType::Steps) { mo->setProperty ("pitch", pitches); mo->setProperty ("on", gates); }
+        ms.add (juce::var (mo));
+    }
+    for (auto& c : cables)
+    {
+        juce::Array<juce::var> a { c.fromModule, c.fromPort, c.toModule, c.toPort };
+        cs.add (a);
+    }
+    o->setProperty ("modules", ms);
+    o->setProperty ("cables", cs);
+    o->setProperty ("nextId", nextId);
+    return juce::var (o);
+}
+
+void SeqRack::fromVar (const juce::var& v)
+{
+    modules.clear();
+    cables.clear();
+    if (auto* ms = v["modules"].getArray())
+        for (auto& mv : *ms)
+        {
+            const auto type = (SeqType) juce::jlimit (0, numSeqTypes - 1, (int) mv["type"]);
+            auto m = makeModule ((int) mv["id"], type);
+            if (auto* ks = mv["knobs"].getArray())
+                for (int i = 0; i < ks->size() && i < (int) m.knobs.size(); ++i)
+                    m.knobs[(size_t) i] = (float) (*ks)[i];
+            if (auto* ps = mv["pitch"].getArray())
+                for (int i = 0; i < ps->size() && i < seqSteps; ++i)
+                    m.stepPitch[(size_t) i] = juce::jlimit (-12, 12, (int) (*ps)[i]);
+            if (auto* gs = mv["on"].getArray())
+                for (int i = 0; i < gs->size() && i < seqSteps; ++i)
+                    m.stepOn[(size_t) i] = (int) (*gs)[i] != 0;
+            modules.push_back (m);
+        }
+    if (auto* cs = v["cables"].getArray())
+        for (auto& cv : *cs)
+            if (auto* a = cv.getArray(); a != nullptr && a->size() == 4)
+                cables.push_back ({ (int) (*a)[0], (int) (*a)[1], (int) (*a)[2], (int) (*a)[3] });
+    nextId = juce::jmax ((int) v.getProperty ("nextId", 3), 3);
+    for (auto& m : modules) nextId = juce::jmax (nextId, m.id + 1);
+    if (find (clockId) == nullptr || find (outId) == nullptr)
+        *this = SeqRack();
+}
+
 //==============================================================================
 SeqNode::SeqNode (const SeqModule& m) : id (m.id), type (m.type), info (seqInfo (m.type))
 {

@@ -11,7 +11,17 @@ public:
 
     void initialise (const juce::String&) override { mainWindow = std::make_unique<MainWindow> (getApplicationName()); }
     void shutdown() override                       { mainWindow = nullptr; }
-    void systemRequestedQuit() override            { quit(); }
+    void systemRequestedQuit() override
+    {
+        // Offer to save first
+        if (mainWindow != nullptr)
+            if (auto* main = dynamic_cast<MainComponent*> (mainWindow->getContentComponent()))
+            {
+                main->requestQuit();
+                return;
+            }
+        quit();
+    }
 
     class MainWindow : public juce::DocumentWindow
     {
