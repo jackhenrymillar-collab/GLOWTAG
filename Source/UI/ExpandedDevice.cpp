@@ -192,14 +192,29 @@ void ExpandedDevice::paint (juce::Graphics& g)
     const float dt = (float) juce::jlimit (0.0, 0.1, t - lastFrame);
     lastFrame = t;
 
-    // The bricks never change: keep them in an image
-    if (bricks.isNull() || bricks.getWidth() != getWidth() || bricks.getHeight() != getHeight())
+    // The bricks never change: keep them in an image, at the screen's own resolution
+    float ds = 1.0f;
+    if (auto* top = getTopLevelComponent(); top != nullptr && top->getPeer() != nullptr)
+        if (auto* d = juce::Desktop::getInstance().getDisplays().getDisplayForRect (top->getScreenBounds()))
+            ds = juce::jlimit (1.0f, 3.0f, (float) d->scale);
+    const int bw = juce::jmax (1, juce::roundToInt ((float) getWidth() * ds)), bh = juce::jmax (1, juce::roundToInt ((float) getHeight() * ds));
+    if (bricks.isNull() || bricks.getWidth() != bw || bricks.getHeight() != bh)
     {
-        bricks = juce::Image (juce::Image::RGB, juce::jmax (1, getWidth()), juce::jmax (1, getHeight()), false);
+        bricks = juce::Image (juce::Image::RGB, bw, bh, false);
         juce::Graphics bg (bricks);
+        bg.addTransform (juce::AffineTransform::scale (ds));
         paintBricks (bg, getLocalBounds().toFloat());
     }
-    g.drawImageAt (bricks, 0, 0);
+    g.drawImage (bricks, getLocalBounds().toFloat());
+
+    // Soft light from the last frame's glass, blurred, under this frame's glass
+    glowLayer.draw (g, getLocalBounds().toFloat());
+    auto& gl = glow();
+    gl.sources.clear();
+    gl.collecting = true;
+    const auto toView = juce::AffineTransform::scale (scale).translated (wallArea.getX(), wallArea.getY());
+    gl.base = gl.current = toView;
+    gl.alpha = 1.0f;
 
     // The strip's colours follow the theme
     const auto* c = built->colours (0);
@@ -211,6 +226,8 @@ void ExpandedDevice::paint (juce::Graphics& g)
         built->wall->paintPools (g);
         built->wall->paint (g, t, dt);
     }
+    gl.base = gl.current = {};
+    gl.alpha = 1.0f;
 
     // Strip and footer
     g.setColour (juce::Colours::black.withAlpha (0.35f));
@@ -234,6 +251,9 @@ void ExpandedDevice::paint (juce::Graphics& g)
 
     label (g, "drag the glass   double-click a fader to reset it   shift drags finely   keys a to p play notes   esc closes",
            (float) getWidth() / 2, (float) getHeight() - 9, Align::centre, Colour (0xff6c6e75), 13);
+
+    gl.collecting = false;
+    glowLayer.build (getWidth(), getHeight(), scale);
 }
 
 //==============================================================================
