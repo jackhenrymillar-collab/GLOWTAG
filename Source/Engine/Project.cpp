@@ -27,7 +27,50 @@ std::shared_ptr<const AudioData> AudioData::load (const juce::File& file)
         const int b = juce::jmax (a + 1, (int) ((juce::int64) numSamples * (i + 1) / numPeaks));
         data->peaks[(size_t) i] = juce::jmin (1.0f, data->buffer.getMagnitude (a, juce::jmin (b, numSamples) - a));
     }
+    data->findOnsets();
     return data;
+}
+
+// Energy rising sharply from one short window to the next is a hit. Hits closer than 70 ms
+// are merged, and strengths are scaled so the loudest is 1.
+void AudioData::findOnsets()
+{
+    onsets.clear();
+    const int n = buffer.getNumSamples(), hop = 512;
+    if (n < hop * 4)
+        return;
+    std::vector<float> energy;
+    for (int a = 0; a + hop <= n; a += hop)
+    {
+        double e = 0.0;
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        {
+            const float* d = buffer.getReadPointer (ch, a);
+            for (int i = 0; i < hop; ++i) e += d[i] * d[i];
+        }
+        energy.push_back ((float) std::sqrt (e / hop));
+    }
+    const int gap = juce::jmax (1, (int) (0.07 * sampleRate / hop));
+    float best = 0.0f;
+    int last = -gap;
+    std::vector<std::pair<int, float>> raw;
+    for (size_t i = 1; i < energy.size(); ++i)
+    {
+        const float flux = juce::jmax (0.0f, energy[i] - energy[i - 1]);
+        if (flux <= 0.0f || flux < energy[i] * 0.25f) continue;
+        if ((int) i - last < gap)
+        {
+            if (! raw.empty() && flux > raw.back().second) raw.back() = { (int) i, flux };
+            continue;
+        }
+        raw.push_back ({ (int) i, flux });
+        last = (int) i;
+    }
+    for (auto& r : raw) best = juce::jmax (best, r.second);
+    if (best <= 0.0f)
+        return;
+    for (auto& r : raw)
+        onsets.push_back ({ (float) ((r.first - 1) * hop) / (float) n, r.second / best });
 }
 
 int Track::clipAt (double beat) const

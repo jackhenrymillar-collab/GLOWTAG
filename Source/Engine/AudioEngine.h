@@ -76,6 +76,7 @@ private:
         std::shared_ptr<SeqRuntime> seq, seqPending, seqRetired, seqUi;
         bool seqWasActive = false;
         juce::AudioBuffer<float> input, output;
+        juce::AudioBuffer<float> last;      // the patch output of the previous block, for sidechains
         std::array<analog::Console, 2> console;   // the Analogue stage, left and right
         bool consoleWasOn = false;
     };
@@ -95,6 +96,7 @@ private:
     bool swapProject (const std::function<bool()>& edit, bool resetTransport);
     // Console channel on a slot's patch output: trim, phase, width, Analogue. Returns the peak after it.
     float runChannel (TrackSlot&, Track&, int numSamples);
+    std::vector<const juce::AudioBuffer<float>*> sideBuffers;   // each slot's `last`, for graphs to read
     std::vector<int> busOrder, busDepth;     // buses sorted so each runs after everything that feeds it
     std::map<juce::String, std::shared_ptr<const AudioData>> fileCache;
 
