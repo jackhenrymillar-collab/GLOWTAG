@@ -15,6 +15,7 @@
 #include "UI/StatusBar.h"
 #include "UI/MixerView.h"
 #include "UI/EditorView.h"
+#include "UI/DeviceWall.h"
 
 // The whole window: owns the project, the audio engine and every view.
 // Also the application's menu bar model (File / View / Transport) on the Mac.
@@ -56,6 +57,8 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void togglePlay();
     void showCommandPalette();
+    void addSequencerModule (SeqType);          // onto the selected track's rack, which it opens
+    void loadFromWall (int deviceIndex);
     void enableMidiInputs();
     void drainRecording();
     void confirmDiscard (std::function<void()> then);   // save / don't save / cancel when the project is dirty
@@ -94,6 +97,7 @@ private:
     MixerView mixer { ctx };
     EditorView editor { ctx };
     StatusBar status;
+    DeviceWall wall;                            // hold Tab: every device as neon on a brick wall
 
     Mode mode = Mode::Arrange;
     bool rackShown = false;
