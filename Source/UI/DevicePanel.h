@@ -33,6 +33,7 @@ public:
     std::vector<int> jacks() const;
 
     std::function<void()> onMoved, onRemove, onPatchChanged;   // onPatchChanged: sample or pad changed, rebuild
+    std::function<void()> onRaise;                               // clicked: come forward, but stay under the cables
     std::function<void()> onOpenPlugin;                          // Plugin: double-click opens its editor
     float pulse = 0.0f;
     float flash = 0.0f;      // lit up after the mixer jumped here
@@ -71,11 +72,14 @@ private:
 
     const Module& module() const { return *patch.find (moduleId); }
     bool isEndpoint() const;
+    bool isUtility() const;
+    void paintUtility (juce::Graphics&);
 };
 
 // Transparent layer above the cards that draws the cables and jacks and handles patching:
 // drag from a jack to another to connect them, drag a plugged-in input to re-wire it,
-// double-click or right-click a cable to remove it.
+// double-click or right-click a cable to remove it. A cable only lands on a jack that carries the
+// same kind of signal: sound, notes or modulation.
 class CableLayer : public juce::Component
 {
 public:
@@ -83,6 +87,8 @@ public:
 
     void setPatch (Patch* p) { patch = p; repaint(); }
     std::function<void()> onChanged;
+    std::function<void (const juce::String&)> onHint;      // what the jack under the pointer is, or why a cable won't go there
+    float rowOffset = 0.0f;                                // how far down the rows sit (they are centred in full screen)
 
     bool hitTest (int x, int y) override;
     void paint (juce::Graphics&) override;
@@ -91,6 +97,7 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
 
 private:
     struct JackRef { int module = -1, port = -1; bool valid() const { return module >= 0; } };
@@ -108,8 +115,12 @@ private:
     JackRef jackAt (juce::Point<float>, float radius = 9.0f) const;
     int cableAt (juce::Point<float>) const;
     juce::Path cablePath (const Cable&) const;
-    static juce::Path cablePath (juce::Point<float> from, juce::Point<float> to, bool intoKnob);
+    juce::Path cablePath (juce::Point<float> from, juce::Point<float> to, bool intoKnob) const;
     bool canConnect (JackRef a, JackRef b) const;
+    juce::String describe (JackRef) const;
+    juce::String whyNot (JackRef from, JackRef to) const;
+    void hint (const juce::String&);
+    juce::String lastHint;
     juce::Colour colourFor (int module) const;
 };
 
@@ -128,22 +139,38 @@ public:
     void tick();
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+
+    // Full screen: the patch fills the window, drawn larger. Double-click empty space to open it, Esc closes.
+    bool isFullScreen() const { return fullScreen; }
+    void setFullScreen (bool);
+    std::function<void()> onFullScreenChanged;
+
+    // Height the panel wants in the window: the device row, the utility row and the header
+    static constexpr int preferredHeight = 362;
 
 private:
     struct Canvas : public juce::Component
     {
+        std::function<void()> onDoubleClick;
         void paint (juce::Graphics&) override;
+        void mouseDoubleClick (const juce::MouseEvent&) override { if (onDoubleClick) onDoubleClick(); }
     };
 
     AppContext& ctx;
-    juce::TextButton addButton { "+ Add module" }, tidyButton { "Tidy" };
+    juce::TextButton addButton { "+ Add module" }, tidyButton { "Tidy" }, fullButton { "Full screen" };
     juce::Viewport viewport;
+    juce::Component holder;               // what the viewport scrolls: the canvas, scaled up in full screen
     Canvas canvas;
+    bool fullScreen = false;
+    float zoom = 1.0f, rowOffset = 0.0f;
+    juce::String hintText;
     juce::OwnedArray<ModuleCard> cards;
     std::unique_ptr<CableLayer> cables;
     juce::OwnedArray<PluginWindow> pluginWindows;
 
     void rebuild();
+    void keepTrackSound();
     void updateCanvasSize();
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     ModuleCard* cardFor (int moduleId);

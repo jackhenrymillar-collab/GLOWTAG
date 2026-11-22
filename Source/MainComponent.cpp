@@ -36,6 +36,7 @@ MainComponent::MainComponent()
 
     // The device wall covers the whole window while Tab is held
     addChildComponent (wall);
+    devices.onFullScreenChanged = [this] { resized(); };
     wall.onLoad = [this] (int index) { loadFromWall (index); };
     wall.targetName = [this] { return ctx.selected().name; };
     wall.onClosed = [this] { settings->setValue ("deviceWall", wall.state()); };
@@ -227,6 +228,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
             return true;
     }
 
+    if (key == juce::KeyPress::escapeKey && devices.isFullScreen())  { devices.setFullScreen (false); return true; }
     if (key == juce::KeyPress::spaceKey)                         { togglePlay(); return true; }
     if (key == juce::KeyPress ('k', juce::ModifierKeys::commandModifier, 0)) { showCommandPalette(); return true; }
     if (key == juce::KeyPress ('n', juce::ModifierKeys::commandModifier, 0)) { newProject(); return true; }
@@ -469,23 +471,36 @@ void MainComponent::resized()
     status.setBounds (r.removeFromBottom (26));
     browser.setBounds (r.removeFromLeft (260));
 
+    // The device panel has two rows now; on a short window it gives some of that back
+    const int rackHeight = rackShown && mode != Mode::Mix ? (int) SequencerPanel::preferredHeight : 0;
+    const int deviceHeight = juce::jlimit (240, (int) DevicePanel::preferredHeight, r.getHeight() - rackHeight - 220);
+    const auto whole = getLocalBounds();
+
     switch (mode)
     {
         case Mode::Arrange:
-            devices.setBounds (r.removeFromBottom (rackShown ? 240 : 276));
+            devices.setBounds (r.removeFromBottom (deviceHeight));
             if (rackShown) sequencer.setBounds (r.removeFromBottom (SequencerPanel::preferredHeight));
             trackList.setBounds (r.removeFromLeft (210));
             arranger.setBounds (r);
             break;
         case Mode::Mix:
-            devices.setBounds (r.removeFromBottom (240));
+            devices.setBounds (r.removeFromBottom (deviceHeight));
             mixer.setBounds (r);
             break;
         case Mode::Edit:
-            devices.setBounds (r.removeFromBottom (rackShown ? 240 : 276));
+            devices.setBounds (r.removeFromBottom (deviceHeight));
             if (rackShown) sequencer.setBounds (r.removeFromBottom (SequencerPanel::preferredHeight));
             editor.setBounds (r);
             break;
+    }
+
+    // Full screen: the patch covers the whole window (the device wall still opens over it)
+    if (devices.isFullScreen())
+    {
+        devices.setBounds (whole);
+        devices.toFront (false);
+        if (wall.isOpen()) wall.toFront (false);
     }
 }
 

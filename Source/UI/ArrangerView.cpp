@@ -268,6 +268,9 @@ void ArrangerView::filesDropped (const juce::StringArray& files, int x, int y)
             const juce::SpinLock::ScopedLockType sl (ctx.project.lock);
             ctx.project.tracks[(size_t) t]->clips.push_back (clip);
         }
+        // On a track that only played an instrument, the track's own sound may not be patched in yet
+        if (ctx.project.tracks[(size_t) t]->patch.patchTrackSound())
+            ctx.engine.rebuildTrack (t);
         start = clip.end();
         ctx.selectClip (t, (int) ctx.project.tracks[(size_t) t]->clips.size() - 1);
     }

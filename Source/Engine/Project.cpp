@@ -463,6 +463,10 @@ void Track::fromVar (const juce::var& v)
             clips.push_back (c);
         }
     if (v.hasProperty ("patch")) patch.fromVar (v["patch"]);
+    // An older project heard audio clips through its instruments; keep them sounding
+    if (patch.upgraded)
+        for (auto& c : clips)
+            if (c.kind == ClipKind::Audio) { patch.patchTrackSound(); break; }
     if (v.hasProperty ("seq")) seq.fromVar (v["seq"]);
 }
 

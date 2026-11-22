@@ -55,6 +55,7 @@ If CMake complains about the SDK, point it at the one your tools ship, e.g.
 | Cmd D | Duplicate the selected clip |
 | 1 / 2 / 3 | Arrange / Mix / Edit |
 | Cmd K | Command palette (files, views, transport, theme) |
+| Esc | Leave the full screen device panel |
 | Tab | The device wall: hold to show it, let go to hide it. A quick tap leaves it open until Tab or Esc |
 | Cmd N / Cmd O / Cmd S / Shift Cmd S | New, open, save, save as (also in the File menu, with Open Recent) |
 | Up / Down | Select track |
@@ -84,6 +85,29 @@ chain, an LFO patches into the last module's first free knob). Drag between jack
 pull a plugged-in jack to re-wire it, double-click a cable to remove it, drag a module's header
 to move it, and right-click a module to remove it. Double-click a device in the browser to add it.
 Tidy lines everything up in signal order.
+
+The panel has two rows. The top row holds instruments and effects. The row beneath it is half the
+height and holds **utilities**: Attenuator (turn a signal down), Mixer (four inputs summed, each with
+its own level), Inverter (flip a signal over), Crossfade (blend A into B) and Slew (smooth a signal).
+Utilities come unpatched and work on sound or on modulation, whichever you plug into them first; the
+card says SOUND, MOD or FREE.
+
+Jacks carry one of three kinds of signal, and a cable only joins two jacks of the same kind:
+- **Sound** (large round jacks, solid cables): audio between devices.
+- **Notes** (square jacks, cables drawn as a row of bulbs): the track's MIDI, which is note pitch,
+  velocity and note on / off from clips, the keyboard, a MIDI controller and the sequencer rack. It
+  comes out of Track In's NOTES jack and goes only to an instrument's notes input. An instrument
+  takes nothing else, and only plays when a notes cable reaches it.
+- **Modulation** (small jacks, dashed cables): an LFO or a utility into a knob.
+
+While you drag a cable the jacks it cannot go to dim, and the line at the top of the panel says why
+a jack will not take it. An audio clip on a track that also has an instrument plays through Track
+In's SOUND jack, mixed in beside the instrument.
+
+**Full screen**: double-click any empty space in the device panel (or press Full screen) to give the
+patch the whole window, enlarged to fit. Esc or another double-click puts it back.
+
+![The device panel: devices on the top row, utilities beneath, with sound, notes and modulation cables](docs/device-panel.png)
 
 **Sequence** (the rolling sequencer). Press SEQ on an instrument or sampler track and its clips
 make way for a Eurorack-style rack that plays the track live, in time with the song. The rack
@@ -157,7 +181,7 @@ first, and the last project opens again next time.
 
 ## Tests
 
-Offline checks for the engine (transport, loop, clips, live MIDI, recording, patching, the sequencer rack,
+Offline checks for the engine (transport, loop, clips, live MIDI, recording, patching, signal kinds and the utility modules, the sequencer rack,
 save / load round trips, sends / returns / master routing, bus patching, the console channel, and the
 device wall's layout, search, arrow keys and saved state):
 
@@ -176,7 +200,7 @@ Source/
   Theme.*               colours (one-colour shades or Rainbow) and fonts
   Engine/
     Project.*           tracks, returns, master, clips, tempo; JSON save and load
-    Patch.*             modular device patch per track: modules, jacks, cables, auto-wiring
+    Patch.*             modular device patch per track: modules, jacks, signal kinds, cables, auto-wiring
     Graph.*             the running audio side of a patch (virtual analog nodes, hosted plugins)
     PluginHost.*        AU / VST3 scanning and instance creation
     Sequencer.*         rolling sequencer rack: modules, cables, auto-wiring, and the tick-based runtime

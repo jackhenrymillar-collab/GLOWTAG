@@ -53,9 +53,35 @@ public:
 
     std::array<float, subBlock> bufL {}, bufR {};
 
+    // Set by the graph from the cables: notes only reach a node whose notes input is patched
+    bool takesNotes = false;
+    virtual class UtilityNode* asUtility() { return nullptr; }
+
 protected:
     virtual float lo (int) const { return 0.0f; }
     const double sr;
+};
+
+// A utility (attenuator, mixer, inverter...) works on sound or on modulation, whichever it is patched
+// to. The graph fills its inputs each sub-block; sound comes out in bufL / bufR, modulation in modValue().
+class UtilityNode : public Node
+{
+public:
+    using Node::Node;
+
+    bool modMode = false;
+    std::array<std::array<float, subBlock>, Port::maxSigIns> inL {}, inR {};
+    std::array<float, Port::maxSigIns> inMod {};
+
+    void clearInputs();
+    void process (float* l, float* r, int n, double bpm) override;
+    float modValue() const override { return modOut; }
+    UtilityNode* asUtility() override { return this; }
+
+protected:
+    virtual void audio (float* l, float* r, int n) = 0;
+    virtual float control (int n) = 0;
+    float modOut = 0.0f;
 };
 
 class Graph
@@ -83,7 +109,7 @@ public:
     std::atomic<float> externalMod { 0.0f };
 
 private:
-    struct Link { Node* from; int fromPort; Node* to; int toPort; };
+    struct Link { Node* from; int fromPort; Node* to; int toPort; bool mod; };
     std::vector<std::unique_ptr<Node>> nodes;   // in processing order
     std::vector<Link> links;
     Node* input = nullptr;
