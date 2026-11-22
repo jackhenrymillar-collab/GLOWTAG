@@ -100,43 +100,55 @@ void TrackList::paint (juce::Graphics& g)
 {
     auto& th = Theme::get();
     g.fillAll (th.panel);
-
-    auto head = juce::Rectangle<float> (12.0f, 0.0f, (float) getWidth() - 24.0f, (float) Layout::rulerHeight);
-    g.setColour (th.muted);
-    Glow::drawSpacedText (g, "TRACKS", head, th.label (9.0f), 2.0f, juce::Justification::centredLeft);
     g.setColour (th.line2);
     g.drawHorizontalLine (Layout::rulerHeight - 1, 0.0f, (float) getWidth());
-
     for (size_t i = 0; i < ctx.project.tracks.size(); ++i)
     {
-        auto& t = *ctx.project.tracks[i];
         auto r = rowBounds ((int) i).toFloat();
-        const auto c = th.pal (t.colourIndex);
-        const bool selected = (int) i == ctx.selectedTrack;
-        const bool audible = ctx.project.isAudible ((int) i);
-
-        if (selected)
+        if ((int) i == ctx.selectedTrack)
         {
-            g.setColour (c.withAlpha (0.08f));
+            g.setColour (th.pal (ctx.project.tracks[i]->colourIndex).withAlpha (0.06f));
             g.fillRect (r);
         }
-        g.setColour (th.line2);
+        g.setColour (th.line2.withAlpha (0.6f));
         g.drawHorizontalLine ((int) r.getBottom() - 1, 0.0f, (float) getWidth());
-
-        // Colour tab
-        g.setColour (c.withAlpha (audible ? 1.0f : 0.35f));
-        g.fillRoundedRectangle (r.getX() + 6.0f, r.getY() + 9.0f, 3.0f, r.getHeight() - 18.0f, 1.5f);
-
-        auto text = r.withTrimmedLeft (18.0f).withTrimmedRight (108.0f).reduced (0.0f, 7.0f);
-        g.setColour (audible ? th.text : th.muted);
-        g.setFont (th.body (13.0f));
-        g.drawText (t.name, text.removeFromTop (text.getHeight() * 0.55f).toNearestInt(), juce::Justification::centredLeft);
-        g.setColour (th.muted.withAlpha (0.8f));
-        g.setFont (th.label (8.0f));
-        g.drawText (t.rolling.load() ? juce::String ("ROLLING SEQ") : kindName (t.kind), text.toNearestInt(), juce::Justification::centredLeft);
-
-        // Meter
-        drawMeter (g, juce::Rectangle<float> (r.getRight() - 14.0f, r.getY() + 10.0f, 5.0f, r.getHeight() - 20.0f),
-                   t.meter.load(), c);
     }
+
+    Neon::paintLit (g, getWidth(), getHeight(), glowLayer, 0.6f, [&] (juce::Graphics& gg, bool)
+    {
+        Neon::label (gg, "tracks", 14.0f, (float) Layout::rulerHeight * 0.5f + 5.0f, Neon::Align::left, juce::Colour (0xff6d7077), 13.0f);
+        for (size_t i = 0; i < ctx.project.tracks.size(); ++i)
+        {
+            auto& t = *ctx.project.tracks[i];
+            auto r = rowBounds ((int) i).toFloat();
+            const auto c = th.pal (t.colourIndex);
+            const bool selected = (int) i == ctx.selectedTrack;
+            const bool audible = ctx.project.isAudible ((int) i);
+
+            // A short tube in the track's colour, lit while the track can be heard
+            Neon::TubeOptions o;
+            o.w = 0.55f;
+            o.off = ! audible;
+            Neon::tube (gg, Neon::Line { { r.getX() + 8.0f, r.getY() + 9.0f }, { r.getX() + 8.0f, r.getBottom() - 9.0f } }, c, o);
+
+            const float mid = r.getCentreY();
+            auto name = t.name.toLowerCase();
+            const float room = r.getWidth() - 20.0f - 112.0f;
+            float size = 16.0f;
+            while (size > 11.0f && Neon::textWidth (name, size) > room) size -= 1.0f;
+            Neon::text (gg, name, r.getX() + 20.0f, mid + 1.0f, size, c, ! audible ? 0.0f : (selected ? 1.0f : 0.5f));
+            Neon::label (gg, t.rolling.load() ? juce::String ("rolling seq") : kindName (t.kind).toLowerCase(), r.getX() + 21.0f, mid + 14.0f,
+                         Neon::Align::left, juce::Colour (0xff6d7077), 11.0f);
+
+            // Meter: a column of bulbs
+            const float lv = juce::jlimit (0.0f, 1.0f, t.meter.load());
+            const int n = juce::jmax (3, (int) ((r.getHeight() - 16.0f) / 7.0f));
+            for (int k = 0; k < n; ++k)
+            {
+                const float y = r.getBottom() - 9.0f - (float) k * 7.0f;
+                const auto col = k >= n - 1 ? juce::Colour (0xffff4d5e) : (k >= n - 2 ? juce::Colour (0xffffd23a) : c);
+                Neon::bulb (gg, r.getRight() - 11.0f, y, col, (float) k / (float) n < lv ? 1.0f : 0.0f, 2.2f);
+            }
+        }
+    });
 }

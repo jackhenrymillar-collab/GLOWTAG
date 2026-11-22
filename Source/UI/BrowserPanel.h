@@ -40,6 +40,7 @@ private:
 
     const std::vector<Item>& items() const;
     mutable std::vector<Item> sampleItems;
+    Neon::GlowLayer glowLayer;
     mutable std::vector<Item> pluginItems;
     mutable juce::Array<juce::PluginDescription> pluginList;
     void refreshPlugins() const;

@@ -47,6 +47,7 @@ target_sources(Glowtag PRIVATE
     Source/UI/TrackList.cpp
     Source/UI/ArrangerView.cpp
     Source/UI/DevicePanel.cpp
+    Source/UI/DeviceCards.cpp
     Source/UI/SequencerPanel.cpp
     Source/UI/StatusBar.cpp
     Source/UI/MixerView.cpp

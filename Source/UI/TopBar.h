@@ -3,7 +3,7 @@
 #include "AppContext.h"
 #include "Widgets.h"
 
-// Top bar: logo, Arrange / Mix / Edit switch, art transport buttons,
+// Top bar, all neon: the logo, the arrange / mix / edit words, play stop rec as words,
 // the LCD (tempo, signature, position, time), theme swatches and the command button.
 class TopBar : public juce::Component
 {
@@ -25,11 +25,12 @@ public:
 private:
     AppContext& ctx;
     juce::TextButton modeButtons[3];
-    IconButton playButton { "Play", Icon::Play, Pal::Green };
-    IconButton stopButton { "Stop", Icon::Stop, Pal::Sky };
-    IconButton recButton  { "Record", Icon::Record, Pal::Rose };
-    IconButton loopButton { "Loop", Icon::Loop, Pal::Gold };
-    IconButton metroButton { "Metronome", Icon::Metronome, Pal::Sky };
+    IconButton playButton { "play", Icon::Play, Pal::Green };
+    IconButton stopButton { "stop", Icon::Stop, Pal::Green };
+    IconButton recButton  { "rec", Icon::Record, Pal::Rose };
+    IconButton loopButton { "loop", Icon::Loop, Pal::Green };
+    IconButton metroButton { "click", Icon::Metronome, Pal::Green };
+    Neon::GlowLayer glowLayer;
     juce::TextButton rainbowButton { "Rainbow" };
     juce::TextButton commandButton { "Cmd K" };
 

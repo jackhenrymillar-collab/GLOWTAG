@@ -1,77 +1,28 @@
 #include "DevicePanel.h"
 #include "../Engine/Samples.h"
+#include "../Engine/DeviceParams.h"
 
 namespace
 {
-    Icon iconFor (ModuleType t)
-    {
-        switch (t)
-        {
-            case ModuleType::Sampler:    return Icon::Sampler;
-            case ModuleType::Synth:      return Icon::Synth;
-            case ModuleType::Drums:      return Icon::Drums;
-            case ModuleType::Filter:     return Icon::Filter;
-            case ModuleType::Delay:      return Icon::Delay;
-            case ModuleType::Reverb:     return Icon::Reverb;
-            case ModuleType::EQ:         return Icon::EQ;
-            case ModuleType::Compressor: return Icon::Compressor;
-            case ModuleType::LFO:        return Icon::LFO;
-            case ModuleType::Drive:      return Icon::Drive;
-            case ModuleType::Plugin:     return Icon::Plugin;
-            case ModuleType::GasTube:    return Icon::GasTube;
-            case ModuleType::CrateDigger: return Icon::Crate;
-            case ModuleType::StringWall: return Icon::Strings;
-            case ModuleType::GhostTag:   return Icon::Ghost;
-            case ModuleType::Crowd:      return Icon::Crowd;
-            case ModuleType::Transformer: return Icon::Transformer;
-            case ModuleType::Input:      return Icon::Play;
-            case ModuleType::Output:     return Icon::Velocity;
-            case ModuleType::Attenuator: case ModuleType::Mixer: case ModuleType::Inverter:
-            case ModuleType::Crossfade:  case ModuleType::Slew:
-                break;                   // utilities draw their own small glyph
-        }
-        return Icon::Filter;
-    }
-
-    constexpr float headerHeight = 44.0f;
     constexpr float jackY = 60.0f;
     constexpr float notesJackDrop = 26.0f;      // a second jack on the same edge sits this far below the first
-
-    bool hasExtra (ModuleType t) { return t == ModuleType::Sampler || t == ModuleType::Drums || t == ModuleType::LFO || t == ModuleType::Compressor || t == ModuleType::Plugin; }
-    int extraWidth (ModuleType t) { return t == ModuleType::Sampler ? 96 : (t == ModuleType::Drums ? 104 : (t == ModuleType::Plugin ? 110 : 26)); }
+    const juce::Colour greyWord (0xff6d7077);
 }
 
 //==============================================================================
 ModuleCard::ModuleCard (AppContext& c, Patch& p, Track& t, int trackIdx, int id, int n)
     : ctx (c), patch (p), track (t), trackIndex (trackIdx), moduleId (id), numeral (n)
 {
-    const auto& info = moduleInfo (module().type);
-    for (size_t k = 0; k < info.knobs.size(); ++k)
-    {
-        const auto& name = info.knobs[k].first;
-        const bool bipolar = module().type == ModuleType::EQ && k < 3;
-        auto* s = sliders.add (new juce::Slider (juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox));
-        s->setRange (bipolar ? -1.0 : 0.0, 1.0);
-        s->setValue (module().knobValues[k], juce::dontSendNotification);
-        s->setDoubleClickReturnValue (true, info.knobs[k].second);
-        s->setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
-        s->getProperties().set ("pal", info.pal);
-        s->setTooltip (info.utility && module().type == ModuleType::Mixer ? "Level of input " + name : name);
-        s->onValueChange = [this, k, s]
-        {
-            const float v = (float) s->getValue();
-            if (auto* m = patch.find (moduleId))
-                m->knobValues[k] = v;
-            ctx.engine.setKnob (trackIndex, moduleId, (int) k, v);   // straight to the running patch
-            ctx.touched();
-        };
-        addAndMakeVisible (s);
-    }
-    setSize ((int) info.width, (int) Patch::heightOf (module().type));
+    const auto type = module().type;
+    const float w = DeviceCards::width (type), h = Patch::heightOf (type);
+    card = DeviceCards::make (ctx, trackIndex, moduleId, w, h);
+    card->dev.patchChanged = [this] { if (onPatchChanged) onPatchChanged(); };
+    card->dev.loadAudio = [this] { chooseSample(); };
+    card->chooseSample = [this] { chooseSample(); };
+    card->openPlugin = [this] { if (onOpenPlugin) onOpenPlugin(); };
+    setRepaintsOnMouseActivity (false);
+    setSize ((int) w, (int) h);
 }
-
-// Knob value as stored in the patch (for drawing the sampler window)
-#define k0(i) ((float) sliders[(i)]->getValue())
 
 bool ModuleCard::isEndpoint() const
 {
@@ -99,7 +50,7 @@ juce::Point<float> ModuleCard::jackPosition (int port) const
             return { w, h * 0.5f };
         if (Port::isSigIn (port))
         {
-            const float spacing = info.sigIns > 2 ? 15.0f : 22.0f;
+            const float spacing = info.sigIns > 2 ? 17.0f : 26.0f;
             return { 0.0f, h * 0.5f + ((float) (port - Port::sigInBase) - (float) (info.sigIns - 1) * 0.5f) * spacing };
         }
     }
@@ -109,313 +60,103 @@ juce::Point<float> ModuleCard::jackPosition (int port) const
     if (port == Port::notesOut) return { w, info.hasAudioOut ? jackY + notesJackDrop : jackY };
     if (port == Port::modOut)   return { w, jackY };
 
-    // Modulation inputs sit just left of each knob's label
+    // Modulation inputs sit at the left end of each knob's fader
     const int k = port - Port::modInBase;
-    if (k >= 0 && k < sliders.size())
-    {
-        auto b = sliders[k]->getBounds().toFloat();
-        return { b.getX() - 4.0f, b.getBottom() - 5.0f };
-    }
-    return {};
-}
-
-void ModuleCard::resized()
-{
-    const int n = sliders.size();
-    if (n == 0)
-        return;
-
-    if (isUtility())
-    {
-        // One row of small knobs under the title
-        auto u = getLocalBounds().reduced (14, 0).withTrimmedTop (24).withTrimmedBottom (18);
-        const int cell = u.getWidth() / n;
-        for (int i = 0; i < n; ++i)
-            sliders[i]->setBounds (juce::Rectangle<int> (u.getX() + i * cell, u.getY(), cell, u.getHeight()).withSizeKeepingCentre (32, 32));
-        return;
-    }
-
-    auto r = getLocalBounds().reduced (10, 0).withTrimmedTop ((int) headerHeight).withTrimmedBottom (8);
-    if (hasExtra (module().type))
-    {
-        extraArea = r.removeFromLeft (extraWidth (module().type)).reduced (0, 4);
-        r.removeFromLeft (6);
-    }
-    const int rows = n > 4 ? 2 : 1;
-    const int cols = (n + rows - 1) / rows;
-    const int cellW = r.getWidth() / cols;
-    const int cellH = r.getHeight() / rows;
-    const int knob = rows == 2 ? 40 : 50;
-
-    for (int i = 0; i < n; ++i)
-    {
-        auto cell = juce::Rectangle<int> (r.getX() + (i % cols) * cellW, r.getY() + (i / cols) * cellH, cellW, cellH);
-        cell.removeFromBottom (16);
-        sliders[i]->setBounds (cell.withSizeKeepingCentre (knob, knob));
-    }
-}
-
-// A utility: half height, a small title, what it is working on, and a glyph or a row of small knobs
-void ModuleCard::paintUtility (juce::Graphics& g)
-{
-    auto& th = Theme::get();
-    const auto& info = moduleInfo (module().type);
-    const auto c = th.pal (info.pal);
-    auto r = getLocalBounds().toFloat();
-    Glow::drawPanel (g, r, c, 8.0f, pulse);
-
-    g.setColour (th.text);
-    Glow::drawSpacedText (g, info.title.toUpperCase(), juce::Rectangle<float> (11.0f, 6.0f, r.getWidth() - 22.0f, 14.0f), th.heading (9.5f), 1.3f,
-                          juce::Justification::centredLeft);
-
-    // What it has settled on, with a lamp that follows the signal going through
-    const auto kind = patch.kindOf (moduleId, Port::sigOut);
-    const float lamp = juce::jlimit (0.0f, 1.0f, shownDisplay * 1.6f);
-    g.setColour (c.withAlpha (0.25f + 0.75f * lamp));
-    g.fillEllipse (r.getRight() - 15.0f, 10.0f, 5.0f, 5.0f);
-    g.setColour (th.muted);
-    g.setFont (th.label (6.5f));
-    g.drawText (kind == Signal::Audio ? "SOUND" : (kind == Signal::Mod ? "MOD" : "FREE"),
-                juce::Rectangle<float> (11.0f, r.getBottom() - 15.0f, r.getWidth() - 22.0f, 10.0f).toNearestInt(),
-                sliders.isEmpty() ? juce::Justification::centred : juce::Justification::centredRight);
-
-    if (module().type == ModuleType::Inverter)
-    {
-        // A wave and the same wave turned over
-        const float cx = r.getCentreX(), cy = r.getCentreY() + 3.0f;
-        juce::Path up, down;
-        up.startNewSubPath (cx - 20.0f, cy);
-        up.quadraticTo (cx - 10.0f, cy - 22.0f, cx, cy);
-        up.quadraticTo (cx + 10.0f, cy + 22.0f, cx + 20.0f, cy);
-        down.startNewSubPath (cx - 20.0f, cy);
-        down.quadraticTo (cx - 10.0f, cy + 22.0f, cx, cy);
-        down.quadraticTo (cx + 10.0f, cy - 22.0f, cx + 20.0f, cy);
-        g.setColour (c.withAlpha (0.3f));
-        g.strokePath (up, juce::PathStrokeType (1.2f));
-        Glow::strokeGlow (g, down, c, 1.5f, pulse);
-    }
-
-    g.setColour (th.muted);
-    for (int i = 0; i < sliders.size(); ++i)
-    {
-        auto b = sliders[i]->getBounds();
-        const auto name = module().type == ModuleType::Mixer ? "IN " + info.knobs[(size_t) i].first : info.knobs[(size_t) i].first.toUpperCase();
-        Glow::drawSpacedText (g, name, juce::Rectangle<float> ((float) b.getX() - 10.0f, (float) b.getBottom(), (float) b.getWidth() + 20.0f, 11.0f),
-                              th.label (6.5f), 1.0f, sliders.size() == 1 ? juce::Justification::centredLeft : juce::Justification::centred);
-    }
+    if (auto it = card->modJack.find (k); it != card->modJack.end())
+        return it->second;
+    return { 10.0f, h - 10.0f };
 }
 
 void ModuleCard::paint (juce::Graphics& g)
 {
-    if (isUtility())
-    {
-        paintUtility (g);
-        return;
-    }
-
-    auto& th = Theme::get();
+    using namespace Neon;
     const auto& info = moduleInfo (module().type);
-    const auto c = th.pal (info.pal);
-    auto r = getLocalBounds().toFloat();
-    Glow::drawPanel (g, r, c, 12.0f, pulse);
-    if (flash > 0.01f)
-    {
-        g.setColour (c.withAlpha (0.10f * flash));
-        g.fillRoundedRectangle (r, 12.0f);
-        g.setColour (c.withAlpha (juce::jmin (1.0f, flash)));
-        g.drawRoundedRectangle (r.reduced (1.0f), 12.0f, 2.0f);
-    }
+    const auto* c = card->built.colours (0);
+    const float w = (float) getWidth(), h = (float) getHeight();
+    const double t = now();
+    const float dt = lastPaint > 0.0 ? (float) juce::jlimit (0.0, 0.1, t - lastPaint) : 0.0f;
+    lastPaint = t;
+    const bool utility = isUtility(), endpoint = isEndpoint();
 
-    if (isEndpoint())
+    paintLit (g, getWidth(), getHeight(), glowLayer, 1.0f, [&] (juce::Graphics& gg, bool real)
     {
-        // Track in / out: title and a tall meter
-        const bool in = module().type == ModuleType::Input;
-        g.setColour (th.muted);
-        Glow::drawSpacedText (g, in ? "TRACK" : "TRACK", r.withHeight (34.0f).translated (0.0f, 10.0f), th.label (8.0f), 1.5f,
-                              juce::Justification::centred);
-        g.setColour (c);
-        Glow::drawSpacedText (g, in ? "IN" : "OUT", r.withHeight (24.0f).translated (0.0f, 34.0f), th.heading (15.0f), 2.0f,
-                              juce::Justification::centred);
-        if (in)
+        // The card: a faint pane in an unlit tube frame. Lit while the mixer points here or a file hovers.
+        if (real)
         {
-            // Two outputs: the track's own sound, and its notes
-            g.setColour (th.muted);
-            g.setFont (th.label (6.5f));
-            g.drawText ("SOUND", juce::Rectangle<float> (0.0f, jackY - 6.0f, r.getWidth() - 10.0f, 12.0f).toNearestInt(), juce::Justification::centredRight);
-            g.drawText ("NOTES", juce::Rectangle<float> (0.0f, jackY + notesJackDrop - 6.0f, r.getWidth() - 10.0f, 12.0f).toNearestInt(), juce::Justification::centredRight);
+            gg.setColour (juce::Colours::white.withAlpha (0.022f));
+            gg.fillRoundedRectangle (1.0f, 1.0f, w - 2.0f, h - 2.0f, 12.0f);
         }
-        const float meterTop = in ? 104.0f : 76.0f;
-        drawMeter (g, juce::Rectangle<float> (r.getCentreX() - 4.0f, meterTop, 8.0f, r.getHeight() - meterTop - 16.0f), track.meter.load(), c);
-        return;
-    }
+        const float lit = juce::jmax (dropHover ? 1.0f : 0.0f, juce::jmin (1.0f, flash));
+        TubeOptions frame;
+        frame.w = 0.6f;
+        frame.style = 0;
+        frame.off = lit < 0.05f;
+        tube (gg, roundRect (1.5f, 1.5f, w - 3.0f, h - 3.0f, utility ? 9.0f : 12.0f),
+              frame.off ? c[0] : rgba (c[0], 0.35f + 0.65f * lit), frame);
 
-    auto head = r.reduced (10.0f, 8.0f).removeFromTop (headerHeight - 12.0f);
-    Glow::drawIcon (g, iconFor (module().type), head.removeFromLeft (30.0f), c, pulse);
-    head.removeFromLeft (8.0f);
-    g.setColour (c.withAlpha (0.75f));
-    g.setFont (th.heading (11.0f));
-    g.drawText (romanNumeral (numeral), head.removeFromRight (30.0f).toNearestInt(), juce::Justification::centredRight);
-    g.setColour (th.text);
-    if (module().type == ModuleType::Plugin)
-    {
-        g.setFont (th.heading (12.5f));
-        g.drawFittedText (module().pluginName.isNotEmpty() ? module().pluginName : info.title, head.toNearestInt(), juce::Justification::centredLeft, 1);
-    }
-    else
-        Glow::drawSpacedText (g, info.title.toUpperCase(), head, th.heading (12.5f), 1.6f, juce::Justification::centredLeft);
-
-    // Module-specific displays
-    switch (module().type)
-    {
-        case ModuleType::Sampler:
+        if (endpoint)
         {
-            auto a = extraArea.toFloat();
-            g.setColour (th.display);
-            g.fillRoundedRectangle (a, 6.0f);
-            g.setColour (dropHover ? c : th.line2);
-            g.drawRoundedRectangle (a.reduced (0.5f), 6.0f, dropHover ? 1.5f : 1.0f);
-            auto data = ctx.engine.resolveSample (module().sampleName);
-            auto wave = a.reduced (4.0f, 14.0f);
-            if (data != nullptr)
+            // Track in / out: a lit word and a column of bulbs following the track's level
+            const bool in = module().type == ModuleType::Input;
+            label (gg, "track", w * 0.5f, 26.0f, Align::centre, greyWord, 12.0f);
+            text (gg, in ? "in" : "out", w * 0.5f, 48.0f, 20.0f, c[1], 1.0f, Align::centre);
+            if (in)
             {
-                const auto& peaks = data->peaks;
-                const float start = k0 (0), len = juce::jmax (0.01f, k0 (1));
-                g.setColour (c.withAlpha (0.12f));
-                g.fillRect (wave.getX() + wave.getWidth() * start, wave.getY(), wave.getWidth() * juce::jmin (len, 1.0f - start), wave.getHeight());
-                juce::Path p;
-                for (float x = 0.0f; x < wave.getWidth(); x += 1.0f)
+                label (gg, "sound", w - 10.0f, jackY + 4.0f, Align::right, greyWord, 10.0f);
+                label (gg, "notes", w - 10.0f, jackY + notesJackDrop + 4.0f, Align::right, greyWord, 10.0f);
+            }
+            const float top = in ? 110.0f : 84.0f, bottom = h - 18.0f;
+            const int bulbs = juce::jmax (4, (int) ((bottom - top) / 11.0f));
+            const float level = track.meter.load();
+            for (int i = 0; i < bulbs; ++i)
+            {
+                const float u = (float) (i + 1) / (float) bulbs;
+                const auto col = u > 0.9f ? juce::Colour (0xffff5a5a) : (u > 0.72f ? juce::Colour (0xffffd166) : c[1]);
+                bulb (gg, w * 0.5f, bottom - (float) i * 11.0f, col, level >= u - 0.5f / (float) bulbs ? 1.0f : 0.12f, 3.2f);
+            }
+            return;
+        }
+
+        const bool telling = t - card->built.wall->readoutTime < 2.2 && card->built.wall->readout.isNotEmpty();
+        if (utility)
+        {
+            // A small lit name, what it is working on, and a lamp that follows the signal going through
+            text (gg, info.title.toLowerCase(), 14.0f, 28.0f, 18.0f, c[1], 1.0f);
+            const auto kind = patch.kindOf (moduleId, Port::sigOut);
+            label (gg, telling ? card->built.wall->readout : (kind == Signal::Audio ? "sound" : (kind == Signal::Mod ? "mod" : "free")),
+                   w - 14.0f, 27.0f, Align::right, greyWord, 11.0f);
+            bulb (gg, w - 14.0f, 44.0f, c[0], 0.2f + 0.8f * juce::jlimit (0.0f, 1.0f, shownDisplay * 1.6f), 3.0f);
+            if (module().type == ModuleType::Inverter)
+            {
+                // A wave in bare glass and the same wave turned over, lit
+                Line up, down;
+                for (int i = 0; i <= 24; ++i)
                 {
-                    const float pk = peaks[(size_t) juce::jlimit (0, (int) peaks.size() - 1, (int) (x / wave.getWidth() * peaks.size()))];
-                    const float h = juce::jmax (0.5f, pk * wave.getHeight() * 0.5f);
-                    p.addRectangle (wave.getX() + x, wave.getCentreY() - h, 1.0f, h * 2.0f);
+                    const float u = (float) i / 24.0f, s = std::sin (u * juce::MathConstants<float>::twoPi) * 13.0f;
+                    up.push_back ({ w * 0.5f - 24.0f + u * 48.0f, 68.0f - s });
+                    down.push_back ({ w * 0.5f - 24.0f + u * 48.0f, 68.0f + s });
                 }
-                g.setColour (c.withAlpha (0.85f));
-                g.fillPath (p);
+                TubeOptions bare;
+                bare.w = 0.55f; bare.style = 0; bare.off = true;
+                tube (gg, up, c[0], bare);
+                TubeOptions litTube;
+                litTube.w = 0.65f; litTube.style = 0;
+                tube (gg, down, c[1], litTube);
             }
-            g.setColour (th.muted);
-            g.setFont (th.label (7.5f));
-            g.drawText (dropHover ? "DROP FILE" : juce::File (module().sampleName).getFileNameWithoutExtension().toUpperCase(),
-                        a.removeFromBottom (12.0f).toNearestInt(), juce::Justification::centred);
-            g.drawText ("CLICK TO CHOOSE", a.removeFromTop (12.0f).toNearestInt(), juce::Justification::centred);
-            break;
         }
-        case ModuleType::Drums:
+        else
         {
-            for (int p = 0; p < 16; ++p)
-            {
-                auto b = padBounds (p);
-                const bool lit = p == litPad;
-                g.setColour (lit ? c.withAlpha (0.35f) : th.display);
-                g.fillRoundedRectangle (b, 3.0f);
-                g.setColour (lit ? c : c.withAlpha (0.35f));
-                g.drawRoundedRectangle (b.reduced (0.5f), 3.0f, 1.0f);
-            }
-            g.setColour (th.muted);
-            g.setFont (th.label (7.0f));
-            g.drawText (litPad >= 0 ? module().padNames[(size_t) litPad].isNotEmpty() ? module().padNames[(size_t) litPad].toUpperCase() : Samples::defaultPads()[(size_t) litPad].toUpperCase()
-                                    : juce::String ("PADS 36 - 51"),
-                        extraArea.withTrimmedTop (extraArea.getHeight() - 12), juce::Justification::centred);
-            break;
+            DeviceCards::art (gg, module().type, 16.0f, 14.0f, c, t);
+            const auto name = module().type == ModuleType::Plugin && module().pluginName.isNotEmpty() ? module().pluginName : info.title;
+            const float nameSize = juce::jmin (25.0f, 25.0f * (w - 150.0f) / juce::jmax (1.0f, textWidth (name.toLowerCase(), 25.0f)));
+            text (gg, name.toLowerCase(), 90.0f, 38.0f, nameSize, c[1], 1.0f);
+            label (gg, telling ? card->built.wall->readout : (dropHover ? juce::String ("drop to load") : DeviceCards::line (module().type)),
+                   91.0f, 57.0f, Align::left, telling ? c[2] : greyWord, 12.0f);
+            label (gg, romanNumeral (numeral).toLowerCase(), w - 16.0f, 30.0f, Align::right, rgba (c[0], 0.8f), 13.0f);
         }
-        case ModuleType::LFO:
-        {
-            // A dot riding the LFO output
-            auto a = extraArea.toFloat();
-            g.setColour (th.display);
-            g.fillRoundedRectangle (a, 6.0f);
-            g.setColour (th.line2);
-            g.drawRoundedRectangle (a.reduced (0.5f), 6.0f, 1.0f);
-            const float y = a.getCentreY() - shownDisplay * (a.getHeight() * 0.42f);
-            g.setColour (c.withAlpha (0.25f));
-            g.fillEllipse (a.getCentreX() - 7.0f, y - 7.0f, 14.0f, 14.0f);
-            g.setColour (c);
-            g.fillEllipse (a.getCentreX() - 3.5f, y - 3.5f, 7.0f, 7.0f);
-            break;
-        }
-        case ModuleType::Compressor:
-        {
-            // Gain reduction meter, falling from the top
-            auto a = extraArea.toFloat().reduced (8.0f, 0.0f);
-            g.setColour (th.display);
-            g.fillRoundedRectangle (a, 3.0f);
-            const float gr = juce::jlimit (0.0f, 1.0f, shownDisplay / 20.0f);
-            g.setColour (c.withAlpha (0.8f));
-            g.fillRoundedRectangle (a.withHeight (a.getHeight() * gr), 3.0f);
-            g.setColour (th.muted);
-            g.setFont (th.label (7.0f));
-            g.drawText ("GR", extraArea.withTrimmedTop (extraArea.getHeight() - 12).expanded (8, 0), juce::Justification::centred);
-            break;
-        }
-        case ModuleType::Plugin:
-        {
-            // Plugin plate: format, state and an invitation to open its window
-            auto a = extraArea.toFloat();
-            auto* node = ctx.engine.liveNode (trackIndex, moduleId);
-            const bool loaded = node != nullptr && node->hostedPlugin() != nullptr;
-            g.setColour (th.display);
-            g.fillRoundedRectangle (a, 6.0f);
-            g.setColour (loaded ? c.withAlpha (0.5f) : th.pal ((int) Pal::Amber).withAlpha (0.6f));
-            g.drawRoundedRectangle (a.reduced (0.5f), 6.0f, 1.0f);
-            auto inner = a.reduced (6.0f, 8.0f);
-            g.setColour (loaded ? c : th.pal ((int) Pal::Amber));
-            auto* instance = loaded ? dynamic_cast<juce::AudioPluginInstance*> (node->hostedPlugin()) : nullptr;
-            Glow::drawSpacedText (g, instance != nullptr ? instance->getPluginDescription().pluginFormatName.toUpperCase()
-                                                         : juce::String (loaded ? "PLUGIN" : "NOT FOUND"),
-                                  inner.removeFromTop (16.0f), th.heading (11.0f), 1.5f, juce::Justification::centred);
-            g.setColour (th.muted);
-            g.setFont (th.label (7.0f));
-            g.drawFittedText (loaded ? "DOUBLE-CLICK\nTO OPEN" : "SCAN PLUGINS\nIN THE BROWSER", inner.toNearestInt(), juce::Justification::centred, 2);
-            // Output level
-            auto m = a.reduced (8.0f, 0.0f).removeFromBottom (5.0f).translated (0.0f, -6.0f);
-            g.setColour (th.line2);
-            g.fillRoundedRectangle (m, 2.0f);
-            g.setColour (c.withAlpha (0.85f));
-            g.fillRoundedRectangle (m.withWidth (m.getWidth() * juce::jlimit (0.0f, 1.0f, shownDisplay)), 2.0f);
-            break;
-        }
-        case ModuleType::Input: case ModuleType::Output: case ModuleType::Synth: case ModuleType::Filter:
-        case ModuleType::Drive: case ModuleType::Delay: case ModuleType::Reverb: case ModuleType::EQ:
-        case ModuleType::Attenuator: case ModuleType::Mixer: case ModuleType::Inverter:
-        case ModuleType::Crossfade: case ModuleType::Slew:
-        case ModuleType::GasTube: case ModuleType::CrateDigger: case ModuleType::StringWall:
-        case ModuleType::GhostTag: case ModuleType::Crowd: case ModuleType::Transformer:
-            break;
-    }
 
-    g.setColour (th.muted);
-    for (int i = 0; i < sliders.size(); ++i)
-    {
-        auto b = sliders[i]->getBounds();
-        Glow::drawSpacedText (g, info.knobs[(size_t) i].first.toUpperCase(),
-                              juce::Rectangle<float> ((float) b.getX() - 14.0f, (float) b.getBottom() + 1.0f, (float) b.getWidth() + 28.0f, 13.0f),
-                              th.label (7.5f), 1.1f, juce::Justification::centred);
-    }
-}
-
-juce::Rectangle<float> ModuleCard::padBounds (int pad) const
-{
-    auto a = extraArea.withTrimmedBottom (12).toFloat();
-    const float w = a.getWidth() / 4.0f, h = a.getHeight() / 4.0f;
-    const int row = 3 - pad / 4, col = pad % 4;     // pad 0 bottom-left, like a drum machine
-    return juce::Rectangle<float> (a.getX() + col * w, a.getY() + row * h, w, h).reduced (1.5f);
-}
-
-int ModuleCard::padAt (juce::Point<int> p) const
-{
-    if (module().type != ModuleType::Drums) return -1;
-    for (int i = 0; i < 16; ++i)
-        if (padBounds (i).contains (p.toFloat()))
-            return i;
-    return -1;
-}
-
-void ModuleCard::playPad (int pad)
-{
-    const double now = juce::Time::getMillisecondCounterHiRes() * 0.001;
-    ctx.engine.midiInput.addMessageToQueue (juce::MidiMessage::noteOn (1, 36 + pad, 0.9f).withTimeStamp (now));
-    ctx.engine.midiInput.addMessageToQueue (juce::MidiMessage::noteOff (1, 36 + pad).withTimeStamp (now + 0.05));
-    litPad = pad;
-    repaint();
+        card->built.wall->paint (gg, t, real ? dt : 0.0f);
+    });
 }
 
 void ModuleCard::showSampleMenu (std::function<void (const juce::String&)> choose)
@@ -435,34 +176,139 @@ void ModuleCard::showSampleMenu (std::function<void (const juce::String&)> choos
     });
 }
 
+// Sampler and Crate Digger: a built-in sample. Drum Rack: a sample for the selected pad.
+void ModuleCard::chooseSample()
+{
+    const bool drums = module().type == ModuleType::Drums;
+    const int pad = drums ? juce::jlimit (0, 15, card->dev.choice (Param::Drums::Selected)) : 0;
+    showSampleMenu ([safe = juce::Component::SafePointer<ModuleCard> (this), drums, pad] (const juce::String& name)
+    {
+        if (safe == nullptr) return;
+        if (auto* m = safe->patch.find (safe->moduleId))
+        {
+            if (drums) m->padNames[(size_t) pad] = name;
+            else       m->sampleName = name;
+        }
+        if (safe->onPatchChanged) safe->onPatchChanged();
+    });
+}
+
 void ModuleCard::tick()
 {
+    // Keep moving things moving: about 20 frames a second while something on the card animates
+    // or a readout is showing, and once more when the readout goes
+    const double t = Neon::now();
+    float d = shownDisplay;
     if (auto* node = ctx.engine.liveNode (trackIndex, moduleId))
+        d = node->display.load();
+    const bool changed = std::abs (d - shownDisplay) > 0.01f;
+    shownDisplay = d;
+    const auto& wall = *card->built.wall;
+    const bool telling = t - wall.readoutTime < 2.3;
+    lastReadout = wall.readoutTime;
+    const bool animate = (card->animated && ctx.engine.isPlaying()) || telling || (isEndpoint() && ctx.engine.isPlaying());
+    if ((animate || changed) && t - lastPaint > 0.045)
+        repaint();
+    else if (! telling && lastReadout > 0.0 && t - lastReadout < 2.6 && t - lastPaint > 0.2)
+        repaint();
+}
+
+void ModuleCard::mouseDown (const juce::MouseEvent& e)
+{
+    onControl = moving = false;
+    if (! e.mods.isPopupMenu() && card->built.wall->mouseDown (e.position))
     {
-        const float d = node->display.load();
-        if (std::abs (d - shownDisplay) > 0.01f)
-        {
-            shownDisplay = d;
-            if (hasExtra (module().type)) repaint (extraArea);
-            else if (isUtility()) repaint (getWidth() - 20, 6, 14, 14);      // its lamp
-        }
+        onControl = true;
+        if (onRaise) onRaise();
+        repaint();
+        return;
+    }
+
+    if (e.mods.isPopupMenu() && ! isEndpoint())
+    {
+        const auto type = module().type;
+        juce::PopupMenu menu;
+        if (type == ModuleType::Plugin)
+            menu.addItem (2, "Open " + module().pluginName);
+        if (type == ModuleType::Sampler || type == ModuleType::CrateDigger)
+            menu.addItem (3, "Choose a sample");
+        if (type == ModuleType::Drums)
+            menu.addItem (3, "Choose a sample for pad " + juce::String (card->dev.choice (Param::Drums::Selected) + 1));
+        if (DeviceViews::hasView (type))
+            menu.addItem (4, "Open the expanded view");
+        menu.addSeparator();
+        menu.addItem (1, "Remove " + (type == ModuleType::Plugin ? module().pluginName : moduleInfo (type).title));
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                            [safe = juce::Component::SafePointer<ModuleCard> (this)] (int result)
+                            {
+                                if (safe == nullptr) return;
+                                if (result == 1 && safe->onRemove)            safe->onRemove();
+                                else if (result == 2 && safe->onOpenPlugin)   safe->onOpenPlugin();
+                                else if (result == 3)                         safe->chooseSample();
+                                else if (result == 4 && safe->onOpenExpanded) safe->onOpenExpanded();
+                            });
+        return;
+    }
+    moving = ! e.mods.isPopupMenu();
+    dragStart = module().position;
+    if (onRaise) onRaise();
+}
+
+void ModuleCard::mouseDrag (const juce::MouseEvent& e)
+{
+    if (onControl)
+    {
+        card->built.wall->mouseDrag (e.position, e.mods.isShiftDown());
+        repaint();
+        return;
+    }
+    if (! moving)
+        return;
+    if (auto* m = patch.find (moduleId))
+    {
+        // Cards slide along their row
+        m->position = { juce::jmax (0.0f, dragStart.x + (float) e.getDistanceFromDragStartX()), Patch::rowY (m->type) };
+        setTopLeftPosition (juce::roundToInt (m->position.x), getY());
+        if (onMoved)
+            onMoved();
     }
 }
 
 void ModuleCard::mouseUp (const juce::MouseEvent&)
 {
-    if (litPad >= 0) { litPad = -1; repaint (extraArea); }
+    if (onControl)
+        card->built.wall->mouseUp();
+    onControl = moving = false;
+    repaint();
+}
+
+void ModuleCard::mouseMove (const juce::MouseEvent& e)
+{
+    setMouseCursor (juce::MouseCursor (card->built.wall->mouseMove (e.position)));
+    repaint();
+}
+
+void ModuleCard::mouseExit (const juce::MouseEvent&)
+{
+    card->built.wall->mouseExit();
+    repaint();
 }
 
 void ModuleCard::mouseDoubleClick (const juce::MouseEvent& e)
 {
     if (e.mods.isPopupMenu()) return;
+    // A fader resets; empty space opens the expanded view (a plugin opens its own window)
+    if (card->built.wall->doubleClick (e.position)) { repaint(); return; }
     if (module().type == ModuleType::Plugin && onOpenPlugin)
         onOpenPlugin();
-    // Empty space on a built-in device opens its expanded view (the pads and the waveform keep their clicks)
-    else if (! isEndpoint() && ! isUtility() && onOpenExpanded
-             && ! ((module().type == ModuleType::Drums || module().type == ModuleType::Sampler) && extraArea.contains (e.getPosition())))
+    else if (! isEndpoint() && ! isUtility() && onOpenExpanded)
         onOpenExpanded();
+}
+
+void ModuleCard::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
+{
+    if (card->built.wall->wheel (e.position, wheel.deltaY)) { repaint(); return; }
+    juce::Component::mouseWheelMove (e, wheel);      // the panel scrolls
 }
 
 bool ModuleCard::isInterestedInFileDrag (const juce::StringArray& files)
@@ -473,81 +319,20 @@ bool ModuleCard::isInterestedInFileDrag (const juce::StringArray& files)
     return false;
 }
 
-void ModuleCard::filesDropped (const juce::StringArray& files, int x, int y)
+void ModuleCard::filesDropped (const juce::StringArray& files, int, int)
 {
     dropHover = false;
     if (auto* m = patch.find (moduleId))
     {
         if (m->type == ModuleType::Sampler || m->type == ModuleType::CrateDigger)
             m->sampleName = files[0];
-        else if (const int pad = padAt ({ x, y }); pad >= 0)
-            m->padNames[(size_t) pad] = files[0];
+        else if (m->type == ModuleType::Drums)
+            m->padNames[(size_t) juce::jlimit (0, 15, card->dev.choice (Param::Drums::Selected))] = files[0];
         else
             return;
         if (onPatchChanged) onPatchChanged();
     }
     repaint();
-}
-
-void ModuleCard::mouseDown (const juce::MouseEvent& e)
-{
-    // Sampler waveform: click to pick a built-in sample. Drum pads: click plays, right-click picks a sample.
-    if (module().type == ModuleType::Sampler && extraArea.contains (e.getPosition()))
-    {
-        showSampleMenu ([safe = juce::Component::SafePointer<ModuleCard> (this)] (const juce::String& name)
-        {
-            if (safe == nullptr) return;
-            if (auto* m = safe->patch.find (safe->moduleId)) m->sampleName = name;
-            if (safe->onPatchChanged) safe->onPatchChanged();
-        });
-        return;
-    }
-    if (const int pad = padAt (e.getPosition()); pad >= 0)
-    {
-        if (e.mods.isPopupMenu())
-            showSampleMenu ([safe = juce::Component::SafePointer<ModuleCard> (this), pad] (const juce::String& name)
-            {
-                if (safe == nullptr) return;
-                if (auto* m = safe->patch.find (safe->moduleId)) m->padNames[(size_t) pad] = name;
-                if (safe->onPatchChanged) safe->onPatchChanged();
-            });
-        else
-            playPad (pad);
-        return;
-    }
-
-    if (e.mods.isPopupMenu() && ! isEndpoint())
-    {
-        juce::PopupMenu menu;
-        if (module().type == ModuleType::Plugin)
-            menu.addItem (2, "Open " + module().pluginName);
-        menu.addItem (1, "Remove " + (module().type == ModuleType::Plugin ? module().pluginName : moduleInfo (module().type).title));
-        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
-                            [safe = juce::Component::SafePointer<ModuleCard> (this)] (int result)
-                            {
-                                if (result == 1 && safe != nullptr && safe->onRemove)
-                                    safe->onRemove();
-                                else if (result == 2 && safe != nullptr && safe->onOpenPlugin)
-                                    safe->onOpenPlugin();
-                            });
-        return;
-    }
-    dragStart = module().position;
-    if (onRaise) onRaise();
-}
-
-void ModuleCard::mouseDrag (const juce::MouseEvent& e)
-{
-    if (e.mods.isPopupMenu() || litPad >= 0 || (module().type == ModuleType::Sampler && extraArea.contains (e.getMouseDownPosition())))
-        return;
-    if (auto* m = patch.find (moduleId))
-    {
-        // Cards slide along their row
-        m->position = { juce::jmax (0.0f, dragStart.x + (float) e.getDistanceFromDragStartX()), Patch::rowY (m->type) };
-        setTopLeftPosition (juce::roundToInt (m->position.x), getY());
-        if (onMoved)
-            onMoved();
-    }
 }
 
 //==============================================================================
@@ -613,6 +398,17 @@ CableLayer::JackRef CableLayer::jackAt (juce::Point<float> p, float radius) cons
     return best;
 }
 
+bool CableLayer::skipsCard (float fromX, float toX) const
+{
+    if (patch != nullptr)
+        for (auto& m : patch->modules)
+            if (! moduleInfo (m.type).utility)
+                if (auto* card = cardFor (m.id))
+                    if ((float) card->getX() > fromX + 4.0f && (float) card->getRight() < toX - 4.0f)
+                        return true;
+    return false;
+}
+
 juce::Path CableLayer::cablePath (juce::Point<float> a, juce::Point<float> b, bool intoKnob) const
 {
     // A hanging cable: leaves the jack sideways, sags a little, and arrives from below for knob inputs.
@@ -641,6 +437,21 @@ juce::Path CableLayer::cablePath (juce::Point<float> a, juce::Point<float> b, bo
             line.lineTo (inX, gapY);
             line.lineTo (inX, b.y);
         }
+        line.lineTo (b);
+        return line.createPathWithRoundedCorners (11.0f);
+    }
+    // A sound or note cable that passes other cards on the device row runs under them, through the
+    // gap between the rows, so it never crosses a card's faders
+    if (! lowA && ! intoKnob && b.x - a.x > 90.0f && skipsCard (a.x, b.x))
+    {
+        const float lane = std::fmod (a.x * 0.29f + b.x * 0.13f, 8.0f) - 4.0f;
+        const float gapY = rowOffset + Patch::top + Patch::cardHeight + 11.0f + lane;
+        juce::Path line;
+        line.startNewSubPath (a);
+        line.lineTo (a.x + 14.0f, a.y);
+        line.lineTo (a.x + 14.0f, gapY);
+        line.lineTo (b.x - 14.0f, gapY);
+        line.lineTo (b.x - 14.0f, b.y);
         line.lineTo (b);
         return line.createPathWithRoundedCorners (11.0f);
     }
@@ -1106,6 +917,22 @@ void DevicePanel::rebuild()
         return 0;
     };
 
+    // Cards grew taller and wider: keep each row's cards from lying on top of one another
+    for (const bool utilityRow : { false, true })
+    {
+        std::vector<Module*> row;
+        for (auto& m : patch.modules)
+            if (moduleInfo (m.type).utility == utilityRow)
+                row.push_back (&m);
+        std::sort (row.begin(), row.end(), [] (auto* a, auto* b) { return a->position.x < b->position.x; });
+        float minX = 0.0f;
+        for (auto* m : row)
+        {
+            m->position.x = juce::jmax (m->position.x, minX);
+            minX = m->position.x + moduleInfo (m->type).width + (utilityRow ? Patch::utilityGap : Patch::gap) * 0.5f;
+        }
+    }
+
     for (auto& m : patch.modules)
     {
         auto* card = cards.add (new ModuleCard (ctx, patch, track, ctx.selectedTrack, m.id, numeralFor (m.id)));
@@ -1276,7 +1103,7 @@ void DevicePanel::resized()
     head.removeFromRight (8);
     tidyButton.setBounds (head.removeFromRight (70));
     head.removeFromRight (8);
-    addButton.setBounds (head.removeFromRight (130));
+    addButton.setBounds (head.removeFromRight (80));
     viewport.setBounds (r.withTrimmedBottom (8));
     updateCanvasSize();
 }
@@ -1286,7 +1113,7 @@ void DevicePanel::setFullScreen (bool full)
     if (fullScreen == full)
         return;
     fullScreen = full;
-    fullButton.setButtonText (full ? "Exit full screen" : "Full screen");
+    fullButton.setButtonText (full ? "exit full screen" : "full screen");
     fullButton.setToggleState (full, juce::dontSendNotification);
     viewport.setViewPosition (0, 0);
     if (onFullScreenChanged)
@@ -1330,17 +1157,18 @@ void DevicePanel::paint (juce::Graphics& g)
 
     auto head = getLocalBounds().reduced (12, 0).removeFromTop (36).toFloat();
     auto& t = ctx.selected();
-    g.setColour (th.muted);
-    Glow::drawSpacedText (g, "DEVICES", head, th.label (9.0f), 2.0f, juce::Justification::centredLeft);
-    g.setColour (th.pal (t.colourIndex));
-    Glow::drawSpacedText (g, t.name.toUpperCase(), head.withTrimmedLeft (84.0f), th.heading (13.0f), 2.0f,
-                          juce::Justification::centredLeft);
+    const auto col = th.isRainbow() ? th.pal (t.colourIndex) : th.themeColour();
+    Neon::paintLit (g, getWidth(), 36, headGlow, 0.7f, [&] (juce::Graphics& gg, bool)
+    {
+        Neon::label (gg, "devices", head.getX(), head.getCentreY() + 4.0f, Neon::Align::left, juce::Colour (0xff6d7077), 13.0f);
+        Neon::text (gg, t.name.toLowerCase(), head.getX() + 72.0f, head.getCentreY() + 7.0f, 20.0f, col, 0.9f);
+    });
     // Hint line: what the jack under the pointer carries, or why a cable won't go there
     const bool telling = hintText.isNotEmpty();
     g.setColour (telling ? th.text.withAlpha (0.85f) : th.muted.withAlpha (0.7f));
     g.setFont (th.body (11.0f));
     const juce::String help = fullScreen ? "Drag between jacks to patch.  Double-click a cable to remove it.  Esc or double-click empty space to leave full screen."
-                                         : "Drag between jacks to patch.  Double-click a cable to remove it.  Double-click empty space for full screen.";
+                                         : "Drag between jacks to patch.  Drag faders, click words.  Double-click empty space for full screen.";
     g.drawFittedText (telling ? hintText : help,
                       head.withTrimmedLeft (260.0f).withTrimmedRight (fullScreen ? 392.0f : 342.0f).toNearestInt(), juce::Justification::centredRight, 1, 0.8f);
 }

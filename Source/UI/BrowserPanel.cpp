@@ -1,6 +1,7 @@
 #include "BrowserPanel.h"
 #include "../Engine/Samples.h"
 #include "../Engine/PluginHost.h"
+#include "DeviceCards.h"
 
 namespace
 {
@@ -192,60 +193,77 @@ void BrowserPanel::paint (juce::Graphics& g)
     g.setColour (th.line2);
     g.drawVerticalLine (getWidth() - 1, 0.0f, (float) getHeight());
 
-    auto head = getLocalBounds().reduced (12).removeFromTop (24).toFloat();
-    g.setColour (th.text);
-    Glow::drawSpacedText (g, "BROWSER", head, th.heading (14.0f), 2.5f, juce::Justification::centredLeft);
-
     const auto& list = items();
     const int bottom = tab == 3 ? listArea.getBottom() : getHeight() - 8;
-    if (tab == 3 && list.empty())
-    {
-        g.setColour (th.muted);
-        g.setFont (th.body (12.0f));
-        const bool scanning = PluginHost::get().isScanning();
-        g.drawFittedText (scanning ? "Scanning\n" + PluginHost::get().scanningName()
-                                   : "No plugins listed yet.\n\nScan to find the AU and VST3 plugins on this Mac, then double-click one to add it to the selected track.",
-                          listArea.reduced (8), juce::Justification::centredTop, 8);
-    }
-    for (int i = 0; i < (int) list.size(); ++i)
-    {
-        auto r = itemBounds (i).toFloat();
-        if (r.getBottom() > (float) bottom)
-            break;
+    const auto grey = juce::Colour (0xff6d7077);
+    const auto theme = th.themeColour();
+    const double t = Neon::now();
 
-        const auto& it = list[(size_t) i];
-        const auto c = th.pal (it.pal);
-        const bool lit = i == hovered || i == chosen;
+    Neon::paintLit (g, getWidth(), getHeight(), glowLayer, 0.8f, [&] (juce::Graphics& gg, bool real)
+    {
+        auto head = getLocalBounds().reduced (12).removeFromTop (24).toFloat();
+        Neon::text (gg, "browser", head.getX() + 2.0f, head.getBottom() - 3.0f, 24.0f, theme, 0.9f);
 
-        if (tab != 0 && tab != 3)
+        if (tab == 3 && list.empty())
         {
-            // Device card, like the ability cards: framed panel, icon, serif title, numeral
-            Glow::drawPanel (g, r, lit ? c : c.withMultipliedAlpha (0.65f), 10.0f, i == chosen ? 1.0f : 0.0f);
-            Glow::drawIcon (g, it.icon, r.removeFromLeft (64.0f).reduced (12.0f), c, lit ? 0.8f : 0.0f);
-            auto text = r.reduced (2.0f, 12.0f);
-            g.setColour (th.text);
-            Glow::drawSpacedText (g, it.name.toUpperCase(), text.removeFromTop (text.getHeight() * 0.55f),
-                                  th.heading (13.0f), 1.6f, juce::Justification::centredLeft);
-            g.setColour (th.muted);
-            g.setFont (th.body (11.5f));
-            g.drawText (it.detail, text.toNearestInt(), juce::Justification::centredLeft);
-            g.setColour (c.withAlpha (0.7f));
-            g.setFont (th.heading (11.0f));
-            g.drawText (romanNumeral (i + 1), itemBounds (i).reduced (12, 8), juce::Justification::topRight);
+            if (real)
+            {
+                gg.setColour (th.muted);
+                gg.setFont (th.body (12.0f));
+                const bool scanning = PluginHost::get().isScanning();
+                gg.drawFittedText (scanning ? "Scanning\n" + PluginHost::get().scanningName()
+                                            : "No plugins listed yet.\n\nScan to find the AU and VST3 plugins on this Mac, then double-click one to add it to the selected track.",
+                                   listArea.reduced (8), juce::Justification::centredTop, 8);
+            }
+            return;
         }
-        else
+
+        for (int i = 0; i < (int) list.size(); ++i)
         {
-            g.setColour (lit ? th.panel2.brighter (0.05f) : th.panel2);
-            g.fillRoundedRectangle (r, 8.0f);
-            g.setColour (lit ? c.withAlpha (0.7f) : th.line2);
-            g.drawRoundedRectangle (r.reduced (0.5f), 8.0f, 1.0f);
-            Glow::drawIcon (g, it.icon, r.removeFromLeft (34.0f).reduced (8.0f), c);
-            g.setColour (th.text);
-            g.setFont (th.body (12.5f));
-            g.drawText (it.name, r.withTrimmedRight (90).toNearestInt(), juce::Justification::centredLeft);
-            g.setColour (th.muted);
-            g.setFont (th.label (8.5f));
-            g.drawText (it.detail.toUpperCase(), r.withTrimmedRight (8).toNearestInt(), juce::Justification::centredRight);
+            auto r = itemBounds (i).toFloat();
+            if (r.getBottom() > (float) bottom)
+                break;
+
+            const auto& it = list[(size_t) i];
+            const bool lit = i == hovered || i == chosen;
+            const auto c = th.isRainbow() ? th.pal (it.pal) : theme;
+
+            // A faint pane under the pointer or the chosen row, nothing more
+            if (real && lit)
+            {
+                gg.setColour (juce::Colours::white.withAlpha (i == chosen ? 0.05f : 0.03f));
+                gg.fillRoundedRectangle (r, 8.0f);
+            }
+
+            if (tab == 1)
+            {
+                // A device: its small neon piece, its name in lit lettering, a grey line under it
+                const auto type = deviceTypes[i];
+                juce::Colour cols[3];
+                if (th.isRainbow()) DeviceCards::palette (type, cols);
+                else { cols[0] = theme; cols[1] = Neon::mix (theme, juce::Colours::white, 0.45f); cols[2] = Neon::mix (theme, juce::Colours::white, 0.22f); }
+                if (! lit) for (auto& col : cols) col = col.withMultipliedAlpha (0.75f);
+                DeviceCards::artScaled (gg, type, r.getX() + 8.0f, r.getY() + 10.0f, 0.62f, cols, t);
+                Neon::text (gg, it.name.toLowerCase(), r.getX() + 58.0f, r.getY() + 26.0f, 19.0f, cols[1], lit ? 1.0f : 0.75f);
+                Neon::label (gg, it.detail.toLowerCase(), r.getX() + 59.0f, r.getY() + 43.0f, Neon::Align::left, grey, 12.0f);
+            }
+            else if (tab == 2)
+            {
+                // A sequencer module: a lamp in its colour and its name
+                Neon::bulb (gg, r.getX() + 18.0f, r.getCentreY() - 6.0f, c, lit ? 1.0f : 0.55f, 4.5f);
+                Neon::text (gg, it.name.toLowerCase(), r.getX() + 36.0f, r.getY() + 26.0f, 19.0f, Neon::mix (c, juce::Colours::white, 0.3f), lit ? 1.0f : 0.7f);
+                Neon::label (gg, it.detail.toLowerCase(), r.getX() + 37.0f, r.getY() + 43.0f, Neon::Align::left, grey, 12.0f);
+            }
+            else
+            {
+                // A sample or a plugin: a small lamp, the name in neon, its detail in grey on the right
+                Neon::bulb (gg, r.getX() + 12.0f, r.getCentreY(), c, lit ? 1.0f : 0.45f, 3.2f);
+                const float detailW = juce::jmin (r.getWidth() * 0.45f, Neon::textWidth (it.detail.toLowerCase(), 11.0f) * 0.62f + 8.0f);
+                const float room = r.getWidth() - 34.0f - detailW;
+                const float size = juce::jlimit (11.0f, 16.0f, 16.0f * room / juce::jmax (1.0f, Neon::textWidth (it.name.toLowerCase(), 16.0f)));
+                Neon::text (gg, it.name.toLowerCase(), r.getX() + 26.0f, r.getCentreY() + size * 0.32f, size, Neon::mix (c, juce::Colours::white, 0.35f), lit ? 1.0f : 0.6f);
+                Neon::label (gg, it.detail.toLowerCase(), r.getRight() - 8.0f, r.getCentreY() + 4.0f, Neon::Align::right, grey, 11.0f);
+            }
         }
-    }
+    });
 }

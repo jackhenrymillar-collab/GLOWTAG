@@ -150,6 +150,7 @@ namespace
 void gasWall (Builder& b)
 {
     using namespace Param::GasTube;
+    using Param::GasTube::Glow;   // not the Glow drawing helpers
     auto* dev = &b.d;
     auto& wall = b.wall;
     auto* w = &wall;

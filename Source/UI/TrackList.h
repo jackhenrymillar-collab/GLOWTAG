@@ -19,6 +19,7 @@ private:
     AppContext& ctx;
     juce::OwnedArray<SmallToggle> muteButtons, soloButtons, seqButtons;
     int builtGeneration = -1;
+    Neon::GlowLayer glowLayer;
 
     juce::Rectangle<int> rowBounds (int index) const;
 };

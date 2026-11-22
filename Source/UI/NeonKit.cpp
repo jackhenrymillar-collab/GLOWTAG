@@ -11,6 +11,39 @@ Look& look() { static Look l; return l; }
 
 Glow& glow() { static Glow g; return g; }
 
+void paintLit (juce::Graphics& g, int width, int height, GlowLayer& layer, float unit, const std::function<void (juce::Graphics&, bool)>& draw)
+{
+    auto& gl = glow();
+    const bool wasCollecting = gl.collecting;
+    if (wasCollecting) { draw (g, true); return; }      // already inside a view that gathers its own light
+    gl.sources.clear();
+    gl.collecting = true;
+    gl.base = gl.current = {};
+    gl.alpha = 1.0f;
+    {
+        juce::Image none (juce::Image::ARGB, 1, 1, true);
+        juce::Graphics dg (none);
+        dg.reduceClipRegion (juce::Rectangle<int>());
+        draw (dg, false);
+    }
+    gl.collecting = false;
+    layer.build (width, height, unit);
+    layer.draw (g, juce::Rectangle<int> (width, height).toFloat());
+    draw (g, true);
+}
+
+GlowLayer& scratchGlow() { static GlowLayer l; l.bloomAmount = 0.3f; return l; }
+
+void wordButton (juce::Graphics& g, const juce::String& s, juce::Rectangle<float> box, float size, Colour col, bool on, bool over, juce::Justification just)
+{
+    const float w = textWidth (s, size);
+    float x = box.getX();
+    if (just.testFlags (juce::Justification::horizontallyCentred)) x = box.getCentreX() - w * 0.5f;
+    else if (just.testFlags (juce::Justification::right)) x = box.getRight() - w;
+    const float baseline = box.getCentreY() + size * 0.3f;
+    text (g, s, x, baseline, size, col, on ? (over ? 1.0f : 0.9f) : (over ? 0.42f : 0.0f));
+}
+
 void Glow::add (const juce::Path& p, Colour c, float width, const juce::AffineTransform& t)
 {
     if (! collecting || p.isEmpty() || alpha <= 0.01f || c.getAlpha() == 0) return;
@@ -58,7 +91,7 @@ void GlowLayer::draw (juce::Graphics& g, juce::Rectangle<float> area) const
     const float G = look().glow;
     juce::Graphics::ScopedSaveState s (g);
     g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
-    g.setOpacity (clamp01 (0.55f * G));
+    g.setOpacity (clamp01 (bloomAmount * G));
     g.drawImage (bloom, area);
     g.setOpacity (clamp01 (0.95f * G));
     g.drawImage (halo, area);
@@ -591,7 +624,7 @@ void Wall::drawItem (juce::Graphics& g, Item& it, const Colour* c)
             }
             if (it.text.isNotEmpty())
             {
-                const float w = text (g, it.text, it.lx, it.ly, 17.0f, col, on ? 1.0f : 0.55f);
+                const float w = text (g, it.text, it.lx, it.ly, labelSize, col, on ? 1.0f : 0.55f);
                 if (it.isNew) ringMark (g, it.lx + w + 7.0f, it.ly - 5.0f, col);
             }
             break;

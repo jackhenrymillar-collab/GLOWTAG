@@ -869,11 +869,12 @@ void MixerView::paint (juce::Graphics& g)
     auto& th = Theme::get();
     g.fillAll (th.isVintage() ? Theme::tinted (0xff161617, th.themeColour(), 0.04f) : th.bg);
     auto head = getLocalBounds().reduced (14, 0).removeFromTop (34).toFloat();
-    g.setColour (th.text);
-    Glow::drawSpacedText (g, "MIXER", head, th.heading (14.0f), 2.5f, juce::Justification::centredLeft);
-    g.setColour (th.muted);
     auto& p = ctx.project;
-    Glow::drawSpacedText (g, juce::String ((int) p.tracks.size()) + " TRACKS  /  " + juce::String ((int) p.buses.size()) + (p.buses.size() == 1 ? " BUS  /  " : " BUSES  /  ")
-                              + juce::String (Project::numReturns) + " RETURNS  /  MASTER",
-                          head.withTrimmedRight (176.0f), th.label (8.5f), 1.5f, juce::Justification::centredRight);
+    const auto counts = juce::String ((int) p.tracks.size()) + " tracks   " + juce::String ((int) p.buses.size()) + (p.buses.size() == 1 ? " bus   " : " buses   ")
+                      + juce::String (Project::numReturns) + " returns   master";
+    Neon::paintLit (g, getWidth(), 40, Neon::scratchGlow(), 0.7f, [&] (juce::Graphics& gg, bool)
+    {
+        Neon::text (gg, "mixer", head.getX(), head.getCentreY() + 8.0f, 22.0f, th.themeColour(), 0.9f);
+        Neon::label (gg, counts, head.getRight() - 176.0f, head.getCentreY() + 4.0f, Neon::Align::right, juce::Colour (0xff6d7077), 12.0f);
+    });
 }
