@@ -190,6 +190,50 @@ namespace
                 { svg ("M26 18v-8M38 18v-8"), 0.9f },
                 { svg ("M32 46v6c0 4 6 4 8 0s4-6 10-4"), 0.5f },
                 { circle (32, 28, 3), 0.7f, true } };
+            case Icon::GasTube: return {
+                // A glass tube with its electrodes, glowing down the middle, a spark beside it
+                { svg ("M26 14a6 6 0 0 1 12 0v36a6 6 0 0 1-12 0z") },
+                { svg ("M30 8v6M34 8v6M30 50v6M34 50v6"), 0.7f },
+                { svg ("M32 20v24"), 0.5f },
+                { svg ("M46 18l5 7-4 2 5 8"), 0.55f },
+                { svg ("M14 24c-3 3-3 9 0 12"), 0.4f } };
+            case Icon::Crate: return {
+                // A record on the platter, the tone arm, and sleeves in the crate
+                { circle (38, 32, 20) },
+                { circle (38, 32, 7), 0.6f },
+                { circle (38, 32, 2), 0.7f, true },
+                { svg ("M58 8v14L48 34"), 0.85f },
+                { svg ("M6 56V26M12 56V22"), 0.5f },
+                { svg ("M4 56h18"), 0.4f } };
+            case Icon::Strings: return {
+                // Strings across the wall between nut and bridge, with the slide bar on them
+                { svg ("M10 10v44M54 10v44") },
+                { svg ("M10 18h44M10 28h44M10 38h44M10 48h44"), 0.85f },
+                { svg ("M38 6v52"), 0.6f },
+                { circle (38, 6, 2.5f), 0.7f, true } };
+            case Icon::Ghost: return {
+                // A tag and its echoes, each smaller and paler
+                { svg ("M6 42c6-16 12-16 14 0s8 10 12-6") },
+                { svg ("M32 30c4-10 8-10 9 0s5 6 8-4"), 0.6f },
+                { svg ("M49 20c2-6 4-6 5 0s3 3 5-2"), 0.35f },
+                { svg ("M4 54h56"), 0.35f } };
+            case Icon::Crowd: return {
+                // Three people on a stage
+                { circle (32, 22, 6) },
+                { svg ("M20 46a12 12 0 0 1 24 0") },
+                { circle (13, 28, 4.5f), 0.6f },
+                { svg ("M4 46a9 9 0 0 1 18 0"), 0.6f },
+                { circle (51, 28, 4.5f), 0.6f },
+                { svg ("M42 46a9 9 0 0 1 18 0"), 0.6f },
+                { svg ("M4 54h56"), 0.4f } };
+            case Icon::Transformer: return {
+                // A circuit board: a trace through a diode, and a spark where it fails
+                { svg ("M8 14h48v36H8z") },
+                { svg ("M8 32h16M40 32h16"), 0.8f },
+                { svg ("M24 24v16l14-8z") },
+                { svg ("M38 24v16"), 0.8f },
+                { svg ("M48 18l-3 5h5l-3 5"), 0.55f },
+                { circle (14, 22, 2), 0.6f, true } };
             case Icon::Metronome: return {
                 { svg ("M24 10h16l10 44H14z") },
                 { svg ("M32 46l12-30"), 0.9f },

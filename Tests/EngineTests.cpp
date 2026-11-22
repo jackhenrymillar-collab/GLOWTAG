@@ -1082,6 +1082,111 @@ int main()
         }
     }
 
+    std::cout << "Workshop devices: Gas Tube, Crate Digger, String Wall, Ghost Tag, Crowd, Transformer\n";
+    {
+        auto resolve = [] (const juce::String& n) { return Samples::find (n); };
+        auto render = [] (Graph& g, int blocks, float level = 0.0f, bool skipFirst = false)
+        {
+            std::vector<float> il (block), ir (block), ol (block), orr (block);
+            float peak = 0.0f;
+            int t = 0;
+            bool finite = true;
+            for (int b = 0; b < blocks; ++b)
+            {
+                for (int i = 0; i < block; ++i, ++t)
+                    il[(size_t) i] = ir[(size_t) i] = level * std::sin ((float) t * 0.05f);
+                g.process (il.data(), ir.data(), ol.data(), orr.data(), block, 90.0);
+                if (skipFirst && b == 0) continue;
+                for (int i = 0; i < block; ++i)
+                {
+                    if (! std::isfinite (ol[(size_t) i]) || ! std::isfinite (orr[(size_t) i])) finite = false;
+                    peak = juce::jmax (peak, std::abs (ol[(size_t) i]), std::abs (orr[(size_t) i]));
+                }
+            }
+            return finite ? peak : 100.0f;
+        };
+
+        check (Samples::find ("Found Record") != nullptr, "the Found Record loop is in the bank");
+
+        for (auto type : { ModuleType::GasTube, ModuleType::CrateDigger, ModuleType::StringWall })
+        {
+            const auto name = moduleInfo (type).title;
+            Patch p;
+            p.add (type);
+            Graph g (p, sr, resolve);
+            check (g.hasInstrument(), (name + " is an instrument").toRawUTF8());
+            check (render (g, 4) < 1e-4f, (name + " is quiet with no notes").toRawUTF8());
+            g.noteOn (48, 0.9f, -1.0);
+            g.noteOn (55, 0.8f, -1.0);
+            const float held = render (g, 40);
+            check (held > 0.01f && held <= 2.0f, (name + " sounds and stays in range").toRawUTF8());
+            g.allNotesOff();
+            render (g, 1500);
+            const float after = render (g, 8);
+            check (after < (type == ModuleType::CrateDigger ? 0.05f : 0.02f), (name + " fades after the notes end").toRawUTF8());
+        }
+
+        // String Wall: each mode and material stays bounded, and the bow sustains
+        {
+            Patch p; const int s = p.add (ModuleType::StringWall);
+            Graph g (p, sr, resolve);
+            bool bounded = true;
+            for (int mode = 0; mode < 3; ++mode)
+                for (int mat = 0; mat < 3; ++mat)
+                {
+                    g.find (s)->knob[Param::Strings::Mode] = (float) mode;
+                    g.find (s)->knob[Param::Strings::Material] = (float) mat;
+                    g.noteOn (48, 1.0f, -1.0); g.noteOn (52, 1.0f, -1.0); g.noteOn (55, 1.0f, -1.0);
+                    const float pk = render (g, 60);
+                    if (! (pk > 0.001f && pk <= 2.0f)) { bounded = false; std::cout << "    strings mode " << mode << " mat " << mat << " peak " << pk << "\n"; }
+                    g.allNotesOff(); render (g, 200);
+                }
+            check (bounded, "String Wall: pluck, bow and feedback stay bounded on every material");
+        }
+
+        // Gas Tube: every gas sounds
+        {
+            Patch p; const int s = p.add (ModuleType::GasTube);
+            Graph g (p, sr, resolve);
+            bool all = true;
+            for (int gas = 0; gas < 4; ++gas)
+            {
+                g.find (s)->knob[Param::GasTube::Gas] = (float) gas;
+                g.noteOn (60, 1.0f, -1.0);
+                const float pk = render (g, 30);
+                if (! (pk > 0.01f && pk <= 2.0f)) all = false;
+                g.allNotesOff(); render (g, 400);
+            }
+            check (all, "Gas Tube: every gas glows within range");
+        }
+
+        for (auto type : { ModuleType::GhostTag, ModuleType::Crowd, ModuleType::Transformer })
+        {
+            const auto name = moduleInfo (type).title;
+            Patch p; const int e = p.add (type);
+            p.connect (Patch::inputId, Port::audioOut, e, Port::audioIn);
+            Graph g (p, sr, resolve);
+            const float pk = render (g, 200, 0.5f, true);
+            check (pk > 0.01f && pk < 4.0f, (name + " passes a bounded signal").toRawUTF8());
+            g.find (e)->knob[0] = 1.0f; g.find (e)->knob[1] = 1.0f; g.find (e)->knob[2] = 1.0f;
+            const float hard = render (g, 200, 0.9f, true);
+            check (hard > 0.001f && hard < 4.0f, (name + " stays bounded with its first knobs up").toRawUTF8());
+        }
+
+        // Ghost Tag hold freezes the past and keeps sounding without input
+        {
+            Patch p; const int e = p.add (ModuleType::GhostTag);
+            p.connect (Patch::inputId, Port::audioOut, e, Port::audioIn);
+            Graph g (p, sr, resolve);
+            g.find (e)->knob[Param::Ghost::Mix] = 1.0f;
+            render (g, 400, 0.5f);
+            g.find (e)->knob[Param::Ghost::Hold] = 1.0f;
+            render (g, 100, 0.5f);
+            const float held = render (g, 100, 0.0f);
+            check (held > 0.005f && held < 4.0f, "Ghost Tag: a held stretch keeps playing after the input stops");
+        }
+    }
+
     std::cout << (failures == 0 ? "\nAll passed\n" : "\nSome checks failed\n");
     return failures == 0 ? 0 : 1;
 }

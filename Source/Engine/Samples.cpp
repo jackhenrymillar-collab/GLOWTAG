@@ -4,6 +4,7 @@
 namespace
 {
     constexpr double sr = 48000.0;
+    std::shared_ptr<AudioData> finish (std::shared_ptr<AudioData>);
 
     std::shared_ptr<AudioData> make (const juce::String& name, double seconds, std::function<float (float t, juce::Random&)> gen)
     {
@@ -25,7 +26,12 @@ namespace
         // Short fade out so nothing clicks
         d->buffer.applyGainRamp (0, juce::jmax (0, n - 64), juce::jmin (64, n), 1.0f, 0.0f);
         d->buffer.copyFrom (1, 0, d->buffer, 0, 0, n);
+        return finish (d);
+    }
 
+    std::shared_ptr<AudioData> finish (std::shared_ptr<AudioData> d)
+    {
+        const int n = d->buffer.getNumSamples();
         const int numPeaks = 256;
         d->peaks.resize (numPeaks);
         for (int p = 0; p < numPeaks; ++p)
@@ -61,6 +67,125 @@ namespace
             const float a = juce::jmin (1.0f, t * 30.0f);
             return v * a * env (t, decay);
         };
+    }
+
+
+    // "Found Record": two bars of a soul loop at 90 bpm (electric piano chords, bass, vibes, a break),
+    // pressed a little hot. The Crate Digger digs through it until you load a record of your own.
+    std::shared_ptr<AudioData> foundRecord()
+    {
+        const double bt = 60.0 / 90.0;
+        const int N = (int) std::round (8.0 * bt * sr);
+        auto d = std::make_shared<AudioData>();
+        d->sampleRate = sr;
+        d->fileName = "Found Record";
+        d->buffer.setSize (2, N);
+        d->buffer.clear();
+        auto* L = d->buffer.getWritePointer (0);
+        auto* R = d->buffer.getWritePointer (1);
+        juce::Random rng (3);
+        auto rnd = [&rng] { return rng.nextFloat() * 2.0f - 1.0f; };
+        auto mtof = [] (double n) { return 440.0 * std::pow (2.0, (n - 69.0) / 12.0); };
+        auto put = [&] (double t0, double len, const std::function<std::pair<float, float> (double, int)>& fn)
+        {
+            const int s0 = (int) std::round (t0 * sr), n = (int) std::round (len * sr);
+            for (int i = 0; i < n && s0 + i < N; ++i)
+            {
+                const auto v = fn (i / sr, i);
+                L[s0 + i] += v.first;
+                R[s0 + i] += v.second;
+            }
+        };
+        auto ep = [&] (int note, double t0, double len, float pan)
+        {
+            const double w = analog::twoPi * mtof (note);
+            put (t0, len + 0.35, [=] (double x, int)
+            {
+                const double env = juce::jmin (1.0, x / 0.004) * std::exp (-x / 1.1) * (x > len ? std::exp (-(x - len) / 0.07) : 1.0);
+                const double tr = 1.0 + 0.2 * std::sin (analog::twoPi * 5.2 * x);
+                const double v = (std::sin (w * x) + 0.42 * std::sin (2 * w * x) + 0.12 * std::sin (3 * w * x) + 0.22 * std::sin (7.1 * w * x) * std::exp (-x / 0.04)) * env * 0.07;
+                return std::pair<float, float> ((float) (v * (1 - pan) * tr), (float) (v * (1 + pan) * (2 - tr)));
+            });
+        };
+        auto bass = [&] (int note, double t0, double len)
+        {
+            const double w = analog::twoPi * mtof (note);
+            put (t0, len + 0.1, [=] (double x, int)
+            {
+                const double env = juce::jmin (1.0, x / 0.006) * std::exp (-x / 0.5) * (x > len ? std::exp (-(x - len) / 0.03) : 1.0);
+                const float v = (float) ((std::sin (w * x) + 0.3 * std::sin (2 * w * x)) * env * 0.3);
+                return std::pair<float, float> (v, v);
+            });
+        };
+        auto vib = [&] (int note, double t0)
+        {
+            const double w = analog::twoPi * mtof (note);
+            put (t0, 1.0, [=] (double x, int)
+            {
+                const double v = (std::sin (w * x) + 0.3 * std::sin (4 * w * x) * std::exp (-x / 0.08)) * std::exp (-x / 0.45) * 0.08 * (1 + 0.3 * std::sin (analog::twoPi * 6 * x));
+                return std::pair<float, float> ((float) (v * 0.7), (float) (v * 1.2));
+            });
+        };
+        auto kick = [&] (double t)
+        {
+            double ph = 0.0;
+            put (t, 0.45, [&] (double x, int i)
+            {
+                ph += analog::twoPi * (48 + 90 * std::exp (-x / 0.03)) / sr;
+                const float v = (float) ((std::sin (ph) * std::exp (-x / 0.15) + (i < 90 ? rnd() * 0.3 : 0.0)) * 0.75);
+                return std::pair<float, float> (v, v);
+            });
+        };
+        auto snare = [&] (double t, float g)
+        {
+            float pr = 0.0f;
+            put (t, 0.35, [&] (double x, int)
+            {
+                const float n = rnd(), hp = n - pr;
+                pr = n;
+                const float v = (float) ((std::sin (analog::twoPi * 190 * x) * std::exp (-x / 0.045) * 0.35 + (n * 0.4 + hp * 0.3) * std::exp (-x / 0.1) * 0.5) * g);
+                return std::pair<float, float> (v, v * 0.95f);
+            });
+        };
+        auto hat = [&] (double t, float g)
+        {
+            float pr = 0.0f;
+            put (t, 0.12, [&] (double x, int)
+            {
+                const float n = rnd(), hp = n - pr;
+                pr = n;
+                const float v = (float) (hp * std::exp (-x / 0.025) * 0.16 * g);
+                return std::pair<float, float> (v * 0.85f, v * 1.1f);
+            });
+        };
+        const int chords[4][5] = { { 41, 56, 60, 63, 67 }, { 37, 56, 60, 61, 65 }, { 46, 53, 56, 60, 61 }, { 36, 55, 58, 60, 65 } };
+        for (int k = 0; k < 4; ++k)
+        {
+            const double t0 = k * 2 * bt;
+            for (int j = 0; j < 4; ++j)
+            {
+                ep (chords[k][j + 1], t0 + j * 0.006, 1.35 * bt, j % 2 ? 0.35f : -0.35f);
+                ep (chords[k][j + 1], t0 + 1.5 * bt, 0.4 * bt, j % 2 ? -0.25f : 0.25f);
+            }
+            bass (chords[k][0], t0, 0.9 * bt);
+            bass (chords[k][0], t0 + 1.5 * bt, 0.35 * bt);
+            bass (chords[k][0] + 12, t0 + 1.75 * bt, 0.2 * bt);
+        }
+        const int vibes[5] = { 72, 70, 67, 65, 63 };
+        const double vibeAt[5] = { 0, 0.5, 1, 2, 2.5 };
+        for (int i = 0; i < 5; ++i) vib (vibes[i], (4.5 + vibeAt[i]) * bt);
+        for (int bar = 0; bar < 2; ++bar)
+        {
+            const double o = bar * 4 * bt;
+            for (double b : { 0.0, 1.5, 2.75 }) kick (o + b * bt);
+            for (double b : { 1.0, 3.0 }) snare (o + b * bt, 1.0f);
+            snare (o + 3.75 * bt, 0.3f);
+            for (int h = 0; h < 8; ++h) hat (o + h * 0.5 * bt + (h % 2 ? 0.08 * bt : 0.0), h % 2 ? 0.7f : 1.0f);
+        }
+        const float peak = juce::jmax (d->buffer.getMagnitude (0, 0, N), d->buffer.getMagnitude (1, 0, N));
+        const float k = 1.15f / juce::jmax (1e-6f, peak);
+        for (int i = 0; i < N; ++i) { L[i] = std::tanh (L[i] * k); R[i] = std::tanh (R[i] * k); }
+        return finish (d);
     }
 
     std::vector<Samples::Entry> build()
@@ -173,6 +298,7 @@ namespace
             const float pop = r.nextFloat() < 0.0015f ? noise (r) * 2.0f : 0.0f;
             return lp * 1.5f + pop * env (std::fmod (t, 0.01f), 300.0f);
         });
+        v.push_back ({ "Found Record", "Loops", foundRecord() });
         return v;
     }
 }

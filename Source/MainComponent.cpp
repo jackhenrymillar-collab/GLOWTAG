@@ -412,7 +412,7 @@ void MainComponent::timerCallback()
         for (int t = 0; want.isNotEmpty() && t < (int) project.tracks.size() && ! expanded.isOpen(); ++t)
             for (auto& m : project.tracks[(size_t) t]->patch.modules)
                 if (moduleInfo (m.type).title.equalsIgnoreCase (want)) { expanded.open (t, m.id); break; }
-        for (int ti = 0; want.isNotEmpty() && ! expanded.isOpen() && ti <= (int) ModuleType::Slew; ++ti)
+        for (int ti = 0; want.isNotEmpty() && ! expanded.isOpen() && ti < numModuleTypes; ++ti)
             if (moduleInfo ((ModuleType) ti).title.equalsIgnoreCase (want))
             {
                 const int track = ctx.selectedTrack;

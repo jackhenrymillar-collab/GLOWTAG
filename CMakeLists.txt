@@ -36,6 +36,7 @@ target_sources(Glowtag PRIVATE
     Source/Engine/Patch.cpp
     Source/Engine/Graph.cpp
     Source/Engine/DeviceNodes.cpp
+    Source/Engine/NewDeviceNodes.cpp
     Source/Engine/Samples.cpp
     Source/Engine/Sequencer.cpp
     Source/Engine/PluginHost.cpp
@@ -56,6 +57,7 @@ target_sources(Glowtag PRIVATE
     Source/UI/NeonKit.cpp
     Source/UI/DeviceViews.cpp
     Source/UI/DeviceViewsFx.cpp
+    Source/UI/DeviceViewsNew.cpp
     Source/UI/ExpandedDevice.cpp)
 
 # Lettering for the device wall (SIL Open Font License, see Source/Fonts)
@@ -99,6 +101,7 @@ if(GLOWTAG_TESTS)
         Source/Engine/Patch.cpp
         Source/Engine/Graph.cpp
         Source/Engine/DeviceNodes.cpp
+        Source/Engine/NewDeviceNodes.cpp
         Source/Engine/Samples.cpp
         Source/Engine/Sequencer.cpp
         Source/Engine/PluginHost.cpp

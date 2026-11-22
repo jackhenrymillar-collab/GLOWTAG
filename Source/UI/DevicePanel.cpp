@@ -18,6 +18,12 @@ namespace
             case ModuleType::LFO:        return Icon::LFO;
             case ModuleType::Drive:      return Icon::Drive;
             case ModuleType::Plugin:     return Icon::Plugin;
+            case ModuleType::GasTube:    return Icon::GasTube;
+            case ModuleType::CrateDigger: return Icon::Crate;
+            case ModuleType::StringWall: return Icon::Strings;
+            case ModuleType::GhostTag:   return Icon::Ghost;
+            case ModuleType::Crowd:      return Icon::Crowd;
+            case ModuleType::Transformer: return Icon::Transformer;
             case ModuleType::Input:      return Icon::Play;
             case ModuleType::Output:     return Icon::Velocity;
             case ModuleType::Attenuator: case ModuleType::Mixer: case ModuleType::Inverter:
@@ -371,6 +377,8 @@ void ModuleCard::paint (juce::Graphics& g)
         case ModuleType::Drive: case ModuleType::Delay: case ModuleType::Reverb: case ModuleType::EQ:
         case ModuleType::Attenuator: case ModuleType::Mixer: case ModuleType::Inverter:
         case ModuleType::Crossfade: case ModuleType::Slew:
+        case ModuleType::GasTube: case ModuleType::CrateDigger: case ModuleType::StringWall:
+        case ModuleType::GhostTag: case ModuleType::Crowd: case ModuleType::Transformer:
             break;
     }
 
@@ -459,7 +467,7 @@ void ModuleCard::mouseDoubleClick (const juce::MouseEvent& e)
 
 bool ModuleCard::isInterestedInFileDrag (const juce::StringArray& files)
 {
-    if (module().type != ModuleType::Sampler && module().type != ModuleType::Drums) return false;
+    if (module().type != ModuleType::Sampler && module().type != ModuleType::Drums && module().type != ModuleType::CrateDigger) return false;
     for (auto& f : files)
         if (juce::File (f).hasFileExtension ("wav;aif;aiff;flac;mp3;ogg")) return true;
     return false;
@@ -470,7 +478,7 @@ void ModuleCard::filesDropped (const juce::StringArray& files, int x, int y)
     dropHover = false;
     if (auto* m = patch.find (moduleId))
     {
-        if (m->type == ModuleType::Sampler)
+        if (m->type == ModuleType::Sampler || m->type == ModuleType::CrateDigger)
             m->sampleName = files[0];
         else if (const int pad = padAt ({ x, y }); pad >= 0)
             m->padNames[(size_t) pad] = files[0];
@@ -997,6 +1005,10 @@ DevicePanel::DevicePanel (AppContext& c) : ctx (c)
             { ModuleType::Sampler, "Sampler" }, { ModuleType::Synth, "Synth" }, { ModuleType::Drums, "Drum Rack" },
             { ModuleType::Filter, "Filter" }, { ModuleType::Delay, "Delay" }, { ModuleType::Reverb, "Reverb" },
             { ModuleType::EQ, "EQ" }, { ModuleType::Compressor, "Compressor" }, { ModuleType::Drive, "Drive" }, { ModuleType::LFO, "LFO" } };
+        static const Entry workshop[] = {
+            { ModuleType::GasTube, "Gas Tube  (neon tubes that strike and buzz)" }, { ModuleType::CrateDigger, "Crate Digger  (slices dug out of a record)" },
+            { ModuleType::StringWall, "String Wall  (pluck, bow or feed back)" }, { ModuleType::GhostTag, "Ghost Tag  (echoes that fade and drift)" },
+            { ModuleType::Crowd, "Crowd  (one sound sung by a crowd)" }, { ModuleType::Transformer, "Transformer  (circuit bending)" } };
         static const Entry utilities[] = {
             { ModuleType::Attenuator, "Attenuator  (turn a signal down)" }, { ModuleType::Mixer, "Mixer  (four inputs summed)" },
             { ModuleType::Inverter, "Inverter  (flip a signal over)" }, { ModuleType::Crossfade, "Crossfade  (blend A into B)" },
@@ -1004,6 +1016,9 @@ DevicePanel::DevicePanel (AppContext& c) : ctx (c)
         juce::PopupMenu menu;
         menu.addSectionHeader ("Devices: added and auto-wired");
         for (auto& e : devices)
+            menu.addItem (1 + (int) e.type, e.name);
+        menu.addSectionHeader ("Workshop: stranger instruments and effects");
+        for (auto& e : workshop)
             menu.addItem (1 + (int) e.type, e.name);
         menu.addSectionHeader ("Utilities: patch by hand, for sound or modulation");
         for (auto& e : utilities)

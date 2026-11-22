@@ -101,8 +101,9 @@ void ExpandedDevice::loadAudio()
         if (auto* m = safe->device->module())
         {
             m->sampleName = f.getFullPathName();
-            // Old markers belong to the old sample
-            for (int i = 0; i < Param::Sampler::maxMarkers; ++i) m->knobValues[(size_t) (Param::Sampler::Marker0 + i)] = -1.0f;
+            // Old markers belong to the old sample (the Crate Digger keeps its slices and digs again when asked)
+            if (m->type == ModuleType::Sampler)
+                for (int i = 0; i < Param::Sampler::maxMarkers; ++i) m->knobValues[(size_t) (Param::Sampler::Marker0 + i)] = -1.0f;
             safe->ctx.touched();
             if (safe->device->patchChanged) safe->device->patchChanged();
         }
@@ -311,8 +312,10 @@ bool ExpandedDevice::keyPressed (const juce::KeyPress& key)
     if (key.getTextCharacter() == ']') { step (1); return true; }
     if (device == nullptr || key.getModifiers().isCommandDown()) return false;
     const auto type = device->type();
-    const bool pads = type == ModuleType::Drums || (type == ModuleType::Sampler && device->choice (Param::Sampler::Mode) == Param::Sampler::Slice);
+    const bool crate = type == ModuleType::CrateDigger;
+    const bool pads = type == ModuleType::Drums || crate || (type == ModuleType::Sampler && device->choice (Param::Sampler::Mode) == Param::Sampler::Slice);
     if (! pads) return false;
+    const int base = crate ? Param::Crate::firstNote : 36;
     const auto ch = (juce::juce_wchar) juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
     for (int i = 0; i < 16; ++i)
         if (keymap[i] == ch)
@@ -320,9 +323,10 @@ bool ExpandedDevice::keyPressed (const juce::KeyPress& key)
             const int code = key.getKeyCode();
             if (heldKeys.count (code) == 0)
             {
-                heldKeys[code] = 36 + i;
+                heldKeys[code] = base + i;
                 if (type == ModuleType::Drums) device->setRaw (Param::Drums::Selected, (float) i);
-                device->note (36 + i, true, 0.9f);
+                if (crate) device->setRaw (Param::Crate::Selected, (float) i);
+                device->note (base + i, true, 0.9f);
             }
             return true;
         }

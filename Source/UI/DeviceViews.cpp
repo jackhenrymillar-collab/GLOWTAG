@@ -1142,6 +1142,8 @@ bool hasView (ModuleType t)
     {
         case ModuleType::Synth: case ModuleType::Sampler: case ModuleType::Drums: case ModuleType::Filter: case ModuleType::Drive:
         case ModuleType::Delay: case ModuleType::Reverb: case ModuleType::EQ: case ModuleType::Compressor: case ModuleType::LFO:
+        case ModuleType::GasTube: case ModuleType::CrateDigger: case ModuleType::StringWall:
+        case ModuleType::GhostTag: case ModuleType::Crowd: case ModuleType::Transformer:
             return true;
         case ModuleType::Input: case ModuleType::Output: case ModuleType::Plugin: case ModuleType::Attenuator: case ModuleType::Mixer:
         case ModuleType::Inverter: case ModuleType::Crossfade: case ModuleType::Slew:
@@ -1170,6 +1172,12 @@ std::unique_ptr<Built> build (Device& d)
         case ModuleType::EQ:         eqWall (b); break;
         case ModuleType::Compressor: compWall (b); break;
         case ModuleType::LFO:        lfoWall (b); break;
+        case ModuleType::GasTube:    gasWall (b); break;
+        case ModuleType::CrateDigger: crateWall (b); break;
+        case ModuleType::StringWall: stringsWall (b); break;
+        case ModuleType::GhostTag:   ghostWall (b); break;
+        case ModuleType::Crowd:      crowdWall (b); break;
+        case ModuleType::Transformer: xfmrWall (b); break;
         case ModuleType::Input: case ModuleType::Output: case ModuleType::Plugin: case ModuleType::Attenuator: case ModuleType::Mixer:
         case ModuleType::Inverter: case ModuleType::Crossfade: case ModuleType::Slew:
             break;

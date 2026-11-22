@@ -181,3 +181,4 @@ private:
 
 std::unique_ptr<Node> createNode (const Module&, double sampleRate, const Graph::SampleResolver&);
 std::unique_ptr<Node> createDeviceNode (const Module&, double sampleRate, const Graph::SampleResolver&);   // built-in instruments and effects (DeviceNodes.cpp), nullptr for others
+std::unique_ptr<Node> createWorkshopNode (const Module&, double sampleRate, const Graph::SampleResolver&); // Gas Tube ... Transformer (NewDeviceNodes.cpp), nullptr for others

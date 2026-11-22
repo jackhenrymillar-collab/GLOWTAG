@@ -97,4 +97,10 @@ namespace DeviceViews
     void eqWall (Builder&);
     void compWall (Builder&);
     void lfoWall (Builder&);
+    void gasWall (Builder&);         // the workshop devices (DeviceViewsNew.cpp)
+    void crateWall (Builder&);
+    void stringsWall (Builder&);
+    void ghostWall (Builder&);
+    void crowdWall (Builder&);
+    void xfmrWall (Builder&);
 }

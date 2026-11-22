@@ -15,11 +15,19 @@ namespace
         { "Compressor", "Glue and punch",         Icon::Compressor, Pal::Green },
         { "Drive",      "Tube, tape, fuzz, fold", Icon::Drive,      Pal::Amber },
         { "LFO",        "Modulate any knob",      Icon::LFO,        Pal::Violet },
+        { "Gas Tube",   "Neon tubes that strike and buzz",   Icon::GasTube,     Pal::Amber },
+        { "Crate Digger", "Digs slices out of a record",     Icon::Crate,       Pal::Rose },
+        { "String Wall", "Strings to pluck, bow or feed back", Icon::Strings,   Pal::Ice },
+        { "Ghost Tag",  "Echoes that fade and drift",        Icon::Ghost,       Pal::Violet },
+        { "Crowd",      "One sound sung by a crowd",         Icon::Crowd,       Pal::Gold },
+        { "Transformer", "Circuit bending, broken parts",    Icon::Transformer, Pal::Green },
     };
 
     const ModuleType deviceTypes[] = { ModuleType::Sampler, ModuleType::Synth, ModuleType::Drums, ModuleType::Filter,
                                        ModuleType::Delay, ModuleType::Reverb, ModuleType::EQ, ModuleType::Compressor,
-                                       ModuleType::Drive, ModuleType::LFO };
+                                       ModuleType::Drive, ModuleType::LFO,
+                                       ModuleType::GasTube, ModuleType::CrateDigger, ModuleType::StringWall,
+                                       ModuleType::GhostTag, ModuleType::Crowd, ModuleType::Transformer };
 
     Pal palForCategory (const juce::String& c)
     {
