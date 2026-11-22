@@ -14,8 +14,51 @@
 // handed to the audio thread, and processed in small sub-blocks so modulation cables move
 // knobs smoothly. Knob values live in atomics so the UI can turn them while it plays.
 
-constexpr int maxKnobs = 12;
+constexpr int maxParams = 96;          // card knobs plus the expanded view's controls (the Drum Rack has the most)
+constexpr int maxKnobs = maxParams;
 constexpr int subBlock = 32;
+
+// What the engine tells a graph about the song while it runs: where the playhead is, and the other
+// tracks' sound from the last block (for a compressor listening to another track).
+struct GraphHost
+{
+    double beat = 0.0, beatsPerSample = 0.0, bpm = 120.0;
+    bool playing = false;
+    int blockPos = 0;                                 // samples into the engine's current block
+    const juce::AudioBuffer<float>* const* sideBuffers = nullptr;   // per project slot, the last block's output
+    int numSide = 0;
+};
+
+// The last couple of thousand samples a node put out, for the expanded view's scopes and spectra.
+// Written on the audio thread, read on the message thread; a torn read only shows as a glitch in a picture.
+struct Scope
+{
+    static constexpr int size = 2048;
+    std::array<float, size> data {};
+    std::atomic<int> write { 0 };
+    void push (const float* l, const float* r, int n)
+    {
+        int w = write.load (std::memory_order_relaxed);
+        for (int i = 0; i < n; ++i) { data[(size_t) w] = (l[i] + r[i]) * 0.5f; w = (w + 1) & (size - 1); }
+        write.store (w, std::memory_order_release);
+    }
+    // The most recent `n` samples, oldest first
+    void read (float* dest, int n) const
+    {
+        int r = (write.load (std::memory_order_acquire) - n) & (size - 1);
+        for (int i = 0; i < n; ++i) { dest[i] = data[(size_t) r]; r = (r + 1) & (size - 1); }
+    }
+};
+
+// A voice as the expanded view sees it: lamps ride the envelopes and playheads cross the sample
+struct VoiceView
+{
+    std::atomic<int> pitch { -1 };                    // -1: idle
+    std::atomic<float> velocity { 0.0f }, level { 0.0f }, filter { 0.0f };
+    std::atomic<float> age { 0.0f }, released { -1.0f };   // seconds since the note began; when it was let go (-1 still held)
+    std::atomic<float> pos { 0.0f };                  // Sampler: where in the file (0..1)
+    std::atomic<int> slice { -1 };
+};
 
 class Node
 {
@@ -36,6 +79,7 @@ public:
     virtual void noteOn (int pitch, float velocity, double gateSamples) { juce::ignoreUnused (pitch, velocity, gateSamples); }
     virtual void noteOff (int pitch) { juce::ignoreUnused (pitch); }
     virtual void allNotesOff() {}
+    virtual void anyNoteOn() {}                      // every node hears that a note started (an LFO may restart)
     virtual bool isInstrument() const { return false; }
 
     // Plugin modules: the hosted processor, for its editor window
@@ -50,6 +94,15 @@ public:
 
     // UI readouts (written on the audio thread)
     std::atomic<float> display { 0.0f };   // LFO phase value, compressor gain reduction, voices playing...
+    std::array<std::atomic<float>, 4> meter {};        // more readouts, per device (filter's moving cutoff, current step...)
+    std::array<VoiceView, 16> views;                    // instruments: what each voice is doing
+    Scope scope;                                        // output, for pictures
+    std::atomic<float> inputLevel { 0.0f };            // peak going in, smoothed
+
+    const GraphHost* host = nullptr;                   // set by the graph
+    float raw (int i) const { return knob[(size_t) i].load(); }        // a stored value as it is (choices, widths)
+    int choice (int i) const { return juce::roundToInt (knob[(size_t) i].load()); }
+    bool on (int i) const { return knob[(size_t) i].load() > 0.5f; }
 
     std::array<float, subBlock> bufL {}, bufR {};
 
@@ -108,6 +161,13 @@ public:
     // (Synth cutoff, Sampler start, Drum Rack tune) each sub-block.
     std::atomic<float> externalMod { 0.0f };
 
+    // The song position for the next process() call; it advances by itself through the call
+    void setTransport (double beat, double beatsPerSample, bool playing, int blockPos)
+    {
+        host.beat = beat; host.beatsPerSample = beatsPerSample; host.playing = playing; host.blockPos = blockPos;
+    }
+    GraphHost host;
+
 private:
     struct Link { Node* from; int fromPort; Node* to; int toPort; bool mod; };
     std::vector<std::unique_ptr<Node>> nodes;   // in processing order
@@ -120,3 +180,4 @@ private:
 };
 
 std::unique_ptr<Node> createNode (const Module&, double sampleRate, const Graph::SampleResolver&);
+std::unique_ptr<Node> createDeviceNode (const Module&, double sampleRate, const Graph::SampleResolver&);   // built-in instruments and effects (DeviceNodes.cpp), nullptr for others

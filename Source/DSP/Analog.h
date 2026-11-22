@@ -35,7 +35,8 @@ namespace analog
         {
             const float t = phase;
             phase += inc;
-            if (phase >= 1.0f) phase -= 1.0f;
+            wrapped = phase >= 1.0f;
+            if (wrapped) phase -= 1.0f;
 
             auto blep = [this] (float x)
             {
@@ -58,6 +59,7 @@ namespace analog
         }
 
         float sr = 44100.0f, phase = 0.0f, inc = 0.0f, triState = 0.0f;
+        bool wrapped = false;                         // the last sample started a new cycle (for hard sync)
     };
 
     //==========================================================================
@@ -75,7 +77,11 @@ namespace analog
             sus = juce::jlimit (0.0f, 1.0f, sustain);
         }
 
+        void setHold (float seconds) { holdSamples = juce::jmax (0.0f, seconds) * sr; }
         void noteOn()  { stage = Attack; }
+        // Back to silence at once (a voice being stolen or choked)
+        void kill()    { stage = Idle; value = 0.0f; }
+        float level() const { return value; }
         void noteOff() { if (stage != Idle) stage = Release; }
         bool isActive() const { return stage != Idle; }
 
@@ -85,7 +91,11 @@ namespace analog
             {
                 case Attack:
                     value += (1.25f - value) * attackCoef;   // aims past 1 so it arrives with a curve
-                    if (value >= 1.0f) { value = 1.0f; stage = Decay; }
+                    if (value >= 1.0f) { value = 1.0f; stage = holdSamples > 0.5f ? Hold : Decay; held = 0.0f; }
+                    break;
+                case Hold:
+                    value = 1.0f;
+                    if ((held += 1.0f) >= holdSamples) stage = Decay;
                     break;
                 case Decay:
                     value += (sus - value) * decayCoef;
@@ -106,11 +116,11 @@ namespace analog
         }
 
     private:
-        enum Stage { Idle, Attack, Decay, Sustain, Release };
+        enum Stage { Idle, Attack, Hold, Decay, Sustain, Release };
         float coefFor (float seconds) const { return 1.0f - std::exp (-1.0f / (juce::jmax (0.0005f, seconds) * sr * 0.25f)); }
 
         Stage stage = Idle;
-        float value = 0.0f, sus = 0.7f, sr = 44100.0f;
+        float value = 0.0f, sus = 0.7f, sr = 44100.0f, holdSamples = 0.0f, held = 0.0f;
         float attackCoef = 0.01f, decayCoef = 0.001f, releaseCoef = 0.001f;
     };
 
@@ -173,12 +183,13 @@ namespace analog
     // Biquad for the EQ shelves and peak
     struct Biquad
     {
-        void setShelf (double sampleRate, float hz, float gainDb, bool high)
+        void setShelf (double sampleRate, float hz, float gainDb, bool high, float slope = 0.9f)
         {
+            slope = juce::jlimit (0.1f, 1.0f, slope);
             const float A = std::pow (10.0f, gainDb / 40.0f);
             const float w0 = twoPi * juce::jlimit (20.0f, (float) sampleRate * 0.45f, hz) / (float) sampleRate;
             const float cw = std::cos (w0), sw = std::sin (w0);
-            const float alpha = sw / 2.0f * std::sqrt ((A + 1.0f / A) * (1.0f / 0.9f - 1.0f) + 2.0f);
+            const float alpha = sw / 2.0f * std::sqrt ((A + 1.0f / A) * (1.0f / slope - 1.0f) + 2.0f);
             const float sqA2a = 2.0f * std::sqrt (A) * alpha;
             float b0, b1, b2, a0, a1, a2;
             if (! high)
@@ -205,6 +216,15 @@ namespace analog
             d1 = -2 * cw / a0; d2 = (1 - alpha / A) / a0;
         }
 
+        // Second-order low / high pass (Butterworth at q = 0.707)
+        void setPass (double sampleRate, float hz, float q, bool high)
+        {
+            const float w0 = twoPi * juce::jlimit (10.0f, (float) sampleRate * 0.45f, hz) / (float) sampleRate;
+            const float cw = std::cos (w0), alpha = std::sin (w0) / (2.0f * q), a0 = 1.0f + alpha;
+            const float b1 = high ? -(1.0f + cw) : 1.0f - cw, b0 = high ? (1.0f + cw) * 0.5f : (1.0f - cw) * 0.5f;
+            c0 = b0 / a0; c1 = b1 / a0; c2 = b0 / a0; d1 = -2.0f * cw / a0; d2 = (1.0f - alpha) / a0;
+        }
+
         float process (float x)
         {
             const float y = c0 * x + z1;
@@ -214,6 +234,44 @@ namespace analog
         }
 
         float c0 = 1, c1 = 0, c2 = 0, d1 = 0, d2 = 0, z1 = 0, z2 = 0;
+    };
+
+    //==========================================================================
+    // Two-pole state variable filter (zero-delay feedback), with a soft clip on the band-pass state
+    // so high resonance rounds off the way an analogue one does. Low, band and high outputs.
+    struct SVF
+    {
+        void prepare (double sampleRate) { sr = (float) sampleRate; }
+        void reset() { s1 = s2 = 0.0f; }
+        void set (float hz, float q)
+        {
+            g = std::tan (pi * juce::jlimit (10.0f, sr * 0.45f, hz) / sr);
+            k = 1.0f / juce::jmax (0.5f, q);
+            a1 = 1.0f / (1.0f + g * (g + k));
+        }
+        void process (float x)
+        {
+            const float v3 = x - s2;
+            const float v1 = a1 * (s1 + g * v3);
+            const float v2 = s2 + g * v1;
+            s1 = fastTanh (2.0f * v1 - s1);
+            s2 = 2.0f * v2 - s2;
+            low = v2; band = v1; high = x - k * v1 - v2;
+        }
+        float sr = 44100.0f, g = 0.1f, k = 1.4f, a1 = 0.5f, s1 = 0.0f, s2 = 0.0f;
+        float low = 0.0f, band = 0.0f, high = 0.0f;
+    };
+
+    // Envelope follower: fast attack, slower release
+    struct Follower
+    {
+        void prepare (double sampleRate, float attackSec, float releaseSec)
+        {
+            att = 1.0f - std::exp (-1.0f / (attackSec * (float) sampleRate));
+            rel = 1.0f - std::exp (-1.0f / (releaseSec * (float) sampleRate));
+        }
+        float process (float x) { x = std::abs (x); value += (x - value) * (x > value ? att : rel); return value; }
+        float att = 0.1f, rel = 0.001f, value = 0.0f;
     };
 
     //==========================================================================

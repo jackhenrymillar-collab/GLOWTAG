@@ -15,8 +15,11 @@ void AudioEngine::makeSlots()
         slots.push_back (std::make_unique<TrackSlot>());
         slots.back()->input.setSize (2, blockSize);
         slots.back()->output.setSize (2, blockSize);
+        slots.back()->last.setSize (2, blockSize);
         for (auto& c : slots.back()->console) c.prepare (sr);
     }
+    sideBuffers.clear();
+    for (auto& s : slots) sideBuffers.push_back (&s->last);
     busOrder.reserve (Project::maxBuses);
     busDepth.reserve (Project::maxBuses);
 }
@@ -190,7 +193,7 @@ void AudioEngine::runSequencers (int numSamples, double beatsPerSample, bool isP
 
 void AudioEngine::setKnob (int track, int moduleId, int knob, float value)
 {
-    if (track < 0 || track >= (int) slots.size() || knob < 0 || knob >= maxKnobs)
+    if (track < 0 || track >= (int) slots.size() || knob < 0 || knob >= maxParams)
         return;
     if (auto g = slots[(size_t) track]->ui)
         if (auto* node = g->find (moduleId))
@@ -229,6 +232,8 @@ void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
     {
         s->input.setSize (2, blockSize);
         s->output.setSize (2, blockSize);
+        s->last.setSize (2, blockSize);
+        s->last.clear();
         for (auto& c : s->console) c.prepare (sr);
     }
     rebuildAll();
@@ -361,7 +366,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     {
         // The device handed us more than it promised; grow on the message thread next time
         blockSize = numSamples;
-        for (auto& s : slots) { s->input.setSize (2, blockSize, false, false, true); s->output.setSize (2, blockSize, false, false, true); }
+        for (auto& s : slots) { s->input.setSize (2, blockSize, false, false, true); s->output.setSize (2, blockSize, false, false, true); s->last.setSize (2, blockSize, false, false, true); }
     }
     events.clear();
 
@@ -505,6 +510,17 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         float* outL = slot.output.getWritePointer (0);
         float* outR = slot.output.getWritePointer (1);
 
+        // The song position at a sample of this block, for step rows, synced LFOs and the like
+        graph.host.sideBuffers = sideBuffers.data();
+        graph.host.numSide = (int) sideBuffers.size();
+        auto locate = [&] (int s)
+        {
+            size_t seg = 0;
+            while (seg + 1 < segments.size() && segments[seg + 1].startSample <= s) ++seg;
+            graph.setTransport (segments[seg].startBeat + (s - segments[seg].startSample) * beatsPerSample,
+                                beatsPerSample, isPlaying, s);
+        };
+
         // Run the graph between this track's events so notes land on their exact sample
         int cursor = 0;
         for (auto& e : events)
@@ -514,6 +530,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             const int at = juce::jlimit (0, numSamples, e.offset);
             if (at > cursor)
             {
+                locate (cursor);
                 graph.process (inL + cursor, inR + cursor, outL + cursor, outR + cursor, at - cursor, bpm);
                 cursor = at;
             }
@@ -527,7 +544,10 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             }
         }
         if (cursor < numSamples)
+        {
+            locate (cursor);
             graph.process (inL + cursor, inR + cursor, outL + cursor, outR + cursor, numSamples - cursor, bpm);
+        }
     };
 
     // Where each channel goes. Buses are ordered so that one feeding another runs first; a bus caught
@@ -641,6 +661,11 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
 
     if (isPlaying)
         position = pos;
+
+    // Keep each channel's sound for compressors listening to it in the next block
+    for (auto& s : slots)
+        for (int ch = 0; ch < 2; ++ch)
+            s->last.copyFrom (ch, 0, s->output, ch, 0, juce::jmin (numSamples, s->last.getNumSamples()));
 
     for (size_t i = 0; i < slots.size() && i < peaks.size(); ++i)
     {

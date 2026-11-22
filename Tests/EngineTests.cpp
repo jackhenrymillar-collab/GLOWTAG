@@ -6,6 +6,7 @@
 #include "Engine/Graph.h"
 #include "Engine/Samples.h"
 #include "Engine/Sequencer.h"
+#include "Engine/DeviceParams.h"
 #include "UI/DeviceWallModel.h"
 #include <iostream>
 
@@ -871,6 +872,214 @@ int main()
 
         n.resetLayout();
         check (n.pieces[7].x == Wall::Model().pieces[7].x && n.titleOf (5) == "Reverb" && n.alwaysBright, "reset restores the layout but keeps the view settings");
+    }
+
+    std::cout << "Devices: the expanded view's controls\n";
+    {
+        auto resolve = [] (const juce::String& n) { return Samples::find (n); };
+        auto run = [] (Graph& g, int blocks, double bpm = 120.0, float* rmsOut = nullptr)
+        {
+            std::vector<float> zl (block, 0.0f), zr (block, 0.0f), ol (block), orr (block);
+            float peak = 0.0f; double sum = 0.0;
+            for (int b = 0; b < blocks; ++b)
+            {
+                g.process (zl.data(), zr.data(), ol.data(), orr.data(), block, bpm);
+                for (int i = 0; i < block; ++i) { peak = juce::jmax (peak, std::abs (ol[(size_t) i])); sum += ol[(size_t) i] * ol[(size_t) i]; }
+            }
+            if (rmsOut != nullptr) *rmsOut = (float) std::sqrt (sum / (blocks * block));
+            return peak;
+        };
+        // Same as run, but with a steady tone going in
+        auto runTone = [] (Graph& g, int blocks, float amp = 0.5f)
+        {
+            std::vector<float> il (block), ir (block), ol (block), orr (block);
+            float peak = 0.0f; static double ph = 0.0;
+            for (int b = 0; b < blocks; ++b)
+            {
+                for (int i = 0; i < block; ++i) { il[(size_t) i] = ir[(size_t) i] = amp * (float) std::sin (ph); ph += 0.06; }
+                g.process (il.data(), ir.data(), ol.data(), orr.data(), block, 120.0);
+                for (float v : ol) peak = juce::jmax (peak, std::abs (v));
+            }
+            return peak;
+        };
+
+        // Every module carries its card knobs plus its extra controls
+        for (auto t : { ModuleType::Synth, ModuleType::Sampler, ModuleType::Drums, ModuleType::Filter, ModuleType::Drive,
+                        ModuleType::Delay, ModuleType::Reverb, ModuleType::EQ, ModuleType::Compressor, ModuleType::LFO })
+        {
+            Patch q; const int id = q.add (t);
+            if ((int) q.find (id)->knobValues.size() != moduleInfo (t).numParams() || moduleInfo (t).numParams() > maxParams)
+                check (false, ("a new " + moduleInfo (t).title + " has all its controls").toRawUTF8());
+        }
+        check (moduleInfo (ModuleType::Synth).numParams() == Param::Synth::Count && moduleInfo (ModuleType::Sampler).numParams() == Param::Sampler::Count
+                   && moduleInfo (ModuleType::Drums).numParams() == Param::Drums::Count && moduleInfo (ModuleType::Reverb).numParams() == Param::Reverb::Count
+                   && moduleInfo (ModuleType::EQ).numParams() == Param::EQ::Count && moduleInfo (ModuleType::LFO).numParams() == Param::LFO::Count,
+               "the control lists match the names both sides use");
+
+        // An older file has only the card knobs: the rest take values that keep its sound
+        {
+            Patch q;
+            const int syn = q.add (ModuleType::Synth), del = q.add (ModuleType::Delay);
+            q.find (syn)->knobValues[Param::Synth::Wave] = 0.7f;
+            auto v = q.toVar();
+            for (auto& mv : *v["modules"].getArray())
+            {
+                const auto t = (ModuleType) (int) mv["type"];
+                auto* ks = mv["knobs"].getArray();
+                ks->resize (moduleInfo (t).knobs.size());
+            }
+            Patch r; r.fromVar (v);
+            check (std::abs (r.find (del)->knobValues[Param::Delay::Flutter]) < 1e-6f && r.find (del)->knobValues.size() == (size_t) Param::Delay::Count,
+                   "an older delay loads with its new controls, flutter off");
+            check (std::abs (r.find (syn)->knobValues[Param::Synth::WaveB] - 0.7f) < 1e-6f, "an older synth's second oscillator copies its first");
+            check (std::abs (r.find (syn)->knobValues[Param::Synth::MxAmt0]) < 1e-6f, "and its mod matrix is empty");
+        }
+
+        // Synth: unison is wider and louder than one oscillator; mono plays one voice
+        {
+            Patch q; const int syn = q.add (ModuleType::Synth);
+            Graph g (q, sr, resolve);
+            g.noteOn (48, 0.9f, -1.0);
+            float one = 0.0f; run (g, 30, 120.0, &one);
+            check (one > 0.01f, "the synth plays");
+            g.allNotesOff(); run (g, 300);
+            g.find (syn)->knob[Param::Synth::Unison] = 1.0f;
+            g.find (syn)->knob[Param::Synth::Spread] = 0.6f;
+            g.noteOn (48, 0.9f, -1.0);
+            const float wide = run (g, 30);
+            check (wide > 0.01f && wide < 1.5f, "five unison voices stay in range");
+            g.allNotesOff(); run (g, 300);
+            g.find (syn)->knob[Param::Synth::VMode] = (float) Param::Synth::Mono;
+            g.noteOn (48, 0.9f, -1.0); g.noteOn (55, 0.9f, -1.0); run (g, 4);
+            check (g.find (syn)->display.load() <= 1.01f, "mono plays one voice at a time");
+            g.find (syn)->knob[Param::Synth::VMode] = (float) Param::Synth::Poly;
+            g.allNotesOff(); run (g, 300);
+            g.noteOn (48, 0.9f, -1.0); g.noteOn (55, 0.9f, -1.0); run (g, 4);
+            check (g.find (syn)->display.load() >= 1.99f, "poly plays both");
+            int lit = 0; for (auto& vw : g.find (syn)->views) if (vw.pitch.load() >= 0) ++lit;
+            check (lit == 2, "each voice shows what it is playing");
+        }
+
+        // Sampler: grid slices map to keys from C2; reverse and one-shot still sound
+        {
+            Patch q; const int sid = q.add (ModuleType::Sampler);
+            q.find (sid)->sampleName = "Vox Ahh";
+            q.find (sid)->knobValues[Param::Sampler::Mode] = (float) Param::Sampler::Slice;
+            q.find (sid)->knobValues[Param::Sampler::Slicer] = (float) Param::Sampler::GridSlices;
+            q.find (sid)->knobValues[Param::Sampler::Grid] = 1.0f;     // 8
+            Graph g (q, sr, resolve);
+            g.noteOn (36 + 3, 1.0f, -1.0);
+            check (run (g, 10) > 0.02f, "a slice plays from its key");
+            check (g.find (sid)->views[0].slice.load() == 3 || g.find (sid)->display.load() > 0.0f, "and shows which slice");
+            Param::SliceSettings st; st.slicer = Param::Sampler::GridSlices; st.grid = 8;
+            check (Param::slicesFrom (0.0f, 1.0f, Param::sliceMarkers (st, {})).size() == 8, "a grid of eight makes eight slices");
+            st.slicer = Param::Sampler::Transient; st.sens = 1.0f;
+            check (Param::sliceMarkers (st, { { 0.2f, 0.9f }, { 0.5f, 0.05f }, { 0.999f, 1.0f } }).size() == 2, "transients inside the sample become markers");
+            st.sens = 0.0f;
+            check (Param::sliceMarkers (st, { { 0.2f, 0.9f }, { 0.5f, 0.05f } }).size() == 1, "low sensitivity keeps only the strong hits");
+
+            Patch q2; const int s2 = q2.add (ModuleType::Sampler);
+            q2.find (s2)->sampleName = "Vox Ahh";
+            q2.find (s2)->knobValues[Param::Sampler::Reverse] = 1.0f;
+            q2.find (s2)->knobValues[Param::Sampler::Mode] = (float) Param::Sampler::OneShot;
+            Graph g2 (q2, sr, resolve);
+            g2.noteOn (60, 1.0f, 0.0);
+            check (run (g2, 20) > 0.02f, "a reversed one-shot plays through");
+
+            auto hit = std::make_shared<AudioData>();
+            hit->buffer.setSize (1, 48000); hit->buffer.clear(); hit->sampleRate = 48000.0;
+            for (int at : { 6000, 30000 }) for (int i = 0; i < 2000; ++i) hit->buffer.setSample (0, at + i, std::exp (-i / 300.0f) * ((i & 8) ? 0.8f : -0.8f));
+            hit->findOnsets();
+            check (hit->onsets.size() == 2 && std::abs (hit->onsets[0].first - 0.125f) < 0.02f && std::abs (hit->onsets[1].first - 0.625f) < 0.02f,
+                   "two hits in a file are found where they are");
+        }
+
+        // Drum Rack: the step row plays with the transport; choke groups cut each other off
+        {
+            Patch q; const int dr = q.add (ModuleType::Drums);
+            q.find (dr)->knobValues[Param::Drums::Steps0] = (float) (1 | (1 << 4));      // kick on steps 1 and 5
+            Graph g (q, sr, resolve);
+            check (run (g, 20) < 1e-6f, "steps stay quiet while stopped");
+            g.setTransport (0.0, 120.0 / 60.0 / sr, true, 0);
+            check (run (g, 4) > 0.1f, "the first step plays when the song runs");
+            check (g.find (dr)->meter[0].load() >= 0.0f, "and the row shows where it is");
+            Patch c; const int dc = c.add (ModuleType::Drums);
+            Graph h (c, sr, resolve);
+            const int open = 6, closed = 10;
+            check (h.find (dc)->choice (Param::Drums::Choke0 + open) > 0 && h.find (dc)->choice (Param::Drums::Choke0 + open) == h.find (dc)->choice (Param::Drums::Choke0 + closed),
+                   "the hats start in one choke group");
+            h.noteOn (36 + open, 1.0f, 0.0); run (h, 2);
+            h.noteOn (36 + closed, 1.0f, 0.0); run (h, 8);
+            check (h.find (dc)->views[(size_t) open].pitch.load() < 0, "the closed hat cuts off the open one");
+        }
+
+        // Delay freeze holds what is in the line; the compressor listens to another track
+        {
+            Patch q; const int d = q.add (ModuleType::Delay);
+            q.connect (Patch::inputId, Port::audioOut, d, Port::audioIn);
+            Graph g (q, sr, resolve);
+            g.find (d)->knob[Param::Delay::Mix] = 1.0f;
+            runTone (g, 40);
+            g.find (d)->knob[Param::Delay::Freeze] = 1.0f;
+            const float held = run (g, 200);
+            check (held > 0.05f, "a frozen delay keeps repeating with nothing going in");
+
+            Patch c; const int cp = c.add (ModuleType::Compressor);
+            c.connect (Patch::inputId, Port::audioOut, cp, Port::audioIn);
+            Graph h (c, sr, resolve);
+            h.find (cp)->knob[Param::Comp::Thresh] = 0.0f;
+            h.find (cp)->knob[Param::Comp::Ratio] = 1.0f;
+            const float free = runTone (h, 20, 0.05f);
+            juce::AudioBuffer<float> loud (2, block);
+            for (int i = 0; i < block; ++i) { loud.setSample (0, i, 0.9f); loud.setSample (1, i, 0.9f); }
+            const juce::AudioBuffer<float>* sides[] = { &loud };
+            h.host.sideBuffers = sides; h.host.numSide = 1;
+            h.find (cp)->knob[Param::Comp::ListensTo] = 1.0f;
+            runTone (h, 10, 0.05f);
+            const float ducked = runTone (h, 20, 0.05f);
+            check (ducked < free * 0.7f, "a compressor listening to a loud track turns this one down");
+            h.host.sideBuffers = nullptr; h.host.numSide = 0;
+        }
+
+        // LFO: synced to a quarter note, it lands on the beat; unipolar stays above zero
+        {
+            Patch q; const int l = q.add (ModuleType::LFO);
+            Graph g (q, sr, resolve);
+            g.find (l)->knob[Param::LFO::Sync] = 1.0f;        // 1/4
+            g.find (l)->knob[Param::LFO::Shape] = 0.0f;
+            g.find (l)->knob[Param::LFO::Polarity] = 1.0f;
+            float lowest = 1.0f;
+            g.setTransport (0.0, 120.0 / 60.0 / sr, true, 0);
+            std::vector<float> z (subBlock, 0.0f), ol (subBlock), orr (subBlock);
+            for (int b = 0; b < 400; ++b) { g.process (z.data(), z.data(), ol.data(), orr.data(), subBlock, 120.0); lowest = juce::jmin (lowest, g.find (l)->display.load()); }
+            check (lowest >= -1e-4f, "a unipolar LFO stays above zero");
+            check (std::abs (Param::lfoValue (1, 0.25, 0.0f, 0.0f, false) - 0.0f) < 1e-5f && std::abs (Param::lfoValue (1, 0.5, 0.0f, 0.0f, false) - 1.0f) < 1e-5f,
+                   "the triangle passes zero and peaks where the picture shows it");
+        }
+
+        // EQ: the low-mid band boosts its range; Filter vowel and Reverb shimmer stay bounded
+        {
+            Patch q; const int e = q.add (ModuleType::EQ);
+            q.connect (Patch::inputId, Port::audioOut, e, Port::audioIn);
+            Graph g (q, sr, resolve);
+            const float flat = runTone (g, 20);
+            g.find (e)->knob[Param::EQ::Freq0 + 1] = Param::EQ::valueOf (460.0f);
+            g.find (e)->knob[Param::EQ::LowMid] = 1.0f;
+            runTone (g, 10);
+            const float boosted = runTone (g, 20);
+            check (boosted > flat * 1.5f, "the low mid band boosts a tone in its range");
+            check (std::abs (Param::EQ::freqOf (Param::EQ::valueOf (1234.0f)) - 1234.0f) < 0.5f, "EQ frequencies map both ways");
+
+            Patch f; const int fi = f.add (ModuleType::Filter), rv = f.add (ModuleType::Reverb);
+            Graph h (f, sr, resolve);
+            h.find (fi)->knob[Param::Filter::Vowel] = 0.7f;
+            h.find (fi)->knob[Param::Filter::Wobble] = 0.8f;
+            h.find (rv)->knob[Param::Reverb::Shimmer] = 1.0f;
+            h.find (rv)->knob[Param::Reverb::Space] = (float) Param::Reverb::Cave;
+            const float p = runTone (h, 200);
+            check (p > 0.01f && p < 4.0f, "vowel, wobble and shimmer keep the sound bounded");
+            check (std::abs (Param::compReduction (-10.0f, -20.0f, 4.0f, 0.0f) - 7.5f) < 1e-3f, "the compressor curve takes 4:1 above the threshold");
+        }
     }
 
     std::cout << (failures == 0 ? "\nAll passed\n" : "\nSome checks failed\n");

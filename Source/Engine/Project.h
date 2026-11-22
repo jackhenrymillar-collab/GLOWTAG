@@ -27,6 +27,9 @@ struct AudioData
     double sampleRate = 44100.0;
     juce::String fileName;
     std::vector<float> peaks;  // 0..1, evenly spaced across the file
+    std::vector<std::pair<float, float>> onsets;   // hits: position 0..1 in the file, strength 0..1 (the Sampler's slicer)
+
+    void findOnsets();         // fills `onsets` from the buffer
 
     double lengthSeconds() const { return buffer.getNumSamples() / sampleRate; }
     static std::shared_ptr<const AudioData> load (const juce::File&);

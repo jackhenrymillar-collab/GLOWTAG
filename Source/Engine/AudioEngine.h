@@ -47,6 +47,7 @@ public:
     bool restructure (const std::function<bool()>& edit);
     void setKnob (int track, int moduleId, int knob, float value);
     Node* liveNode (int track, int moduleId);          // for UI readouts; may be null
+    double getSampleRate() const { return sr; }
     std::shared_ptr<Graph> uiGraph (int track);        // keeps a graph (and its plugins) alive while an editor is open
     void capturePluginStates();                        // hosted plugins' state back into the project, before saving
 
@@ -76,6 +77,7 @@ private:
         std::shared_ptr<SeqRuntime> seq, seqPending, seqRetired, seqUi;
         bool seqWasActive = false;
         juce::AudioBuffer<float> input, output;
+        juce::AudioBuffer<float> last;      // the patch output of the previous block, for sidechains
         std::array<analog::Console, 2> console;   // the Analogue stage, left and right
         bool consoleWasOn = false;
     };
@@ -95,6 +97,7 @@ private:
     bool swapProject (const std::function<bool()>& edit, bool resetTransport);
     // Console channel on a slot's patch output: trim, phase, width, Analogue. Returns the peak after it.
     float runChannel (TrackSlot&, Track&, int numSamples);
+    std::vector<const juce::AudioBuffer<float>*> sideBuffers;   // each slot's `last`, for graphs to read
     std::vector<int> busOrder, busDepth;     // buses sorted so each runs after everything that feeds it
     std::map<juce::String, std::shared_ptr<const AudioData>> fileCache;
 

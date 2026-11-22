@@ -33,6 +33,7 @@ namespace
             const int a = (int) ((juce::int64) n * p / numPeaks), b = juce::jmax (a + 1, (int) ((juce::int64) n * (p + 1) / numPeaks));
             d->peaks[(size_t) p] = d->buffer.getMagnitude (a, juce::jmin (b, n) - a);
         }
+        d->findOnsets();
         return d;
     }
 

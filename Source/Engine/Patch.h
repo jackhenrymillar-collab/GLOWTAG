@@ -56,6 +56,16 @@ struct ModuleInfo
     int sigIns = 0;                                   // utilities: signal inputs (they all have one signal output)
     bool utility = false;                             // a half-height module on the utility row
 
+    // Controls only the expanded view shows, stored after the knobs. `fresh` is the value on a new
+    // module; `legacy` is what a project saved before the control existed gets, chosen so it sounds
+    // exactly as it did.
+    struct Extra { juce::String name; float fresh, legacy; };
+    std::vector<Extra> extras;
+
+    int numParams() const                             { return (int) (knobs.size() + extras.size()); }
+    float defaultValue (int param, bool legacy = false) const;
+    juce::String paramName (int param) const;
+
     bool isInstrument() const { return hasNotesIn && ! hasAudioIn; }
     bool isEffect() const     { return hasAudioIn && hasAudioOut; }
     bool hasPort (int port) const;

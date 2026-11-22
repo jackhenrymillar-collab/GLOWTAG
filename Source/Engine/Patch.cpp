@@ -1,23 +1,127 @@
 #include "Patch.h"
+#include "DeviceParams.h"
 #include <functional>
 
+namespace
+{
+    ModuleInfo withExtras (ModuleInfo info, std::vector<ModuleInfo::Extra> extras)
+    {
+        info.extras = std::move (extras);
+        return info;
+    }
+
+    // The expanded views' controls. Each: name, value on a new module, value for an older project.
+    std::vector<ModuleInfo::Extra> synthExtras()
+    {
+        std::vector<ModuleInfo::Extra> e {
+            { "Octave A", 0.5f, 0.5f }, { "Width A", 0.5f, 0.5f }, { "Wave B", 0.0f, 0.0f }, { "Semi B", 0.5f, 0.5f },
+            { "Noise", 0.0f, 0.0f }, { "Drift", 0.3f, 0.3f }, { "Key", 0.3f, 0.0f }, { "Vel", 0.5f, 0.5f },
+            { "Filter Attack", 0.02f, 0.02f }, { "Filter Decay", 0.3f, 0.3f }, { "Filter Sustain", 0.3f, 0.3f }, { "Filter Release", 0.3f, 0.3f },
+            { "LFO 1 Rate", 0.5f, 0.5f }, { "LFO 2 Rate", 0.22f, 0.22f }, { "Glide", 0.0f, 0.0f }, { "Unison", 0.0f, 0.0f },
+            { "Spread", 0.3f, 0.3f }, { "Vel Amp", 0.6f, 0.6f },
+            { "Filter Mode", 0.0f, 0.0f }, { "Filter Follows Amp", 1.0f, 1.0f }, { "Hard Sync", 0.0f, 0.0f },
+            { "LFO 1 Shape", 0.0f, 0.0f }, { "LFO 2 Shape", 1.0f, 1.0f }, { "Voicing", 0.0f, 0.0f } };
+        // Modulation matrix: four rows of source, destination, amount (-1..1). New synths start with the
+        // rows set up but at zero, so nothing moves until you turn one up.
+        const float rows[4][2] = { { 0, 0 }, { 1, 2 }, { 2, 0 }, { 0, 1 } };
+        for (int i = 0; i < 4; ++i)
+        {
+            const juce::String n ("Mod " + juce::String (i + 1));
+            e.push_back ({ n + " Source", rows[i][0], rows[i][0] });
+            e.push_back ({ n + " Destination", rows[i][1], rows[i][1] });
+            e.push_back ({ n + " Amount", 0.0f, 0.0f });
+        }
+        return e;
+    }
+
+    std::vector<ModuleInfo::Extra> samplerExtras()
+    {
+        std::vector<ModuleInfo::Extra> e {
+            { "Sensitivity", 0.55f, 0.55f }, { "Crossfade", 0.1f, 0.1f }, { "Fine", 0.5f, 0.5f }, { "Root", 0.5f, 0.5f },
+            { "Hold", 0.0f, 0.0f }, { "Decay", 0.5f, 0.5f }, { "Sustain", 1.0f, 1.0f },
+            { "Filter Cutoff", 1.0f, 1.0f }, { "Filter Res", 0.15f, 0.0f }, { "Drive", 0.0f, 0.0f }, { "Tape", 0.0f, 0.0f },
+            { "Crush", 0.0f, 0.0f }, { "Pan", 0.5f, 0.5f }, { "Vel Gain", 0.7f, 1.0f },
+            { "Play Mode", 0.0f, 0.0f }, { "Slice By", 0.0f, 0.0f }, { "Grid", 1.0f, 1.0f }, { "Reverse", 0.0f, 0.0f },
+            { "Filter Mode", 0.0f, 0.0f }, { "Voices", 2.0f, 2.0f }, { "Loop Start", 0.25f, 0.25f }, { "Loop End", 0.5f, 0.5f },
+            { "Warp", 0.0f, 0.0f } };
+        for (int i = 0; i < Param::Sampler::maxMarkers; ++i)
+            e.push_back ({ "Marker " + juce::String (i + 1), -1.0f, -1.0f });
+        return e;
+    }
+
+    std::vector<ModuleInfo::Extra> drumExtras()
+    {
+        std::vector<ModuleInfo::Extra> e { { "Swing", 0.0f, 0.0f }, { "Dirt", 0.0f, 0.0f }, { "Selected Pad", 0.0f, 0.0f } };
+        // Pads spread a little across the stereo field on a new rack; older racks stay in the middle
+        const float pans[16] = { 0.5f, 0.4f, 0.5f, 0.6f, 0.5f, 0.3f, 0.62f, 0.7f, 0.25f, 0.35f, 0.62f, 0.7f, 0.45f, 0.3f, 0.5f, 0.72f };
+        for (int i = 0; i < 16; ++i) e.push_back ({ "Pad " + juce::String (i + 1) + " Level", 0.8f, 0.8f });
+        for (int i = 0; i < 16; ++i) e.push_back ({ "Pad " + juce::String (i + 1) + " Pitch", 0.5f, 0.5f });
+        for (int i = 0; i < 16; ++i) e.push_back ({ "Pad " + juce::String (i + 1) + " Pan", pans[i], 0.5f });
+        // The closed hat cuts the open hat off, as it always has
+        for (int i = 0; i < 16; ++i) e.push_back ({ "Pad " + juce::String (i + 1) + " Choke", (i == 6 || i == 10) ? 1.0f : 0.0f, (i == 6 || i == 10) ? 1.0f : 0.0f });
+        for (int i = 0; i < 16; ++i) e.push_back ({ "Pad " + juce::String (i + 1) + " Steps", 0.0f, 0.0f });
+        return e;
+    }
+
+    std::vector<ModuleInfo::Extra> eqExtras()
+    {
+        using namespace Param::EQ;
+        return { { "Low Mid", 0.0f, 0.0f },
+                 { "Low Freq", valueOf (120.0f), valueOf (120.0f) }, { "Low Mid Freq", valueOf (400.0f), valueOf (400.0f) },
+                 { "Mid Freq", valueOf (1000.0f), valueOf (1000.0f) }, { "High Freq", valueOf (6000.0f), valueOf (6000.0f) },
+                 { "Low Width", 0.9f, 0.9f }, { "Low Mid Width", 0.9f, 0.9f }, { "Mid Width", 0.9f, 0.9f }, { "High Width", 0.9f, 0.9f },
+                 { "Low Cut", 0.0f, 0.0f }, { "High Cut", 1.0f, 1.0f }, { "Tilt", 0.0f, 0.0f }, { "Analog Warmth", 0.0f, 0.0f } };
+    }
+}
+
+float ModuleInfo::defaultValue (int param, bool legacy) const
+{
+    if (param < 0) return 0.0f;
+    if (param < (int) knobs.size()) return knobs[(size_t) param].second;
+    const int e = param - (int) knobs.size();
+    return e < (int) extras.size() ? (legacy ? extras[(size_t) e].legacy : extras[(size_t) e].fresh) : 0.0f;
+}
+
+juce::String ModuleInfo::paramName (int param) const
+{
+    if (param >= 0 && param < (int) knobs.size()) return knobs[(size_t) param].first;
+    const int e = param - (int) knobs.size();
+    return e >= 0 && e < (int) extras.size() ? extras[(size_t) e].name : juce::String();
+}
+
+JUCE_BEGIN_IGNORE_WARNINGS_GCC_LIKE ("-Wmissing-field-initializers")   // the module table leaves `extras` to withExtras()
 const ModuleInfo& moduleInfo (ModuleType t)
 {
     // Pal indices: Rose 0, Green 1, Sky 2, Gold 3, Violet 4, Blue 5, Amber 6, Ice 7
     // Fields: title, colour, audio in, audio out, mod out, knobs, width, notes in, notes out, signal ins, utility
     static const ModuleInfo input      { "Track In",   1, false, true,  false, {}, 74.0f, false, true };
     static const ModuleInfo output     { "Out",        1, true,  false, false, {}, 74.0f };
-    static const ModuleInfo sampler    { "Sampler",    0, false, true,  false, { { "Start", 0.0f }, { "Length", 1.0f }, { "Pitch", 0.5f }, { "Attack", 0.0f }, { "Release", 0.3f }, { "Gain", 0.8f } }, 300.0f, true };
-    static const ModuleInfo synth      { "Synth",      4, false, true,  false, { { "Wave", 0.0f }, { "Sub", 0.3f }, { "Detune", 0.15f }, { "Cutoff", 0.6f }, { "Res", 0.25f }, { "Env", 0.4f },
-                                                                                 { "Attack", 0.02f }, { "Decay", 0.3f }, { "Sustain", 0.6f }, { "Release", 0.3f }, { "Drive", 0.2f }, { "Gain", 0.7f } }, 330.0f, true };
-    static const ModuleInfo drums      { "Drum Rack",  6, false, true,  false, { { "Tune", 0.5f }, { "Decay", 0.7f }, { "Snap", 0.3f }, { "Gain", 0.8f } }, 300.0f, true };
-    static const ModuleInfo filter     { "Filter",     2, true,  true,  false, { { "Cutoff", 0.65f }, { "Res", 0.3f }, { "Drive", 0.2f }, { "Mode", 0.0f } }, 200.0f };
-    static const ModuleInfo drive      { "Drive",      6, true,  true,  false, { { "Drive", 0.4f }, { "Tone", 0.6f }, { "Mix", 0.8f }, { "Type", 0.0f } }, 200.0f };
-    static const ModuleInfo delay      { "Delay",      5, true,  true,  false, { { "Time", 0.5f }, { "Feedback", 0.4f }, { "Tone", 0.5f }, { "Mix", 0.25f } }, 200.0f };
-    static const ModuleInfo reverb     { "Reverb",     7, true,  true,  false, { { "Size", 0.6f }, { "Damp", 0.4f }, { "Width", 0.8f }, { "Mix", 0.3f } }, 200.0f };
-    static const ModuleInfo eq         { "EQ",         3, true,  true,  false, { { "Low", 0.0f }, { "Mid", 0.0f }, { "High", 0.0f }, { "Output", 0.7f } }, 200.0f };
-    static const ModuleInfo compressor { "Compressor", 1, true,  true,  false, { { "Thresh", 0.5f }, { "Ratio", 0.4f }, { "Attack", 0.2f }, { "Release", 0.4f }, { "Makeup", 0.3f } }, 240.0f };
-    static const ModuleInfo lfo        { "LFO",        4, false, false, true,  { { "Rate", 0.4f }, { "Depth", 0.6f }, { "Shape", 0.0f } }, 170.0f };
+    static const ModuleInfo sampler = withExtras ({ "Sampler",    0, false, true,  false, { { "Start", 0.0f }, { "Length", 1.0f }, { "Pitch", 0.5f }, { "Attack", 0.0f }, { "Release", 0.3f }, { "Gain", 0.8f } }, 300.0f, true },
+                                                  samplerExtras());
+    static const ModuleInfo synth = withExtras ({ "Synth",      4, false, true,  false, { { "Wave", 0.0f }, { "Sub", 0.3f }, { "Detune", 0.15f }, { "Cutoff", 0.6f }, { "Res", 0.25f }, { "Env", 0.4f },
+                                                                                          { "Attack", 0.02f }, { "Decay", 0.3f }, { "Sustain", 0.6f }, { "Release", 0.3f }, { "Drive", 0.2f }, { "Gain", 0.7f } }, 330.0f, true },
+                                                synthExtras());
+    static const ModuleInfo drums = withExtras ({ "Drum Rack",  6, false, true,  false, { { "Tune", 0.5f }, { "Decay", 0.7f }, { "Snap", 0.3f }, { "Gain", 0.8f } }, 300.0f, true },
+                                                drumExtras());
+    static const ModuleInfo filter = withExtras ({ "Filter",     2, true,  true,  false, { { "Cutoff", 0.65f }, { "Res", 0.3f }, { "Drive", 0.2f }, { "Mode", 0.0f } }, 200.0f },
+                                                 { { "Mix", 1.0f, 1.0f }, { "Follow", 0.0f, 0.0f }, { "Wobble", 0.0f, 0.0f }, { "Wobble Rate", 0.3f, 0.3f },
+                                                   { "Vowel", 0.0f, 0.0f }, { "Slope", 0.0f, 0.0f }, { "Wobble In Time", 0.0f, 0.0f } });
+    static const ModuleInfo drive = withExtras ({ "Drive",      6, true,  true,  false, { { "Drive", 0.4f }, { "Tone", 0.6f }, { "Mix", 0.8f }, { "Type", 0.0f } }, 200.0f },
+                                                { { "Bias", 0.5f, 0.5f }, { "Output", 0.7f, 0.7f }, { "Sag", 0.0f, 0.0f }, { "Oversample", 1.0f, 0.0f } });
+    static const ModuleInfo delay = withExtras ({ "Delay",      5, true,  true,  false, { { "Time", 0.5f }, { "Feedback", 0.4f }, { "Tone", 0.5f }, { "Mix", 0.25f } }, 200.0f },
+                                                { { "Flutter", 0.15f, 0.0f }, { "Duck", 0.0f, 0.0f }, { "Spread", 0.5f, 1.0f }, { "Ping Pong", 1.0f, 1.0f },
+                                                  { "Freeze", 0.0f, 0.0f }, { "Tempo Sync", 1.0f, 1.0f } });
+    static const ModuleInfo reverb = withExtras ({ "Reverb",     7, true,  true,  false, { { "Size", 0.6f }, { "Damp", 0.4f }, { "Width", 0.8f }, { "Mix", 0.3f } }, 200.0f },
+                                                 { { "Pre-delay", 0.1f, 0.0f }, { "Low Cut", 0.0f, 0.0f }, { "Shimmer", 0.0f, 0.0f }, { "Drift", 0.2f, 0.0f },
+                                                   { "Space", 1.0f, 1.0f }, { "Freeze", 0.0f, 0.0f }, { "Gated", 0.0f, 0.0f } });
+    static const ModuleInfo eq = withExtras ({ "EQ",         3, true,  true,  false, { { "Low", 0.0f }, { "Mid", 0.0f }, { "High", 0.0f }, { "Output", 0.7f } }, 200.0f },
+                                             eqExtras());
+    static const ModuleInfo compressor = withExtras ({ "Compressor", 1, true,  true,  false, { { "Thresh", 0.5f }, { "Ratio", 0.4f }, { "Attack", 0.2f }, { "Release", 0.4f }, { "Makeup", 0.3f } }, 240.0f },
+                                                     { { "Knee", 0.25f, 0.25f }, { "Mix", 1.0f, 1.0f }, { "Sidechain Cut", 0.0f, 0.0f }, { "Auto Makeup", 0.0f, 0.0f },
+                                                       { "Character", 0.0f, 0.0f }, { "Listens To", 0.0f, 0.0f } });
+    static const ModuleInfo lfo = withExtras ({ "LFO",        4, false, false, true,  { { "Rate", 0.4f }, { "Depth", 0.6f }, { "Shape", 0.0f } }, 170.0f },
+                                              { { "Phase", 0.0f, 0.0f }, { "Smooth", 0.0f, 0.0f }, { "Fade In", 0.0f, 0.0f }, { "Chaos", 0.0f, 0.0f },
+                                                { "Sync", 0.0f, 0.0f }, { "Polarity", 0.0f, 0.0f }, { "Restart On Note", 0.0f, 0.0f } });
     // A plugin may be an instrument or an effect, so it has both a notes and an audio input
     static const ModuleInfo plugin     { "Plugin",     5, true,  true,  false, { { "Mix", 1.0f }, { "Gain", 0.7f } }, 240.0f, true };
 
@@ -51,6 +155,7 @@ const ModuleInfo& moduleInfo (ModuleType t)
     }
     return filter;
 }
+JUCE_END_IGNORE_WARNINGS_GCC_LIKE
 
 std::vector<int> ModuleInfo::ports() const
 {
@@ -212,8 +317,8 @@ int Patch::addAt (ModuleType type, juce::Point<float> position, bool asInstrumen
     m.id = nextId++;
     m.type = type;
     m.position = { position.x, rowY (type) };
-    for (auto& k : info.knobs)
-        m.knobValues.push_back (k.second);
+    for (int i = 0; i < info.numParams(); ++i)
+        m.knobValues.push_back (info.defaultValue (i));
     modules.push_back (m);
     const int id = m.id;
 
@@ -536,10 +641,15 @@ void Patch::fromVar (const juce::var& v)
             m.type = (ModuleType) juce::jlimit (0, numModuleTypes - 1, (int) mv["type"]);
             m.position = { (float) mv["x"], (float) mv["y"] };
             const auto& info = moduleInfo (m.type);
-            for (auto& k : info.knobs) m.knobValues.push_back (k.second);
+            // Controls the file doesn't have yet take the value that keeps it sounding as it did
+            for (int i = 0; i < info.numParams(); ++i) m.knobValues.push_back (info.defaultValue (i, true));
+            int saved = 0;
             if (auto* ks = mv["knobs"].getArray())
-                for (int i = 0; i < ks->size() && i < (int) m.knobValues.size(); ++i)
+                for (int i = 0; i < ks->size() && i < (int) m.knobValues.size(); ++i, ++saved)
                     m.knobValues[(size_t) i] = (float) (*ks)[i];
+            // Before the expanded view the synth's two oscillators shared one wave
+            if (m.type == ModuleType::Synth && saved <= Param::Synth::WaveB)
+                m.knobValues[(size_t) Param::Synth::WaveB] = m.knobValues[(size_t) Param::Synth::Wave];
             m.sampleName = mv["sample"].toString();
             if (auto* ps = mv["pads"].getArray())
                 for (int i = 0; i < ps->size() && i < 16; ++i)
