@@ -1,4 +1,5 @@
 #include "Graph.h"
+#include "PluginHost.h"
 #include "Samples.h"
 
 using namespace analog;
@@ -328,15 +329,15 @@ namespace
     struct DelayNode : public Node
     {
         enum { Time, Feedback, Tone, Mix };
-        std::vector<float> bufL, bufR;
+        std::vector<float> lineL, lineR;
         int write = 0;
         OnePole toneL, toneR;
         float smoothedDelay = 0.0f;
 
         DelayNode (const Module& m, double sampleRate) : Node (m, sampleRate)
         {
-            bufL.assign ((size_t) (sr * 4.0), 0.0f);
-            bufR.assign ((size_t) (sr * 4.0), 0.0f);
+            lineL.assign ((size_t) (sr * 4.0), 0.0f);
+            lineR.assign ((size_t) (sr * 4.0), 0.0f);
             toneL.prepare (sr); toneR.prepare (sr);
         }
 
@@ -353,7 +354,7 @@ namespace
         {
             static const float divisions[] = { 0.25f, 1.0f / 3.0f, 0.5f, 0.75f, 1.0f, 1.5f, 2.0f };
             const float beats = divisions[juce::jlimit (0, 6, (int) (k (Time) * 6.999f))];
-            const float target = juce::jmin ((float) bufL.size() - 2.0f, beats * 60.0f / (float) bpm * (float) sr);
+            const float target = juce::jmin ((float) lineL.size() - 2.0f, beats * 60.0f / (float) bpm * (float) sr);
             const float fb = k (Feedback) * 0.95f, mix = k (Mix);
             toneL.setLowpass (expMap (k (Tone), 800.0f, 16000.0f));
             toneR.a = toneL.a;
@@ -362,10 +363,10 @@ namespace
             for (int i = 0; i < n; ++i)
             {
                 smoothedDelay += (target - smoothedDelay) * 0.0005f;     // glides like a tape head moving
-                const float dl = read (bufL, smoothedDelay), dr = read (bufR, smoothedDelay);
-                bufL[(size_t) write] = fastTanh (l[i] + toneL.lowpass (dr) * fb);   // ping-pong cross feedback
-                bufR[(size_t) write] = fastTanh (r[i] + toneR.lowpass (dl) * fb);
-                write = (write + 1) % (int) bufL.size();
+                const float dl = read (lineL, smoothedDelay), dr = read (lineR, smoothedDelay);
+                lineL[(size_t) write] = fastTanh (l[i] + toneL.lowpass (dr) * fb);   // ping-pong cross feedback
+                lineR[(size_t) write] = fastTanh (r[i] + toneR.lowpass (dl) * fb);
+                write = (write + 1) % (int) lineL.size();
                 l[i] += dl * mix;
                 r[i] += dr * mix;
             }
@@ -481,6 +482,140 @@ namespace
         }
         float modValue() const override { return value; }
     };
+
+    // A hosted AU / VST3 plugin, run in sub-blocks like everything else. Instruments take the
+    // patch's notes as MIDI; effects take the audio input. Mix blends dry and wet, Gain trims the output.
+    struct PluginNode : public Node
+    {
+        struct PlayHead : public juce::AudioPlayHead
+        {
+            std::atomic<double> bpm { 120.0 };
+            juce::Optional<PositionInfo> getPosition() const override
+            {
+                PositionInfo p;
+                p.setBpm (bpm.load());
+                p.setIsPlaying (true);
+                p.setTimeSignature (TimeSignature { 4, 4 });
+                return p;
+            }
+        };
+
+        std::unique_ptr<juce::AudioPluginInstance> plugin;
+        PlayHead playHead;
+        bool synth = false;
+        juce::AudioBuffer<float> buf;
+        juce::MidiBuffer midi;
+        struct Pending { int pitch; double samplesLeft; };
+        std::vector<Pending> pendingOffs;
+        std::array<float, subBlock> dryL {}, dryR {};
+
+        PluginNode (const Module& m, double sampleRate) : Node (m, sampleRate)
+        {
+            juce::String error;
+            plugin = PluginHost::get().create (m.pluginId, sr, subBlock, error);
+            if (plugin == nullptr)
+                return;
+            const auto desc = plugin->getPluginDescription();
+            synth = plugin->acceptsMidi() && (desc.isInstrument || plugin->getTotalNumInputChannels() == 0);
+            plugin->enableAllBuses();
+            plugin->setPlayHead (&playHead);
+            plugin->setRateAndBufferSizeDetails (sr, subBlock);
+            plugin->prepareToPlay (sr, subBlock);
+            if (m.pluginState.getSize() > 0)
+                plugin->setStateInformation (m.pluginState.getData(), (int) m.pluginState.getSize());
+            buf.setSize (juce::jmax (2, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels()), subBlock);
+            pendingOffs.reserve (64);
+        }
+
+        ~PluginNode() override
+        {
+            if (plugin != nullptr)
+            {
+                plugin->setPlayHead (nullptr);
+                plugin->releaseResources();
+            }
+        }
+
+        bool isInstrument() const override { return synth; }
+        juce::AudioProcessor* hostedPlugin() override { return plugin.get(); }
+
+        void captureState (Module& m) override
+        {
+            if (plugin != nullptr)
+            {
+                juce::MemoryBlock state;
+                plugin->getStateInformation (state);
+                if (state.getSize() > 0)
+                    m.pluginState = state;
+            }
+        }
+
+        void noteOn (int pitch, float velocity, double gateSamples) override
+        {
+            midi.addEvent (juce::MidiMessage::noteOn (1, pitch, velocity), 0);
+            if (gateSamples > 0.0)
+                pendingOffs.push_back ({ pitch, gateSamples });
+        }
+
+        void noteOff (int pitch) override
+        {
+            midi.addEvent (juce::MidiMessage::noteOff (1, pitch), 0);
+            pendingOffs.erase (std::remove_if (pendingOffs.begin(), pendingOffs.end(), [pitch] (const Pending& p) { return p.pitch == pitch; }),
+                               pendingOffs.end());
+        }
+
+        void allNotesOff() override
+        {
+            midi.addEvent (juce::MidiMessage::allNotesOff (1), 0);
+            pendingOffs.clear();
+        }
+
+        void process (float* l, float* r, int n, double bpm) override
+        {
+            if (plugin == nullptr)
+                return;    // no plugin: audio passes straight through
+            playHead.bpm = bpm;
+
+            // Gated notes end inside this sub-block
+            for (auto it = pendingOffs.begin(); it != pendingOffs.end();)
+            {
+                it->samplesLeft -= n;
+                if (it->samplesLeft <= 0.0)
+                {
+                    midi.addEvent (juce::MidiMessage::noteOff (1, it->pitch), juce::jlimit (0, n - 1, n - 1 + (int) it->samplesLeft));
+                    it = pendingOffs.erase (it);
+                }
+                else
+                    ++it;
+            }
+
+            std::copy (l, l + n, dryL.begin());
+            std::copy (r, r + n, dryR.begin());
+            buf.clear();
+            if (buf.getNumChannels() > 0) buf.copyFrom (0, 0, l, n);
+            if (buf.getNumChannels() > 1) buf.copyFrom (1, 0, r, n);
+
+            juce::AudioBuffer<float> view (buf.getArrayOfWritePointers(), buf.getNumChannels(), n);
+            if (plugin->isSuspended())
+                view.clear();
+            else
+                plugin->processBlock (view, midi);
+            midi.clear();
+
+            const float mix = synth ? 1.0f : k (0);
+            const float gain = k (1) / 0.7f;
+            const float* wl = buf.getReadPointer (0);
+            const float* wr = buf.getNumChannels() > 1 ? buf.getReadPointer (1) : wl;
+            float peak = 0.0f;
+            for (int i = 0; i < n; ++i)
+            {
+                l[i] = dryL[(size_t) i] * (1.0f - mix) + wl[i] * mix * gain;
+                r[i] = dryR[(size_t) i] * (1.0f - mix) + wr[i] * mix * gain;
+                peak = juce::jmax (peak, std::abs (l[i]));
+            }
+            display = peak;
+        }
+    };
 }
 
 std::unique_ptr<Node> createNode (const Module& m, double sr, const Graph::SampleResolver& resolve)
@@ -497,6 +632,7 @@ std::unique_ptr<Node> createNode (const Module& m, double sr, const Graph::Sampl
         case ModuleType::EQ:         return std::make_unique<EQNode> (m, sr);
         case ModuleType::Compressor: return std::make_unique<CompressorNode> (m, sr);
         case ModuleType::LFO:        return std::make_unique<LFONode> (m, sr);
+        case ModuleType::Plugin:     return std::make_unique<PluginNode> (m, sr);
         case ModuleType::Input:
         case ModuleType::Output:     break;
     }
@@ -563,6 +699,14 @@ Graph::Graph (const Patch& patch, double sampleRate, const SampleResolver& resol
         if (from != nullptr && to != nullptr)
             links.push_back ({ from, c.fromPort, to, c.toPort });
     }
+}
+
+void Graph::capturePluginState (Patch& patch)
+{
+    for (auto& n : nodes)
+        if (n->hostedPlugin() != nullptr)
+            if (auto* m = patch.find (n->id))
+                n->captureState (*m);
 }
 
 Node* Graph::find (int moduleId)

@@ -9,6 +9,7 @@ class TrackList : public juce::Component
 public:
     explicit TrackList (AppContext&);
 
+    void rebuild();     // after the project's tracks were replaced
     void tick();
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -17,6 +18,7 @@ public:
 private:
     AppContext& ctx;
     juce::OwnedArray<SmallToggle> muteButtons, soloButtons, seqButtons;
+    int builtGeneration = -1;
 
     juce::Rectangle<int> rowBounds (int index) const;
 };

@@ -112,6 +112,9 @@ public:
     static const std::vector<Scale>& scales();
     static const char* noteName (int semitone);
 
+    juce::var toVar() const;
+    void fromVar (const juce::var&);
+
 private:
     int nextId = 3;
     void insertInline (int id, int inPort, int outPort, int targetModule, int targetPort);
@@ -185,7 +188,6 @@ private:
     std::array<int, 4> held { -1, -1, -1, -1 };
     int nextVoice = 0;
     int lastPitch = 60;
-    float heldPitchCv = 0.0f;
     int sustainTicks = 0;
 };
 

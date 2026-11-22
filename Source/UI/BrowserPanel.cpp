@@ -1,5 +1,6 @@
 #include "BrowserPanel.h"
 #include "../Engine/Samples.h"
+#include "../Engine/PluginHost.h"
 
 namespace
 {
@@ -45,18 +46,56 @@ namespace
 
 BrowserPanel::BrowserPanel (AppContext& c) : ctx (c)
 {
-    const char* names[] = { "Samples", "Devices", "Sequence" };
-    for (int i = 0; i < 3; ++i)
+    const char* names[] = { "Samples", "Devices", "Seq", "Plugins" };
+    for (int i = 0; i < numTabs; ++i)
     {
         auto& b = tabs[i];
         b.setButtonText (names[i]);
         b.setRadioGroupId (2001);
         b.setClickingTogglesState (true);
         b.getProperties().set ("pal", (int) Pal::Green);
-        b.onClick = [this, i] { if (tabs[i].getToggleState()) { tab = i; chosen = hovered = -1; repaint(); } };
+        b.onClick = [this, i] { if (tabs[i].getToggleState()) { tab = i; chosen = hovered = -1; scanButton.setVisible (tab == 3); resized(); repaint(); } };
         addAndMakeVisible (b);
     }
     tabs[tab].setToggleState (true, juce::dontSendNotification);
+
+    scanButton.getProperties().set ("pal", (int) Pal::Sky);
+    scanButton.setTooltip ("Look through the standard AU and VST3 folders");
+    scanButton.onClick = [this]
+    {
+        if (PluginHost::get().isScanning()) return;
+        PluginHost::get().scan ([safe = juce::Component::SafePointer<BrowserPanel> (this)]
+        {
+            if (safe != nullptr) { safe->pluginItems.clear(); safe->scanButton.setButtonText ("Scan for plugins"); safe->repaint(); }
+        });
+        startTimerHz (10);
+    };
+    addChildComponent (scanButton);
+}
+
+void BrowserPanel::timerCallback()
+{
+    if (PluginHost::get().isScanning())
+    {
+        scanButton.setButtonText ("Scanning " + juce::String (juce::roundToInt (PluginHost::get().scanProgress() * 100.0f)) + "%");
+        repaint();
+    }
+    else
+    {
+        stopTimer();
+        scanButton.setButtonText ("Scan for plugins");
+        pluginItems.clear();
+        repaint();
+    }
+}
+
+void BrowserPanel::refreshPlugins() const
+{
+    pluginItems.clear();
+    pluginList = PluginHost::get().list();
+    for (auto& d : pluginList)
+        pluginItems.push_back ({ d.name, d.pluginFormatName + " / " + (d.manufacturerName.isNotEmpty() ? d.manufacturerName : juce::String ("unknown")),
+                                 Icon::Plugin, d.isInstrument ? Pal::Violet : Pal::Sky });
 }
 
 const std::vector<BrowserPanel::Item>& BrowserPanel::items() const
@@ -69,6 +108,12 @@ const std::vector<BrowserPanel::Item>& BrowserPanel::items() const
                                          e.category == "Drums" ? Icon::Drums : Icon::Sampler, palForCategory (e.category) });
         return sampleItems;
     }
+    if (tab == 3)
+    {
+        if (pluginItems.empty() || pluginItems.size() != (size_t) PluginHost::get().known.getNumTypes())
+            refreshPlugins();
+        return pluginItems;
+    }
     return tab == 1 ? devices : sequencers;
 }
 
@@ -77,17 +122,20 @@ void BrowserPanel::resized()
     auto r = getLocalBounds().reduced (12);
     r.removeFromTop (28); // heading
     auto tabRow = r.removeFromTop (28);
-    const int w = tabRow.getWidth() / 3;
+    const int w = tabRow.getWidth() / numTabs;
     for (auto& b : tabs)
         b.setBounds (tabRow.removeFromLeft (w).reduced (2, 0));
     r.removeFromTop (12);
+    scanButton.setBounds (r.removeFromTop (28));
+    if (tab == 3) r.removeFromTop (10);
+    else r.translate (0, -38);   // other tabs keep the list at the top
     listArea = r;
 }
 
 juce::Rectangle<int> BrowserPanel::itemBounds (int index) const
 {
-    const int h = tab == 0 ? 34 : 54;
-    return { listArea.getX(), listArea.getY() + index * (h + (tab == 0 ? 4 : 6)), listArea.getWidth(), h };
+    const int h = tab == 0 || tab == 3 ? 34 : 54;
+    return { listArea.getX(), listArea.getY() + index * (h + (tab == 0 || tab == 3 ? 4 : 6)), listArea.getWidth(), h };
 }
 
 int BrowserPanel::itemAt (juce::Point<int> p) const
@@ -125,6 +173,8 @@ void BrowserPanel::mouseDoubleClick (const juce::MouseEvent& e)
         onLoadSample (items()[(size_t) i].name);
     else if (tab == 2 && i >= 0 && i < (int) std::size (sequencerTypes) && onAddSequencer)
         onAddSequencer (sequencerTypes[i]);
+    else if (tab == 3 && i >= 0 && i < pluginList.size() && onAddPlugin)
+        onAddPlugin (pluginList.getReference (i));
 }
 
 void BrowserPanel::paint (juce::Graphics& g)
@@ -139,17 +189,27 @@ void BrowserPanel::paint (juce::Graphics& g)
     Glow::drawSpacedText (g, "BROWSER", head, th.heading (14.0f), 2.5f, juce::Justification::centredLeft);
 
     const auto& list = items();
+    const int bottom = tab == 3 ? listArea.getBottom() : getHeight() - 8;
+    if (tab == 3 && list.empty())
+    {
+        g.setColour (th.muted);
+        g.setFont (th.body (12.0f));
+        const bool scanning = PluginHost::get().isScanning();
+        g.drawFittedText (scanning ? "Scanning\n" + PluginHost::get().scanningName()
+                                   : "No plugins listed yet.\n\nScan to find the AU and VST3 plugins on this Mac, then double-click one to add it to the selected track.",
+                          listArea.reduced (8), juce::Justification::centredTop, 8);
+    }
     for (int i = 0; i < (int) list.size(); ++i)
     {
         auto r = itemBounds (i).toFloat();
-        if (r.getBottom() > (float) getHeight() - 8.0f)
+        if (r.getBottom() > (float) bottom)
             break;
 
         const auto& it = list[(size_t) i];
         const auto c = th.pal (it.pal);
         const bool lit = i == hovered || i == chosen;
 
-        if (tab != 0)
+        if (tab != 0 && tab != 3)
         {
             // Device card, like the ability cards: framed panel, icon, serif title, numeral
             Glow::drawPanel (g, r, lit ? c : c.withMultipliedAlpha (0.65f), 10.0f, i == chosen ? 1.0f : 0.0f);

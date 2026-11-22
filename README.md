@@ -7,6 +7,10 @@ Rainbow mode that uses the full card palette.
 
 ![Arrange view](docs/arrange.png)
 
+![Mix view: channel strips over the patch trough, with the selected channel's devices below](docs/mixer.png)
+
+![The same mixer with the Vintage console switched on](docs/mixer-vintage.png)
+
 ## Build on a Mac
 
 You need Xcode (from the App Store) and CMake (`brew install cmake`).
@@ -27,6 +31,17 @@ open build/Glowtag_artefacts/Release/GLOWTAG.app
 
 If you already have JUCE checked out, add `-DGLOWTAG_JUCE_DIR=/path/to/JUCE` to the first command.
 
+Without the Xcode app, Apple's Command Line Tools are enough (`xcode-select --install`):
+
+```sh
+cmake -B build -DCMAKE_BUILD_TYPE=Release    # plain Makefiles instead of -G Xcode
+cmake --build build -j
+open build/Glowtag_artefacts/GLOWTAG.app
+```
+
+If CMake complains about the SDK, point it at the one your tools ship, e.g.
+`SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk cmake -B build ...`.
+
 ## Using it
 
 | Key | Action |
@@ -37,7 +52,8 @@ If you already have JUCE checked out, add `-DGLOWTAG_JUCE_DIR=/path/to/JUCE` to 
 | Delete | Delete the selected clip (Arrange) or note (Edit) |
 | Cmd D | Duplicate the selected clip |
 | 1 / 2 / 3 | Arrange / Mix / Edit |
-| Cmd K | Command palette (views, transport, theme) |
+| Cmd K | Command palette (files, views, transport, theme) |
+| Cmd N / Cmd O / Cmd S / Shift Cmd S | New, open, save, save as (also in the File menu, with Open Recent) |
 | Up / Down | Select track |
 
 Any MIDI keyboard that is plugged in plays and records into the selected track too.
@@ -87,11 +103,43 @@ Right-click a module to move or remove it; Back to clips returns the track to it
 | Tide | Tempo-synced LFO from a sixteenth to eight bars, five shapes |
 | Out | Plays the track's instrument: mono or four voices, octave, and a Mod lead that moves the instrument's character knob |
 
-**Mix**: faders, pan knobs and mute / solo all affect the sound.
+**Mix**: a console of channel strips over a **patch trough**. Each strip has, from the top: its name,
+**Trim** (level into the channel, -12 to +12 dB) with **phase flip** and **mono**, the devices in its
+patch (click one and the device panel below jumps to it), two send knobs, **pan** and **width**, the
+**Analogue** lamp, the fader with a level meter and an amber gain-reduction meter (from the first
+compressor in the chain), mute / solo, and its patch jacks. The level meter runs in the theme colour,
+turns yellow near the top and red at the peak; an over stays lit for a moment.
+
+Every strip ends in an **output jack** and a cable hangs from it to whatever it feeds. Drag the jack
+onto a bus or the master to re-patch it, or click the jack and then the destination; double-click a
+jack to send it back to the master. Right-click a strip for the same choices as a menu, and to rename
+it. **+ Bus** adds a bus (a channel other channels are patched into); buses can feed other buses, and
+right-click removes one. After the tracks and buses come **Return A** (a reverb), **Return B** (a
+delay) and the **Master** (a compressor). Sends are post-fader and feed the returns. Click any strip
+to select it and its patch appears in the device panel underneath, so buses, returns and the master
+take devices and plugins too.
+
+**Analogue** models a console channel: a little low-end weight, even harmonics and a softened top.
+Quiet material is only warmed; push Trim and it breaks up like driven hardware, and the lamp turns
+from orange to red. **Vintage** (top right of the mixer) redraws the console as worn hardware with
+tape labels and LED ladder meters, tinted by the theme colour.
+
+**Plugins**: the browser's Plugins tab lists the AU and VST3 plugins on the Mac. Scan once to find
+them, then double-click one to add it to the selected track, return or master as a **Plugin**
+device. It wires itself into the chain like any other device, has Mix and Gain knobs, and
+double-click (or right-click) its card to open the plugin's own window. Instruments take the
+track's notes; their state is saved inside the project. Scanning happens in the background and a
+plugin that crashes the scan is skipped next time.
+
+**Saving**: projects are JSON files with a `.glowtag` extension holding every track, clip, note,
+device patch, rack, plugin state, send and fader. Audio clips reference their files by path. The
+title bar shows the file and a dot when there are unsaved changes; quitting with changes asks
+first, and the last project opens again next time.
 
 ## Tests
 
-Offline checks for the engine (transport, loop, clips, live MIDI, recording, patching, the sequencer rack):
+Offline checks for the engine (transport, loop, clips, live MIDI, recording, patching, the sequencer rack,
+save / load round trips, sends / returns / master routing, bus patching, the console channel):
 
 ```sh
 cmake -B build -G Xcode -DGLOWTAG_TESTS=ON
@@ -104,14 +152,15 @@ cmake --build build --target GlowtagTests --config Debug
 ```
 Source/
   Main.cpp              app and window
-  MainComponent.*       owns the project, engine and views; layout and shortcuts
+  MainComponent.*       owns the project, engine and views; layout, shortcuts, File menu and saving
   Theme.*               colours (one-colour shades or Rainbow) and fonts
   Engine/
-    Project.*           tracks, clips, step patterns, tempo
+    Project.*           tracks, returns, master, clips, tempo; JSON save and load
     Patch.*             modular device patch per track: modules, jacks, cables, auto-wiring
-    Graph.*             the running audio side of a patch (virtual analog nodes)
+    Graph.*             the running audio side of a patch (virtual analog nodes, hosted plugins)
+    PluginHost.*        AU / VST3 scanning and instance creation
     Sequencer.*         rolling sequencer rack: modules, cables, auto-wiring, and the tick-based runtime
-    AudioEngine.*       plays clips, live MIDI and sequencer racks through each track's graph
+    AudioEngine.*       plays clips, live MIDI and sequencer racks through each slot's graph, then sends, returns and master
   UI/
     Icons.*             glowing line-art icons and panel drawing
     GlowLookAndFeel.*   pill buttons, glowing knobs, faders
@@ -124,5 +173,6 @@ Source/
 1. **Foundation** (done): app shell, audio engine, themed UI with Arrange, Mix and Edit.
 2. **Core engine** (done): timeline with MIDI and audio clips, loop, metronome, piano roll editing, MIDI keyboard playing and recording.
 3. **Sounds and devices** (done): virtual analog synth, sampler, drum rack and effects running through the modular patch.
-3b. **Eurorack rolling sequencer** (this version): a per-track alternative to clips, with module-style visuals.
-4. **Mix, Edit and polish**: full mixer routing, full piano roll, AU / VST hosting, saving projects.
+3b. **Eurorack rolling sequencer** (done): a per-track alternative to clips, with module-style visuals.
+4. **Mix, save and plugins** (this version): sends, two returns and a master chain; saving and loading projects; AU / VST3 hosting.
+5. **Polish**: adding and removing tracks, undo, automation playback, more piano roll tools.

@@ -19,6 +19,16 @@ public:
     void setThemeIndex (int index);
     void setRainbow (bool shouldBeRainbow);
 
+    // Vintage console: the mixer drawn as worn hardware, tinted by the theme colour
+    bool isVintage() const     { return vintage; }
+    void setVintage (bool shouldBeVintage);
+    // A neutral surface colour leaning towards `accent` (0 none, 1 all the way)
+    static juce::Colour tinted (juce::uint32 neutral, juce::Colour accent, float amount) { return juce::Colour (neutral).interpolatedWith (accent, amount); }
+
+    // Level meter zones, the same in every theme
+    const juce::Colour warn    { 0xffffd23f };
+    const juce::Colour danger  { 0xffff4338 };
+
     juce::Colour themeColour() const { return themeChoices[themeIndex].colour; }
     juce::Colour pal (Pal p) const;
     juce::Colour pal (int index) const { return pal ((Pal) (index % 8)); }
@@ -44,4 +54,5 @@ private:
     juce::Array<Choice> themeChoices;
     int themeIndex = 0;
     bool rainbow = false;
+    bool vintage = false;
 };

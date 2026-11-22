@@ -248,7 +248,7 @@ bool ArrangerView::isInterestedInFileDrag (const juce::StringArray& files)
 
 void ArrangerView::filesDropped (const juce::StringArray& files, int x, int y)
 {
-    const int t = trackAtY (y) >= 0 ? trackAtY (y) : ctx.selectedTrack;
+    const int t = trackAtY (y) >= 0 ? trackAtY (y) : juce::jmin (ctx.selectedTrack, (int) ctx.project.tracks.size() - 1);
     double start = juce::jmax (0.0, snapBeat (xToBeat ((float) x)));
 
     for (auto& f : files)
@@ -259,6 +259,7 @@ void ArrangerView::filesDropped (const juce::StringArray& files, int x, int y)
         Clip clip;
         clip.kind = ClipKind::Audio;
         clip.audio = data;
+        clip.audioPath = f;
         clip.name = data->fileName;
         clip.start = start;
         clip.length = juce::jmax (0.25, data->lengthSeconds() * ctx.project.bpm.load() / 60.0);
