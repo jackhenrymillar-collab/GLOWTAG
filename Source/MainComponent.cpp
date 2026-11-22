@@ -4,7 +4,7 @@
 namespace
 {
     enum MenuIds { menuNew = 1, menuOpen, menuSave, menuSaveAs, menuClearRecent, menuArrange, menuMix, menuEdit, menuPlay, menuRecord,
-                   menuMetronome, menuPalette, menuRecentBase = 100 };
+                   menuMetronome, menuPalette, menuWall, menuRecentBase = 100 };
 }
 
 MainComponent::MainComponent()
@@ -31,16 +31,16 @@ MainComponent::MainComponent()
     arranger.onOpenEditor = [this] { setMode (Mode::Edit); };
     browser.onAddDevice = [this] (ModuleType t) { devices.addModule (t); };
     browser.onLoadSample = [this] (const juce::String& name) { devices.loadSample (name); };
-    browser.onAddSequencer = [this] (SeqType t)
-    {
-        // Adding a sequencer module switches the track to its rack
-        if (mode == Mode::Mix) setMode (Mode::Arrange);
-        if (! ctx.selectedIsTrack()) ctx.selectTrack (0);
-        ctx.selected().rolling = true;
-        ctx.clipsChanged();
-        sequencer.addModule (t);
-    };
+    browser.onAddSequencer = [this] (SeqType t) { addSequencerModule (t); };
     browser.onAddPlugin = [this] (const juce::PluginDescription& d) { devices.addPlugin (d); };
+
+    // The device wall covers the whole window while Tab is held
+    addChildComponent (wall);
+    wall.onLoad = [this] (int index) { loadFromWall (index); };
+    wall.targetName = [this] { return ctx.selected().name; };
+    wall.onClosed = [this] { settings->setValue ("deviceWall", wall.state()); };
+    wall.onReleaseFocus = [this] { grabKeyboardFocus(); };
+    wall.restoreState (settings->getValue ("deviceWall"));
 
     // Look: theme colour, Rainbow and the vintage console come back as they were left
     Theme::get().setThemeIndex (settings->getIntValue ("theme", 0));
@@ -83,6 +83,7 @@ MainComponent::~MainComponent()
     settings->setValue ("rainbow", Theme::get().isRainbow());
     settings->setValue ("vintageConsole", Theme::get().isVintage());
     settings->setValue ("recent", recent.toString());
+    settings->setValue ("deviceWall", wall.state());
     settings->saveIfNeeded();
     deviceManager.removeMidiInputDeviceCallback ({}, &engine.midiInput);
     shutdownAudio();
@@ -119,6 +120,23 @@ void MainComponent::setMode (Mode m)
     sequencer.setVisible (rackShown && m != Mode::Mix);
     resized();
     repaint();
+}
+
+void MainComponent::addSequencerModule (SeqType t)
+{
+    // Adding a sequencer module switches the track to its rack
+    if (mode == Mode::Mix) setMode (Mode::Arrange);
+    if (! ctx.selectedIsTrack()) ctx.selectTrack (0);
+    ctx.selected().rolling = true;
+    ctx.clipsChanged();
+    sequencer.addModule (t);
+}
+
+void MainComponent::loadFromWall (int deviceIndex)
+{
+    const auto& d = Wall::device (deviceIndex);
+    if (d.sequencer) addSequencerModule (d.seq);      // Clock and Out are in every rack already: this opens it
+    else             devices.addModule (d.module);
 }
 
 void MainComponent::togglePlay()
@@ -169,6 +187,8 @@ void MainComponent::stopKeyboardFocus (juce::Component& c)
 {
     for (auto* child : c.getChildren())
     {
+        if (dynamic_cast<DeviceWall*> (child) != nullptr)
+            continue;                                   // it has a title box you type into
         child->setWantsKeyboardFocus (false);
         child->setMouseClickGrabsKeyboardFocus (false);
         stopKeyboardFocus (*child);
@@ -191,6 +211,22 @@ void MainComponent::sendLiveNote (int pitch, bool on)
 bool MainComponent::keyPressed (const juce::KeyPress& key)
 {
     const auto mods = key.getModifiers();
+
+    // Tab shows the device wall for as long as it is held (a quick tap leaves it up)
+    if (key.isKeyCode (juce::KeyPress::tabKey) && ! mods.isCommandDown() && ! mods.isCtrlDown() && ! mods.isAltDown())
+    {
+        wall.tabPressed();
+        return true;
+    }
+    if (wall.isOpen())
+    {
+        if (wall.keyUsed (key))
+            return true;
+        // Behind the wall only play / stop and the Cmd shortcuts still work
+        if (key != juce::KeyPress::spaceKey && ! mods.isCommandDown())
+            return true;
+    }
+
     if (key == juce::KeyPress::spaceKey)                         { togglePlay(); return true; }
     if (key == juce::KeyPress ('k', juce::ModifierKeys::commandModifier, 0)) { showCommandPalette(); return true; }
     if (key == juce::KeyPress ('n', juce::ModifierKeys::commandModifier, 0)) { newProject(); return true; }
@@ -240,6 +276,9 @@ bool MainComponent::keyStateChanged (bool isKeyDown)
 {
     if (isKeyDown)
         return false;
+
+    if (! juce::KeyPress::isKeyCurrentlyDown (juce::KeyPress::tabKey))
+        wall.tabReleased();
 
     // A key went up: release any note whose key is no longer held
     bool used = false;
@@ -362,6 +401,8 @@ void MainComponent::timerCallback()
     if (sequencer.isVisible()) sequencer.tick();
     if (mixer.isVisible()) mixer.tick();
     if (editor.isVisible()) editor.tick();
+    if (wall.isOpen()) wall.tick (engine.getPulse());
+    else wall.warm();
 
     drainRecording();
 
@@ -408,6 +449,7 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 
     // Theme or selection changed: refresh colours and redraw everything
     lookAndFeel.refreshColours();
+    wall.themeChanged();
     sendLookAndFeelChange();
     repaint();
     for (auto* c : getChildren())
@@ -422,6 +464,7 @@ void MainComponent::paint (juce::Graphics& g)
 void MainComponent::resized()
 {
     auto r = getLocalBounds();
+    wall.setBounds (r);
     topBar.setBounds (r.removeFromTop (56));
     status.setBounds (r.removeFromBottom (26));
     browser.setBounds (r.removeFromLeft (260));
@@ -646,6 +689,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
         m.addItem (item (menuEdit, "Edit", "3", mode == Mode::Edit));
         m.addSeparator();
         m.addItem (item (menuPalette, "Command Palette", "Cmd+K"));
+        m.addItem (item (menuWall, "Device Wall", "Tab", wall.isOpen()));
     }
     else
     {
@@ -672,6 +716,7 @@ void MainComponent::menuItemSelected (int id, int)
         case menuRecord:    engine.recordArmed = ! engine.recordArmed.load(); break;
         case menuMetronome: engine.metronome = ! engine.metronome.load(); break;
         case menuPalette:   showCommandPalette(); break;
+        case menuWall:      if (wall.isOpen()) wall.close(); else wall.open (true); break;
         default:
             if (id >= menuRecentBase)
             {

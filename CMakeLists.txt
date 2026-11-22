@@ -48,7 +48,16 @@ target_sources(Glowtag PRIVATE
     Source/UI/SequencerPanel.cpp
     Source/UI/StatusBar.cpp
     Source/UI/MixerView.cpp
-    Source/UI/EditorView.cpp)
+    Source/UI/EditorView.cpp
+    Source/UI/DeviceWallModel.cpp
+    Source/UI/DeviceWallArt.cpp
+    Source/UI/DeviceWall.cpp)
+
+# Lettering for the device wall (SIL Open Font License, see Source/Fonts)
+juce_add_binary_data(GlowtagFonts SOURCES
+    Source/Fonts/SedgwickAveDisplay-Regular.ttf
+    Source/Fonts/Monoton-Regular.ttf
+    Source/Fonts/BowlbyOne-Regular.ttf)
 
 target_include_directories(Glowtag PRIVATE Source)
 
@@ -68,6 +77,7 @@ target_link_libraries(Glowtag
         juce::juce_audio_processors
         juce::juce_dsp
         juce::juce_gui_extra
+        GlowtagFonts
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
@@ -85,7 +95,8 @@ if(GLOWTAG_TESTS)
         Source/Engine/Graph.cpp
         Source/Engine/Samples.cpp
         Source/Engine/Sequencer.cpp
-        Source/Engine/PluginHost.cpp)
+        Source/Engine/PluginHost.cpp
+        Source/UI/DeviceWallModel.cpp)
     target_include_directories(GlowtagTests PRIVATE Source)
     target_compile_definitions(GlowtagTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_PLUGINHOST_VST3=1 JUCE_PLUGINHOST_AU=1)
     target_link_libraries(GlowtagTests PRIVATE

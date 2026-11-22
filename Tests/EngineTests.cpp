@@ -6,6 +6,7 @@
 #include "Engine/Graph.h"
 #include "Engine/Samples.h"
 #include "Engine/Sequencer.h"
+#include "UI/DeviceWallModel.h"
 #include <iostream>
 
 namespace
@@ -573,6 +574,69 @@ int main()
         check (r.tracks[2]->output.load() == -1, "a missing bus becomes the master");
         check (r.outputSlot (r.busSlot (0)) == r.masterSlot() || r.outputSlot (r.busSlot (1)) == r.masterSlot(), "a loop of buses is broken on load");
         f.deleteFile();
+    }
+
+    std::cout << "Device wall\n";
+    {
+        Wall::Model m;
+        bool inside = true, sized = true;
+        for (int i = 0; i < Wall::numDevices; ++i)
+        {
+            const auto& p = m.pieces[(size_t) i];
+            inside = inside && p.x >= 0.0f && p.x + p.w <= Wall::designWidth && p.y >= 0.0f;
+            sized = sized && p.w >= Wall::minPieceWidth;
+        }
+        check (inside && sized, "every piece starts on the sheet at a usable size");
+        check (m.contentHeight() > 300.0f && m.contentHeight() < 1400.0f, "the default wall is about one screen tall");
+        check (m.pieces[0].w > m.pieces[10].w, "instruments start larger than rack modules");
+
+        // Device table matches what the app can load
+        bool table = true;
+        for (int i = 0; i < Wall::numDevices; ++i)
+            table = table && juce::String (Wall::device (i).id).isNotEmpty() && (Wall::device (i).kind == Wall::Kind::RackModule) == Wall::device (i).sequencer;
+        check (table, "rack modules are the sequencer devices");
+        check (Wall::device (0).module == ModuleType::Synth && Wall::device (12).seq == SeqType::Euclid, "devices load the right module");
+
+        // Finding and arrow keys
+        check (m.matches (2, "drum") && ! m.matches (2, "synth") && m.firstMatch ("rev") == 5, "typing finds devices by name");
+        check (m.firstMatch ("zzz") == -1, "nothing matches nonsense");
+        m.pieces[5].title = "Cathedral";
+        check (m.matches (5, "cath") && m.matches (5, "reverb") && m.titleOf (5) == "Cathedral", "a retitled piece is found by its title and its real name");
+        const int right = m.neighbour (0, 1, 0, {});
+        check (right != 0 && m.pieces[(size_t) right].x > m.pieces[0].x, "right arrow moves to a piece on the right");
+        check (m.neighbour (right, -1, 0, {}) != right, "and left comes back");
+        int leftmost = 0;
+        for (int i = 1; i < Wall::numDevices; ++i)
+            if (m.pieces[(size_t) i].x + m.pieces[(size_t) i].w * 0.5f < m.pieces[(size_t) leftmost].x + m.pieces[(size_t) leftmost].w * 0.5f)
+                leftmost = i;
+        check (m.neighbour (leftmost, -1, 0, {}) == leftmost, "no move when nothing lies that way");
+        check (m.neighbour (0, 1, 0, "reverb") == 5, "arrows only land on pieces that match the search");
+
+        // Styles
+        check (m.commonStyle() == Wall::tubes, "all pieces start in style I");
+        m.pieces[3].style = Wall::block;
+        check (m.commonStyle() == -1, "mixed styles are reported as mixed");
+        const auto a = Wall::rainbowColours (0, Wall::tubes), b = Wall::rainbowColours (0, Wall::marquee), c = Wall::rainbowColours (0, Wall::block);
+        check (a != b && b != c && a != c, "each style has its own Rainbow colours");
+
+        // Saving
+        m.pieces[7].x = 321.0f; m.pieces[7].y = 654.0f; m.pieces[7].w = 512.0f;
+        m.alwaysBright = true; m.glow = 1.25f; m.zoom = 0.6f; m.fitToScreen = true;
+        Wall::Model n;
+        check (n.fromJson (m.toJson()), "the wall saves and loads");
+        check (n.pieces[7].x == 321.0f && n.pieces[7].y == 654.0f && n.pieces[7].w == 512.0f && n.pieces[3].style == Wall::block
+                   && n.titleOf (5) == "Cathedral" && n.pieces[0].title.isEmpty(), "positions, sizes, styles and titles round-trip");
+        check (n.alwaysBright && std::abs (n.glow - 1.25f) < 1e-5f && std::abs (n.zoom - 0.6f) < 1e-5f && n.fitToScreen, "Always bright, glow and zoom round-trip");
+
+        Wall::Model bad;
+        check (! bad.fromJson ("not json") && bad.pieces[0].w == Wall::Model().pieces[0].w, "a broken file leaves the default wall");
+        check (bad.fromJson (R"({"glow":9,"zoom":0.01,"pieces":{"synth":{"w":5,"x":-9999,"style":7,"title":"A title that is far too long to fit"}}})"),
+               "a file with wild values loads");
+        check (bad.glow <= 1.5f && bad.zoom >= 0.3f && bad.pieces[0].w >= Wall::minPieceWidth && bad.pieces[0].style < Wall::numStyles
+                   && bad.pieces[0].title.length() <= 18 && bad.pieces[1].w == Wall::Model().pieces[1].w, "wild values are brought into range and missing pieces keep their place");
+
+        n.resetLayout();
+        check (n.pieces[7].x == Wall::Model().pieces[7].x && n.titleOf (5) == "Reverb" && n.alwaysBright, "reset restores the layout but keeps the view settings");
     }
 
     std::cout << (failures == 0 ? "\nAll passed\n" : "\nSome checks failed\n");
