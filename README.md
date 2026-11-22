@@ -7,7 +7,9 @@ Rainbow mode that uses the full card palette.
 
 ![Arrange view](docs/arrange.png)
 
-![Mix view: tracks, returns and master, with the selected return's devices below](docs/mixer.png)
+![Mix view: channel strips over the patch trough, with the selected channel's devices below](docs/mixer.png)
+
+![The same mixer with the Vintage console switched on](docs/mixer-vintage.png)
 
 ## Build on a Mac
 
@@ -101,12 +103,26 @@ Right-click a module to move or remove it; Back to clips returns the track to it
 | Tide | Tempo-synced LFO from a sixteenth to eight bars, five shapes |
 | Out | Plays the track's instrument: mono or four voices, octave, and a Mod lead that moves the instrument's character knob |
 
-**Mix**: every track has a strip with its inserts (the devices in its patch, in order), two send
-knobs, pan, fader, meter and mute / solo. After the tracks come **Return A** (a reverb), **Return B**
-(a delay) and the **Master** (a compressor). Sends are post-fader and feed the returns, which mix
-into the master; the master runs its own device chain before the output. Click any strip to select
-it and its patch appears in the device panel underneath, so returns and the master take devices and
-plugins like a track. Up / Down in Mix walks through the buses too.
+**Mix**: a console of channel strips over a **patch trough**. Each strip has, from the top: its name,
+**Trim** (level into the channel, -12 to +12 dB) with **phase flip** and **mono**, the devices in its
+patch (click one and the device panel below jumps to it), two send knobs, **pan** and **width**, the
+**Analogue** lamp, the fader with a level meter and an amber gain-reduction meter (from the first
+compressor in the chain), mute / solo, and its patch jacks. The level meter runs in the theme colour,
+turns yellow near the top and red at the peak; an over stays lit for a moment.
+
+Every strip ends in an **output jack** and a cable hangs from it to whatever it feeds. Drag the jack
+onto a bus or the master to re-patch it, or click the jack and then the destination; double-click a
+jack to send it back to the master. Right-click a strip for the same choices as a menu, and to rename
+it. **+ Bus** adds a bus (a channel other channels are patched into); buses can feed other buses, and
+right-click removes one. After the tracks and buses come **Return A** (a reverb), **Return B** (a
+delay) and the **Master** (a compressor). Sends are post-fader and feed the returns. Click any strip
+to select it and its patch appears in the device panel underneath, so buses, returns and the master
+take devices and plugins too.
+
+**Analogue** models a console channel: a little low-end weight, even harmonics and a softened top.
+Quiet material is only warmed; push Trim and it breaks up like driven hardware, and the lamp turns
+from orange to red. **Vintage** (top right of the mixer) redraws the console as worn hardware with
+tape labels and LED ladder meters, tinted by the theme colour.
 
 **Plugins**: the browser's Plugins tab lists the AU and VST3 plugins on the Mac. Scan once to find
 them, then double-click one to add it to the selected track, return or master as a **Plugin**
@@ -123,7 +139,7 @@ first, and the last project opens again next time.
 ## Tests
 
 Offline checks for the engine (transport, loop, clips, live MIDI, recording, patching, the sequencer rack,
-save / load round trips, sends / returns / master routing):
+save / load round trips, sends / returns / master routing, bus patching, the console channel):
 
 ```sh
 cmake -B build -G Xcode -DGLOWTAG_TESTS=ON

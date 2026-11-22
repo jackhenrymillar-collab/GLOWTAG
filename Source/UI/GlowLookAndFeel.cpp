@@ -76,6 +76,32 @@ void GlowLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wid
     const auto centre = bounds.getCentre();
     const float angle = startAngle + sliderPos * (endAngle - startAngle);
 
+    // Vintage console: a bakelite knob with a pointer line, ringed by the value arc
+    if (th.isVintage() && s.getProperties().contains ("console"))
+    {
+        const auto accent = accentFor (s, juce::Slider::rotarySliderFillColourId);
+        juce::Path ring;
+        ring.addCentredArc (centre.x, centre.y, radius, radius, 0.0f, startAngle, endAngle, true);
+        g.setColour (Theme::tinted (0xff46474c, accent, 0.22f));
+        g.strokePath (ring, juce::PathStrokeType (2.0f));
+        const bool bi = s.getMinimum() < 0.0 && s.getMaximum() > 0.0;
+        const float mid = bi ? (startAngle + endAngle) * 0.5f : startAngle;
+        juce::Path value;
+        value.addCentredArc (centre.x, centre.y, radius, radius, 0.0f, juce::jmin (mid, angle), juce::jmax (mid, angle), true);
+        g.setColour (accent);
+        g.strokePath (value, juce::PathStrokeType (2.0f));
+
+        const float body = radius - 3.0f;
+        g.setColour (juce::Colours::black.withAlpha (0.5f));
+        g.fillEllipse (centre.x - body, centre.y - body + 1.5f, body * 2.0f, body * 2.0f);
+        g.setGradientFill (juce::ColourGradient (Theme::tinted (0xff5c5c5a, accent, 0.14f), centre.x - body * 0.4f, centre.y - body * 0.5f,
+                                                 juce::Colour (0xff131414), centre.x + body, centre.y + body, true));
+        g.fillEllipse (centre.x - body, centre.y - body, body * 2.0f, body * 2.0f);
+        g.setColour (Theme::tinted (0xfff2f0e6, accent, 0.35f));
+        g.drawLine (juce::Line<float> (centre.getPointOnCircumference (body * 0.25f, angle), centre.getPointOnCircumference (body - 1.0f, angle)), 1.6f);
+        return;
+    }
+
     juce::Path track;
     track.addCentredArc (centre.x, centre.y, radius, radius, 0.0f, startAngle, endAngle, true);
     g.setColour (th.line2);
@@ -118,6 +144,23 @@ void GlowLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int wid
 
     g.setColour (th.display);
     g.fillRoundedRectangle (cx - 3.0f, (float) y, 6.0f, (float) height, 3.0f);
+
+    // Vintage console: a chunky two-tone cap with a centre line and a shadow
+    if (th.isVintage() && s.getProperties().contains ("console"))
+    {
+        auto old = juce::Rectangle<float> (cx - 11.0f, sliderPos - 13.0f, 22.0f, 26.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.55f));
+        g.fillRoundedRectangle (old.translated (0.0f, 2.5f), 2.5f);
+        g.setColour (Theme::tinted (0xffe4e2d8, accent, 0.32f));
+        g.fillRoundedRectangle (old, 2.5f);
+        g.setColour (Theme::tinted (0xffaeaca2, accent, 0.32f));
+        g.fillRoundedRectangle (old.withTop (sliderPos), 2.5f);
+        g.setColour (juce::Colour (0xff222323));
+        g.fillRect (old.getX(), sliderPos - 1.5f, old.getWidth(), 3.0f);
+        g.setColour (juce::Colour (0xff121313));
+        g.drawRoundedRectangle (old, 2.5f, 1.0f);
+        return;
+    }
 
     auto cap = juce::Rectangle<float> (cx - 15.0f, sliderPos - 9.0f, 30.0f, 18.0f);
     g.setColour (th.line.brighter (0.1f));

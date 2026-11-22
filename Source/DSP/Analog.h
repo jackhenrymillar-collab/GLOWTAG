@@ -232,4 +232,38 @@ namespace analog
         float process (float x) { const float y = x - xm1 + 0.995f * ym1; xm1 = x; ym1 = y; return y; }
         float xm1 = 0.0f, ym1 = 0.0f;
     };
+
+    //==========================================================================
+    // One side of an analogue console channel: a transformer-style low lift, a biased saturating
+    // stage (even harmonics, unity gain for quiet signals, soft break-up when driven) and the gentle
+    // top-end roll-off of a long signal path. Quiet material is warmed; hot material distorts.
+    struct Console
+    {
+        void prepare (double sampleRate)
+        {
+            const float sr = (float) sampleRate;
+            lowCoef  = 1.0f - std::exp (-twoPi * 110.0f / sr);
+            highCoef = 1.0f - std::exp (-twoPi * juce::jmin (17000.0f, sr * 0.42f) / sr);
+            reset();
+        }
+
+        void reset() { low = high = 0.0f; dc = {}; }
+
+        float process (float x)
+        {
+            low += (x - low) * lowCoef;
+            x += low * 0.16f;                                            // about +1.3 dB of weight below 110 Hz
+            float y = (fastTanh (x + bias) - biasOut) * biasNorm;      // asymmetric: second harmonic first
+            y = dc.process (y);
+            high += (y - high) * highCoef;
+            return high;
+        }
+
+    private:
+        static constexpr float bias = 0.14f;
+        static constexpr float biasOut = 0.1390924f;                     // tanh (bias)
+        static constexpr float biasNorm = 1.0f / (1.0f - biasOut * biasOut);
+        float lowCoef = 0.01f, highCoef = 0.9f, low = 0.0f, high = 0.0f;
+        DCBlock dc;
+    };
 }

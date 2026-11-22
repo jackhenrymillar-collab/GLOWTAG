@@ -99,6 +99,8 @@ private:
     bool rackShown = false;
     int seenGeneration = 0;
     int statusCounter = 0;
+    bool offlineClock = false;                  // no audio device: run the engine from the UI timer (for screenshots)
+    juce::AudioBuffer<float> offlineBuffer;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

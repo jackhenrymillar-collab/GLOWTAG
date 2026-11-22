@@ -395,7 +395,7 @@ int main()
         AudioEngine e (p);
         e.prepareToPlay (block, sr);
         e.looping = false;
-        check (p.numSlots() == (int) p.tracks.size() + 3, "slots cover tracks, two returns and the master");
+        check (p.numSlots() == (int) p.tracks.size() + (int) p.buses.size() + 3, "slots cover tracks, buses, two returns and the master");
         check (&p.slot (p.masterSlot()) == p.master.get() && &p.slot (p.returnSlot (1)) == p.returns[1].get(), "slot lookup reaches the buses");
         check (p.isAudible (p.masterSlot()), "master is always audible");
         e.rebuildAll();
@@ -432,6 +432,147 @@ int main()
         check (withReturn > direct * 1.05f, "unmuting Return A adds the reverb to the mix");
         e.stop();
         check (p.master->meter.load() == 0.0f && p.returns[0]->meter.load() == 0.0f, "stop clears the bus meters");
+    }
+
+    std::cout << "Patch routing and buses\n";
+    {
+        Project p;
+        AudioEngine e (p);
+        e.prepareToPlay (block, sr);
+        e.looping = false;
+        check (! p.buses.empty() && p.buses[0]->kind == TrackKind::Bus, "demo has a drum bus");
+        const int drums = p.busSlot (0);
+        check (p.outputSlot (0) == drums && p.outputSlot (drums) == p.masterSlot(), "kick feeds the drum bus, the bus feeds the master");
+        check (p.outputSlot (p.masterSlot()) == -1, "the master feeds nothing");
+
+        // Only the kick plays, through the bus: the bus mute and fader are in its path
+        for (size_t i = 1; i < p.tracks.size(); ++i) p.tracks[i]->muted = true;
+        for (auto& s : p.tracks[0]->send) s = 0.0f;
+        e.rebuildAll();
+        e.play();
+        const float viaBus = render (e, 4.0, p.bpm);
+        check (viaBus > 0.02f, "a track patched into a bus is heard");
+        check (p.buses[0]->meter.load() > 0.0f, "bus meter moves");
+        p.buses[0]->muted = true;
+        check (render (e, 2.0, p.bpm) < 1e-6f, "muting the bus silences what feeds it");
+        p.buses[0]->muted = false;
+        check (p.setOutput (0, p.masterSlot()), "re-patching a track to the master is allowed");
+        p.buses[0]->muted = true;
+        render (e, 1.0, p.bpm);
+        check (render (e, 3.0, p.bpm) > 0.02f, "patched straight to the master, the track no longer goes through the bus");
+        p.buses[0]->muted = false;
+        e.stop();
+
+        // A second bus: chains are fine, loops are refused
+        check (e.restructure ([&] { return p.addBus ("Glue") == 1; }), "a bus can be added while the engine runs");
+        const int glue = p.busSlot (1);
+        check (p.numSlots() == (int) p.tracks.size() + 2 + 3 && &p.slot (p.masterSlot()) == p.master.get(), "slots grow with the new bus");
+        check (p.setOutput (0, drums) && p.setOutput (drums, glue), "a bus can feed another bus");
+        check (! p.canRoute (glue, drums) && ! p.canRoute (glue, glue), "a loop of buses is refused");
+        check (! p.canRoute (0, 1) && ! p.canRoute (0, p.returnSlot (0)), "only buses and the master take inputs");
+        check (p.canRoute (p.returnSlot (0), glue), "a return can be patched into a bus");
+        e.play();
+        check (render (e, 4.0, p.bpm) > 0.02f, "track through two buses in a chain is heard");
+        p.buses[1]->volume = 0.0f;
+        check (render (e, 2.0, p.bpm) < 1e-6f, "the last bus in the chain controls the level");
+        p.buses[1]->volume = 1.0f;
+        e.stop();
+
+        // Removing the middle bus sends its feeders on to where it was going
+        e.restructure ([&] { p.removeBus (0); return true; });
+        check (p.buses.size() == 1 && p.buses[0]->name == "Glue", "bus removed");
+        check (p.outputSlot (0) == p.busSlot (0) && p.outputSlot (p.busSlot (0)) == p.masterSlot(), "feeders of a removed bus follow its output");
+        e.play();
+        check (render (e, 4.0, p.bpm) > 0.02f, "still heard after the bus was removed");
+        e.stop();
+    }
+
+    std::cout << "Console channel\n";
+    {
+        Project p;
+        AudioEngine e (p);
+        e.prepareToPlay (block, sr);
+        e.looping = false;
+        for (size_t i = 1; i < p.tracks.size(); ++i) p.tracks[i]->muted = true;
+        for (auto& s : p.tracks[0]->send) s = 0.0f;
+        p.master->patch = Patch();          // no master compressor in the measurement
+        e.rebuildAll();
+        auto measure = [&]
+        {
+            e.setPosition (0.0);
+            e.play();
+            render (e, 1.0, p.bpm);
+            const float peak = render (e, 4.0, p.bpm);
+            e.stop(); e.stop();
+            render (e, 4.0, p.bpm);         // let tails ring out
+            return peak;
+        };
+        const float flat = measure();
+        p.tracks[0]->trimDb = 6.0f;
+        const float trimmed = measure();
+        check (trimmed > flat * 1.6f && trimmed < flat * 2.2f, "+6 dB of trim roughly doubles the level");
+        p.tracks[0]->trimDb = -12.0f;
+        check (measure() < flat * 0.3f, "-12 dB of trim cuts the level to a quarter");
+        p.tracks[0]->trimDb = 0.0f;
+
+        // Analogue: close to transparent when quiet, squashes when driven, and reports its heat
+        p.tracks[0]->volume = 0.1f;
+        p.tracks[0]->analogue = true;
+        p.tracks[0]->trimDb = -12.0f;
+        const float quietCut = measure();
+        p.tracks[0]->analogue = false;
+        const float quietCutDry = measure();
+        check (std::abs (quietCut - quietCutDry) < quietCutDry * 0.25f, "Analogue leaves a quiet signal about the same level");
+        p.tracks[0]->trimDb = 12.0f;
+        const float hotDry = measure();
+        p.tracks[0]->analogue = true;
+        e.setPosition (0.0);
+        e.play();
+        const float hotWet = render (e, 4.0, p.bpm);
+        const float heat = p.tracks[0]->heat.load();
+        e.stop(); e.stop();
+        check (hotWet < hotDry * 0.8f, "Analogue squashes a signal driven hard into it");
+        check (heat > 0.1f, "Analogue reports heat when driven");
+        check (p.tracks[0]->heat.load() == 0.0f, "stop clears the heat");
+        p.tracks[0]->analogue = false;
+        p.tracks[0]->trimDb = 0.0f;
+        p.tracks[0]->volume = 0.9f;
+
+        // Phase flip of the only track playing changes nothing you can hear in level
+        p.tracks[0]->phase = true;
+        check (std::abs (measure() - flat) < flat * 0.05f, "phase flip keeps the level");
+        p.tracks[0]->phase = false;
+
+        // Save and load keep the console settings and the patching
+        p.tracks[0]->trimDb = 4.5f;
+        p.tracks[0]->phase = true;
+        p.tracks[0]->mono = true;
+        p.tracks[0]->width = 1.5f;
+        p.tracks[0]->analogue = true;
+        p.addBus ("Extra");
+        p.tracks[1]->output = 1;
+        p.buses[0]->output = 1;
+        p.buses[1]->analogue = true;
+        const juce::File f = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("glowtag-console-test.glowtag");
+        check (p.saveTo (f), "project with buses saves");
+        Project q;
+        q.makeEmpty();
+        check (q.loadFrom (f), "project with buses loads");
+        check (q.buses.size() == 2 && q.buses[1]->name == "Extra" && q.buses[1]->kind == TrackKind::Bus, "buses round-trip");
+        check (q.tracks[1]->output.load() == 1 && q.buses[0]->output.load() == 1 && q.tracks[0]->output.load() == 0, "patching round-trips");
+        check (std::abs (q.tracks[0]->trimDb.load() - 4.5f) < 1e-6f && q.tracks[0]->phase.load() && q.tracks[0]->mono.load()
+                   && std::abs (q.tracks[0]->width.load() - 1.5f) < 1e-6f && q.tracks[0]->analogue.load() && q.buses[1]->analogue.load(),
+               "trim, phase, mono, width and Analogue round-trip");
+
+        // A file with a loop of buses, or a bus that does not exist, loads with those sent to the master
+        auto v = p.toVar();
+        (*v["buses"].getArray())[1].getDynamicObject()->setProperty ("out", 0);
+        (*v["tracks"].getArray())[2].getDynamicObject()->setProperty ("out", 9);
+        Project r;
+        check (r.fromVar (v), "file with bad patching still loads");
+        check (r.tracks[2]->output.load() == -1, "a missing bus becomes the master");
+        check (r.outputSlot (r.busSlot (0)) == r.masterSlot() || r.outputSlot (r.busSlot (1)) == r.masterSlot(), "a loop of buses is broken on load");
+        f.deleteFile();
     }
 
     std::cout << (failures == 0 ? "\nAll passed\n" : "\nSome checks failed\n");

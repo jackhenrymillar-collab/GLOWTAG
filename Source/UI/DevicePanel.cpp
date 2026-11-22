@@ -130,6 +130,13 @@ void ModuleCard::paint (juce::Graphics& g)
     const auto c = th.pal (info.pal);
     auto r = getLocalBounds().toFloat();
     Glow::drawPanel (g, r, c, 12.0f, pulse);
+    if (flash > 0.01f)
+    {
+        g.setColour (c.withAlpha (0.10f * flash));
+        g.fillRoundedRectangle (r, 12.0f);
+        g.setColour (c.withAlpha (juce::jmin (1.0f, flash)));
+        g.drawRoundedRectangle (r.reduced (1.0f), 12.0f, 2.0f);
+    }
 
     if (isEndpoint())
     {
@@ -788,6 +795,19 @@ DevicePanel::~DevicePanel()
 void DevicePanel::changeListenerCallback (juce::ChangeBroadcaster*)
 {
     rebuild();
+    // The mixer asked for a device: bring it into view and light it up
+    if (ctx.showPending && ctx.shownSlot == ctx.selectedTrack)
+    {
+        ctx.showPending = false;
+        if (auto* card = cardFor (ctx.shownModule))
+        {
+            viewport.setViewPosition (juce::jlimit (0, juce::jmax (0, canvas.getWidth() - viewport.getWidth()),
+                                                    card->getBounds().getCentreX() - viewport.getWidth() / 2), 0);
+            card->flash = 1.6f;
+        }
+    }
+    else if (auto* card = ctx.shownSlot == ctx.selectedTrack ? cardFor (ctx.shownModule) : nullptr)
+        card->flash = 0.45f;      // stays gently marked while it is the shown device
 }
 
 ModuleCard* DevicePanel::cardFor (int moduleId)
@@ -960,6 +980,11 @@ void DevicePanel::tick()
     for (auto* card : cards)
     {
         card->tick();
+        if (card->flash > 0.46f)
+        {
+            card->flash = juce::jmax (0.45f, card->flash - 0.04f);
+            card->repaint();
+        }
         if (std::abs (card->pulse - m) > 0.02f)
         {
             card->pulse = m;

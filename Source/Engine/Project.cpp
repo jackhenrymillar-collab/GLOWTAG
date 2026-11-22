@@ -156,6 +156,7 @@ Project::Project()
 void Project::clear()
 {
     tracks.clear();
+    buses.clear();
     for (auto& r : returns) r.reset();
     master.reset();
     file = juce::File();
@@ -192,8 +193,86 @@ void Project::makeBuses()
 Track& Project::slot (int index)
 {
     if (index < (int) tracks.size()) return *tracks[(size_t) juce::jmax (0, index)];
-    if (index < masterSlot()) return *returns[(size_t) (index - (int) tracks.size())];
+    if (index < returnSlot (0)) return *buses[(size_t) (index - (int) tracks.size())];
+    if (index < masterSlot()) return *returns[(size_t) (index - returnSlot (0))];
     return *master;
+}
+
+int Project::slotOf (const Track* t) const
+{
+    for (int i = 0; i < numSlots(); ++i)
+        if (&slot (i) == t)
+            return i;
+    return -1;
+}
+
+int Project::outputSlot (int slotIndex) const
+{
+    if (slotIndex < 0 || slotIndex >= masterSlot())
+        return -1;
+    const int out = slot (slotIndex).output.load();
+    return out >= 0 && out < (int) buses.size() && busSlot (out) != slotIndex ? busSlot (out) : masterSlot();
+}
+
+bool Project::canRoute (int fromSlot, int toSlot) const
+{
+    if (fromSlot < 0 || fromSlot >= masterSlot() || toSlot < 0 || toSlot >= numSlots() || fromSlot == toSlot)
+        return false;
+    if (! slot (toSlot).takesInput())
+        return false;
+    // Follow the destination downstream: it must reach the master without coming back to us
+    int at = toSlot;
+    for (int guard = 0; guard <= (int) buses.size() + 1 && at != masterSlot(); ++guard)
+    {
+        if (at == fromSlot)
+            return false;
+        at = outputSlot (at);
+    }
+    return at == masterSlot();
+}
+
+bool Project::setOutput (int fromSlot, int toSlot)
+{
+    if (! canRoute (fromSlot, toSlot))
+        return false;
+    slot (fromSlot).output = toSlot == masterSlot() ? -1 : toSlot - busSlot (0);
+    dirty = true;
+    return true;
+}
+
+int Project::addBus (const juce::String& name)
+{
+    if ((int) buses.size() >= maxBuses)
+        return -1;
+    auto t = std::make_unique<Track>();
+    t->kind = TrackKind::Bus;
+    t->name = name.isNotEmpty() ? name : "Bus " + juce::String ((int) buses.size() + 1);
+    t->colourIndex = (int) buses.size() % 2 == 0 ? 3 : 4;
+    t->volume = 1.0f;       // a new bus passes its input through unchanged
+    buses.push_back (std::move (t));
+    dirty = true;
+    return (int) buses.size() - 1;
+}
+
+void Project::removeBus (int busIndex)
+{
+    if (busIndex < 0 || busIndex >= (int) buses.size())
+        return;
+    const int onward = buses[(size_t) busIndex]->output.load();   // where the removed bus was going
+    const int last = masterSlot();
+    for (int i = 0; i < last; ++i)
+    {
+        auto& out = slot (i).output;
+        int o = out.load();
+        if (o == busIndex) o = onward == busIndex ? -1 : onward;
+        if (o > busIndex) --o;
+        out = o;
+    }
+    buses.erase (buses.begin() + busIndex);
+    for (int i = 0; i < masterSlot(); ++i)        // never leave a channel pointing at itself
+        if (slot (i).kind == TrackKind::Bus && slot (i).output.load() == i - busSlot (0))
+            slot (i).output = -1;
+    dirty = true;
 }
 
 const Track& Project::slot (int index) const
@@ -280,6 +359,14 @@ void Project::makeDemo()
             t->send[1] = t->kind == TrackKind::Sampler ? 0.2f : 0.0f;
         }
     makeBuses();
+
+    // The drums share a bus so they can be mixed as one; everything else goes straight to the master
+    const int drums = addBus ("Drums");
+    buses[(size_t) drums]->colourIndex = 6;
+    for (auto& t : tracks)
+        if (t->kind == TrackKind::Audio)
+            t->output = drums;
+    dirty = false;
 }
 
 bool Project::isAudible (int slotIndex) const
@@ -287,7 +374,7 @@ bool Project::isAudible (int slotIndex) const
     auto& t = slot (slotIndex);
     if (t.kind == TrackKind::Master)
         return true;
-    if (t.kind == TrackKind::Return)
+    if (t.kind == TrackKind::Return || t.kind == TrackKind::Bus)
         return ! t.muted.load();
 
     bool anySolo = false;
@@ -310,6 +397,12 @@ juce::var Track::toVar() const
     o->setProperty ("pan", pan.load());
     o->setProperty ("sendA", send[0].load());
     o->setProperty ("sendB", send[1].load());
+    o->setProperty ("out", output.load());
+    o->setProperty ("trimDb", trimDb.load());
+    o->setProperty ("phase", phase.load());
+    o->setProperty ("mono", mono.load());
+    o->setProperty ("width", width.load());
+    o->setProperty ("analogue", analogue.load());
     juce::Array<juce::var> cs;
     for (auto& c : clips)
     {
@@ -335,7 +428,7 @@ juce::var Track::toVar() const
 void Track::fromVar (const juce::var& v)
 {
     name = v["name"].toString();
-    kind = (TrackKind) juce::jlimit (0, 5, (int) v["kind"]);
+    kind = (TrackKind) juce::jlimit (0, 6, (int) v["kind"]);
     colourIndex = (int) v["colour"];
     rolling = (bool) v["rolling"];
     muted = (bool) v["muted"];
@@ -344,6 +437,12 @@ void Track::fromVar (const juce::var& v)
     pan = (float) v.getProperty ("pan", 0.0f);
     send[0] = (float) v.getProperty ("sendA", 0.0f);
     send[1] = (float) v.getProperty ("sendB", 0.0f);
+    output = (int) v.getProperty ("out", -1);
+    trimDb = juce::jlimit (-12.0f, 12.0f, (float) v.getProperty ("trimDb", 0.0f));
+    phase = (bool) v.getProperty ("phase", false);
+    mono = (bool) v.getProperty ("mono", false);
+    width = juce::jlimit (0.0f, 2.0f, (float) v.getProperty ("width", 1.0f));
+    analogue = (bool) v.getProperty ("analogue", false);
     clips.clear();
     if (auto* cs = v["clips"].getArray())
         for (auto& cv : *cs)
@@ -373,10 +472,12 @@ juce::var Project::toVar() const
     o->setProperty ("app", "GLOWTAG");
     o->setProperty ("version", 1);
     o->setProperty ("bpm", bpm.load());
-    juce::Array<juce::var> ts, rs;
+    juce::Array<juce::var> ts, rs, bs;
     for (auto& t : tracks) ts.add (t->toVar());
+    for (auto& b : buses) bs.add (b->toVar());
     for (auto& r : returns) rs.add (r->toVar());
     o->setProperty ("tracks", ts);
+    o->setProperty ("buses", bs);
     o->setProperty ("returns", rs);
     o->setProperty ("master", master->toVar());
     return juce::var (o);
@@ -398,6 +499,15 @@ bool Project::fromVar (const juce::var& v)
 
     const juce::SpinLock::ScopedLockType sl (lock);
     tracks = std::move (newTracks);
+    buses.clear();
+    if (auto* bs = v["buses"].getArray())
+        for (int i = 0; i < bs->size() && i < maxBuses; ++i)
+        {
+            auto b = std::make_unique<Track>();
+            b->fromVar ((*bs)[i]);
+            b->kind = TrackKind::Bus;
+            buses.push_back (std::move (b));
+        }
     makeBuses();
     if (auto* rs = v["returns"].getArray())
         for (int i = 0; i < rs->size() && i < numReturns; ++i)
@@ -405,6 +515,21 @@ bool Project::fromVar (const juce::var& v)
     if (v.hasProperty ("master"))
         master->fromVar (v["master"]);
     bpm = juce::jlimit (20.0, 300.0, (double) v.getProperty ("bpm", 124.0));
+
+    // Routing from the file: anything out of range, or part of a loop, goes to the master instead
+    for (int i = 0; i < masterSlot(); ++i)
+    {
+        auto& out = slot (i).output;
+        if (out.load() < -1 || out.load() >= (int) buses.size())
+            out = -1;
+    }
+    for (int b = 0; b < (int) buses.size(); ++b)
+    {
+        int at = busSlot (b), steps = 0;
+        while (at != masterSlot() && steps <= (int) buses.size()) { at = outputSlot (at); ++steps; }
+        if (at != masterSlot())
+            buses[(size_t) b]->output = -1;
+    }
     dirty = false;
     return true;
 }

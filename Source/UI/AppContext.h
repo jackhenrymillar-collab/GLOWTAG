@@ -15,7 +15,38 @@ struct AppContext : public juce::ChangeBroadcaster
     AudioEngine& engine;
     int selectedTrack = 4;
     int selectedClip = 0;     // index into the selected track's clips, or -1
-    int generation = 0;       // bumped when the whole project is replaced (new / open)
+    int generation = 0;       // bumped when the whole project is replaced (new / open) or its slots change
+
+    // The device the mixer last asked to see: the device panel scrolls to it and lights it up
+    int shownSlot = -1, shownModule = -1;
+    bool showPending = false;
+    std::function<void()> beforeRestructure;     // closes plugin windows before slots move
+
+    void showDevice (int slot, int moduleId)
+    {
+        shownSlot = slot;
+        shownModule = moduleId;
+        showPending = true;
+        if (slot != selectedTrack) selectTrack (slot);
+        else sendChangeMessage();
+    }
+
+    // Add or remove a bus: the engine is held off while `edit` changes the slot layout, playback carries on
+    bool restructure (const std::function<bool()>& edit)
+    {
+        if (beforeRestructure) beforeRestructure();
+        const Track* keep = &selected();
+        const bool ok = engine.restructure (edit);
+        project.dirty = true;
+        ++generation;
+        const int kept = project.slotOf (keep);
+        selectedTrack = kept >= 0 ? kept : 0;
+        selectedClip = selected().clips.empty() ? -1 : 0;
+        if (selectedIsTrack()) engine.liveTrack = selectedTrack;
+        shownSlot = shownModule = -1;
+        sendSynchronousChangeMessage();
+        return ok;
+    }
 
     bool isTrack (int slot) const { return slot >= 0 && slot < (int) project.tracks.size(); }
     bool selectedIsTrack() const { return isTrack (selectedTrack); }
@@ -69,6 +100,7 @@ struct AppContext : public juce::ChangeBroadcaster
         if (! selectedIsTrack()) selectedTrack = 0;
         selectedClip = selected().clips.empty() ? -1 : 0;
         engine.liveTrack = selectedTrack;
+        shownSlot = shownModule = -1;
         // Synchronously: views hold references into the old tracks and must rebuild before they paint again
         sendSynchronousChangeMessage();
         return ok;

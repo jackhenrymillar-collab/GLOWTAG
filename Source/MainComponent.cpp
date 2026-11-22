@@ -42,6 +42,11 @@ MainComponent::MainComponent()
     };
     browser.onAddPlugin = [this] (const juce::PluginDescription& d) { devices.addPlugin (d); };
 
+    // Look: theme colour, Rainbow and the vintage console come back as they were left
+    Theme::get().setThemeIndex (settings->getIntValue ("theme", 0));
+    Theme::get().setRainbow (settings->getBoolValue ("rainbow", false));
+    Theme::get().setVintage (settings->getBoolValue ("vintageConsole", false));
+    ctx.beforeRestructure = [this] { devices.closePluginWindows(); };
     Theme::get().addChangeListener (this);
     ctx.addChangeListener (this);
 
@@ -74,6 +79,9 @@ MainComponent::~MainComponent()
     juce::MenuBarModel::setMacMainMenu (nullptr);
    #endif
     devices.closePluginWindows();
+    settings->setValue ("theme", Theme::get().getThemeIndex());
+    settings->setValue ("rainbow", Theme::get().isRainbow());
+    settings->setValue ("vintageConsole", Theme::get().isVintage());
     settings->setValue ("recent", recent.toString());
     settings->saveIfNeeded();
     deviceManager.removeMidiInputDeviceCallback ({}, &engine.midiInput);
@@ -331,6 +339,22 @@ void MainComponent::drainRecording()
 
 void MainComponent::timerCallback()
 {
+    // With GLOWTAG_OFFLINE_CLOCK set and no sound card, the engine is run from here so meters and the
+    // playhead still move. It makes no sound; it exists for checking the interface on a headless machine.
+    if (statusCounter == 0 && ! offlineClock && deviceManager.getCurrentAudioDevice() == nullptr
+        && juce::SystemStats::getEnvironmentVariable ("GLOWTAG_OFFLINE_CLOCK", {}).isNotEmpty())
+    {
+        offlineClock = true;
+        offlineBuffer.setSize (2, 512);
+        engine.prepareToPlay (512, 44100.0);
+    }
+    if (offlineClock)
+        for (int i = 0; i < 3; ++i)
+        {
+            juce::AudioSourceChannelInfo info (&offlineBuffer, 0, 512);
+            engine.getNextAudioBlock (info);
+        }
+
     topBar.tick();
     if (arranger.isVisible()) arranger.tick();
     if (trackList.isVisible()) trackList.tick();

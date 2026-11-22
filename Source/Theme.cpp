@@ -30,6 +30,12 @@ void Theme::setRainbow (bool shouldBeRainbow)
     sendChangeMessage();
 }
 
+void Theme::setVintage (bool shouldBeVintage)
+{
+    vintage = shouldBeVintage;
+    sendChangeMessage();
+}
+
 juce::Colour Theme::pal (Pal p) const
 {
     if (rainbow)

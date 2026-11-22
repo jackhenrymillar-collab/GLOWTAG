@@ -15,7 +15,10 @@ void AudioEngine::makeSlots()
         slots.push_back (std::make_unique<TrackSlot>());
         slots.back()->input.setSize (2, blockSize);
         slots.back()->output.setSize (2, blockSize);
+        for (auto& c : slots.back()->console) c.prepare (sr);
     }
+    busOrder.reserve (Project::maxBuses);
+    busDepth.reserve (Project::maxBuses);
 }
 
 void AudioEngine::projectChanged()
@@ -25,11 +28,24 @@ void AudioEngine::projectChanged()
 
 bool AudioEngine::replaceProject (const std::function<bool()>& load)
 {
+    return swapProject (load, true);
+}
+
+bool AudioEngine::restructure (const std::function<bool()>& edit)
+{
+    return swapProject (edit, false);
+}
+
+bool AudioEngine::swapProject (const std::function<bool()>& load, bool resetTransport)
+{
     const juce::SpinLock::ScopedLockType sl (engineLock);
-    playing = false;
-    position = 0.0;
-    playStartPosition = 0.0;
-    requestedPosition = -1.0;
+    if (resetTransport)
+    {
+        playing = false;
+        position = 0.0;
+        playStartPosition = 0.0;
+        requestedPosition = -1.0;
+    }
     const bool ok = load();
     makeSlots();
     rebuildAll();
@@ -213,6 +229,7 @@ void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
     {
         s->input.setSize (2, blockSize);
         s->output.setSize (2, blockSize);
+        for (auto& c : s->console) c.prepare (sr);
     }
     rebuildAll();
 }
@@ -233,7 +250,10 @@ void AudioEngine::stop()
     playing = false;
     setPosition (playStartPosition);
     for (int i = 0; i < project.numSlots(); ++i)
+    {
         project.slot (i).meter = 0.0f;
+        project.slot (i).heat = 0.0f;
+    }
     pulse = 0.0f;
 }
 
@@ -291,6 +311,43 @@ void AudioEngine::renderAudioClips (TrackSlot& slot, Track& track, int offset, i
             r[i] += srcR[idx] + frac * (srcR[idx + 1] - srcR[idx]);
         }
     }
+}
+
+float AudioEngine::runChannel (TrackSlot& slot, Track& track, int numSamples)
+{
+    float* l = slot.output.getWritePointer (0);
+    float* r = slot.output.getWritePointer (1);
+    const float trim = juce::Decibels::decibelsToGain (track.trimDb.load()) * (track.phase.load() ? -1.0f : 1.0f);
+    const float width = track.mono.load() ? 0.0f : track.width.load();
+    const bool analogue = track.analogue.load();
+    if (analogue && ! slot.consoleWasOn)
+        for (auto& c : slot.console) c.reset();
+    slot.consoleWasOn = analogue;
+
+    float peak = 0.0f, drive = 0.0f;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        float a = l[i] * trim, b = r[i] * trim;
+        if (width != 1.0f)
+        {
+            const float mid = 0.5f * (a + b), side = 0.5f * (a - b) * width;
+            a = mid + side;
+            b = mid - side;
+        }
+        if (analogue)
+        {
+            drive = juce::jmax (drive, std::abs (a), std::abs (b));
+            a = slot.console[0].process (a);
+            b = slot.console[1].process (b);
+        }
+        l[i] = a;
+        r[i] = b;
+        peak = juce::jmax (peak, std::abs (a), std::abs (b));
+    }
+    // Heat: nothing below about -7 dB into the stage, fully hot from +3 dB
+    const float heat = analogue ? juce::jlimit (0.0f, 1.0f, (drive - 0.45f) / 0.95f) : 0.0f;
+    track.heat = juce::jmax (heat, track.heat.load() * 0.9f);
+    return peak;
 }
 
 void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
@@ -473,84 +530,83 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             graph.process (inL + cursor, inR + cursor, outL + cursor, outR + cursor, numSamples - cursor, bpm);
     };
 
-    // Tracks: through their patch, then to the master and the return sends (post-fader)
-    for (size_t ti = 0; ti < (size_t) numTracks; ++ti)
+    // Where each channel goes. Buses are ordered so that one feeding another runs first; a bus caught
+    // in a loop (which the project never allows) falls back to the master.
+    const int numBuses = (int) project.buses.size();
+    const int masterIndex = project.masterSlot();
+    busDepth.assign ((size_t) numBuses, 0);
+    busOrder.clear();
+    for (int b = 0; b < numBuses; ++b)
     {
-        auto& slot = *slots[ti];
-        auto& track = *project.tracks[ti];
-        auto* graph = slot.current.get();
-        if (graph == nullptr)
-            continue;
-        runGraph (ti, *graph, track);
-        if (! project.isAudible ((int) ti))
-            continue;
-
-        const float vol = track.volume.load(), pan = track.pan.load();
-        const float gl = vol * std::sqrt (0.5f * (1.0f - pan)), gr = vol * std::sqrt (0.5f * (1.0f + pan));
-        const float* outL = slot.output.getReadPointer (0);
-        const float* outR = slot.output.getReadPointer (1);
-        float peak = 0.0f;
-        for (int i = 0; i < numSamples; ++i)
-        {
-            mixL[i] += outL[i] * gl;
-            mixR[i] += outR[i] * gr;
-            peak = juce::jmax (peak, std::abs (outL[i]) * vol);
-        }
-        peaks[ti] = peak;
-        for (int r = 0; r < Project::numReturns; ++r)
-        {
-            const float amount = track.send[(size_t) r].load();
-            if (amount <= 0.001f) continue;
-            auto& ret = *slots[(size_t) project.returnSlot (r)];
-            ret.input.addFrom (0, 0, slot.output, 0, 0, numSamples, gl * amount);
-            ret.input.addFrom (1, 0, slot.output, 1, 0, numSamples, gr * amount);
-        }
+        int depth = 1, at = project.buses[(size_t) b]->output.load();
+        while (at >= 0 && at < numBuses && at != b && depth <= numBuses) { ++depth; at = project.buses[(size_t) at]->output.load(); }
+        busDepth[(size_t) b] = depth > numBuses || at == b ? 0 : depth;     // 0: looped
+        busOrder.push_back (b);
     }
+    std::sort (busOrder.begin(), busOrder.end(), [this] (int x, int y) { return busDepth[(size_t) x] > busDepth[(size_t) y]; });
 
-    // Returns: their effect chain onto the master
-    for (int r = 0; r < Project::numReturns; ++r)
+    auto destination = [&] (int si, Track& track) -> TrackSlot&
     {
-        const int si = project.returnSlot (r);
+        const int out = track.output.load();
+        const bool looped = track.kind == TrackKind::Bus && busDepth[(size_t) (si - numTracks)] == 0;
+        if (out >= 0 && out < numBuses && ! looped && project.busSlot (out) != si)
+            return *slots[(size_t) project.busSlot (out)];
+        return masterSlot;
+    };
+
+    // One channel: its patch, the console stage, then fader and pan into wherever it is patched
+    auto runSlot = [&] (int si, Track& track, bool withSends)
+    {
         auto& slot = *slots[(size_t) si];
-        auto& track = *project.returns[(size_t) r];
         auto* graph = slot.current.get();
         if (graph == nullptr)
-            continue;
+            return;
         runGraph ((size_t) si, *graph, track);
         if (! project.isAudible (si))
-            continue;
+            return;
+
+        const float channelPeak = runChannel (slot, track, numSamples);
         const float vol = track.volume.load(), pan = track.pan.load();
         const float gl = vol * std::sqrt (0.5f * (1.0f - pan)), gr = vol * std::sqrt (0.5f * (1.0f + pan));
-        const float* outL = slot.output.getReadPointer (0);
-        const float* outR = slot.output.getReadPointer (1);
-        float peak = 0.0f;
-        for (int i = 0; i < numSamples; ++i)
-        {
-            mixL[i] += outL[i] * gl;
-            mixR[i] += outR[i] * gr;
-            peak = juce::jmax (peak, std::abs (outL[i]) * vol);
-        }
-        peaks[(size_t) si] = peak;
-    }
+        auto& dest = destination (si, track);
+        dest.input.addFrom (0, 0, slot.output, 0, 0, numSamples, gl);
+        dest.input.addFrom (1, 0, slot.output, 1, 0, numSamples, gr);
+        peaks[(size_t) si] = channelPeak * vol;
+        if (withSends)
+            for (int r = 0; r < Project::numReturns; ++r)
+            {
+                const float amount = track.send[(size_t) r].load();
+                if (amount <= 0.001f) continue;
+                auto& ret = *slots[(size_t) project.returnSlot (r)];
+                ret.input.addFrom (0, 0, slot.output, 0, 0, numSamples, gl * amount);
+                ret.input.addFrom (1, 0, slot.output, 1, 0, numSamples, gr * amount);
+            }
+    };
 
-    // Master chain, then out
+    // Tracks (with their post-fader sends), then the returns, then the buses from the deepest up
+    for (int ti = 0; ti < numTracks; ++ti)
+        runSlot (ti, *project.tracks[(size_t) ti], true);
+    for (int r = 0; r < Project::numReturns; ++r)
+        runSlot (project.returnSlot (r), *project.returns[(size_t) r], false);
+    for (int b : busOrder)
+        runSlot (project.busSlot (b), *project.buses[(size_t) b], false);
+
+    // Master chain and console stage, then out
     {
-        const int si = project.masterSlot();
         auto& track = *project.master;
         const float vol = track.volume.load();
         if (auto* graph = masterSlot.current.get())
         {
-            runGraph ((size_t) si, *graph, track);
+            runGraph ((size_t) masterIndex, *graph, track);
+            const float channelPeak = runChannel (masterSlot, track, numSamples);
             const float* outL = masterSlot.output.getReadPointer (0);
             const float* outR = masterSlot.output.getReadPointer (1);
-            float peak = 0.0f;
             for (int i = 0; i < numSamples; ++i)
             {
                 left[i] = outL[i] * vol;
                 if (right != nullptr) right[i] = outR[i] * vol;
-                peak = juce::jmax (peak, std::abs (outL[i]) * vol);
             }
-            peaks[(size_t) si] = peak;
+            peaks[(size_t) masterIndex] = channelPeak * vol;
         }
         else
         {
@@ -589,7 +645,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     for (size_t i = 0; i < slots.size() && i < peaks.size(); ++i)
     {
         auto& m = project.slot ((int) i).meter;
-        m = std::max (std::min (1.0f, peaks[i]), m.load() * 0.82f);
+        m = std::max (std::min (1.5f, peaks[i]), m.load() * 0.82f);    // above 1.0 is over: the strip shows red
     }
     pulse = pulse.load() * 0.86f;
 }

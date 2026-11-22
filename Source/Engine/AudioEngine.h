@@ -3,6 +3,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include "Project.h"
 #include "Graph.h"
+#include "../DSP/Analog.h"
 #include <map>
 
 // Plays the arrangement through each track's modular patch: MIDI clips and live MIDI drive the
@@ -42,6 +43,8 @@ public:
     // Replace the song safely: the audio thread is held off while `load` swaps the project's tracks,
     // then every slot is rebuilt. Returns what `load` returned.
     bool replaceProject (const std::function<bool()>& load);
+    // Change the slot layout (add or remove a bus) the same way, but keep the transport where it is.
+    bool restructure (const std::function<bool()>& edit);
     void setKnob (int track, int moduleId, int knob, float value);
     Node* liveNode (int track, int moduleId);          // for UI readouts; may be null
     std::shared_ptr<Graph> uiGraph (int track);        // keeps a graph (and its plugins) alive while an editor is open
@@ -73,6 +76,8 @@ private:
         std::shared_ptr<SeqRuntime> seq, seqPending, seqRetired, seqUi;
         bool seqWasActive = false;
         juce::AudioBuffer<float> input, output;
+        std::array<analog::Console, 2> console;   // the Analogue stage, left and right
+        bool consoleWasOn = false;
     };
 
     struct Event { int offset; int track; int pitch; float velocity; double lengthBeats; bool click; bool accent; };
@@ -87,6 +92,10 @@ private:
     juce::SpinLock engineLock;      // held by the audio thread per block, and while the slots are rebuilt
     std::vector<std::unique_ptr<TrackSlot>> slots;
     void makeSlots();
+    bool swapProject (const std::function<bool()>& edit, bool resetTransport);
+    // Console channel on a slot's patch output: trim, phase, width, Analogue. Returns the peak after it.
+    float runChannel (TrackSlot&, Track&, int numSamples);
+    std::vector<int> busOrder, busDepth;     // buses sorted so each runs after everything that feeds it
     std::map<juce::String, std::shared_ptr<const AudioData>> fileCache;
 
     std::atomic<bool> playing { false };

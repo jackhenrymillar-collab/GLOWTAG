@@ -35,6 +35,7 @@ public:
     std::function<void()> onMoved, onRemove, onPatchChanged;   // onPatchChanged: sample or pad changed, rebuild
     std::function<void()> onOpenPlugin;                          // Plugin: double-click opens its editor
     float pulse = 0.0f;
+    float flash = 0.0f;      // lit up after the mixer jumped here
 
     void tick();
     void paint (juce::Graphics&) override;
