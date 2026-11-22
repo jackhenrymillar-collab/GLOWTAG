@@ -7,6 +7,8 @@ Rainbow mode that uses the full card palette.
 
 ![Arrange view](docs/arrange.png)
 
+![Mix view: tracks, returns and master, with the selected return's devices below](docs/mixer.png)
+
 ## Build on a Mac
 
 You need Xcode (from the App Store) and CMake (`brew install cmake`).
@@ -48,7 +50,8 @@ If CMake complains about the SDK, point it at the one your tools ship, e.g.
 | Delete | Delete the selected clip (Arrange) or note (Edit) |
 | Cmd D | Duplicate the selected clip |
 | 1 / 2 / 3 | Arrange / Mix / Edit |
-| Cmd K | Command palette (views, transport, theme) |
+| Cmd K | Command palette (files, views, transport, theme) |
+| Cmd N / Cmd O / Cmd S / Shift Cmd S | New, open, save, save as (also in the File menu, with Open Recent) |
 | Up / Down | Select track |
 
 Any MIDI keyboard that is plugged in plays and records into the selected track too.
@@ -98,11 +101,29 @@ Right-click a module to move or remove it; Back to clips returns the track to it
 | Tide | Tempo-synced LFO from a sixteenth to eight bars, five shapes |
 | Out | Plays the track's instrument: mono or four voices, octave, and a Mod lead that moves the instrument's character knob |
 
-**Mix**: faders, pan knobs and mute / solo all affect the sound.
+**Mix**: every track has a strip with its inserts (the devices in its patch, in order), two send
+knobs, pan, fader, meter and mute / solo. After the tracks come **Return A** (a reverb), **Return B**
+(a delay) and the **Master** (a compressor). Sends are post-fader and feed the returns, which mix
+into the master; the master runs its own device chain before the output. Click any strip to select
+it and its patch appears in the device panel underneath, so returns and the master take devices and
+plugins like a track. Up / Down in Mix walks through the buses too.
+
+**Plugins**: the browser's Plugins tab lists the AU and VST3 plugins on the Mac. Scan once to find
+them, then double-click one to add it to the selected track, return or master as a **Plugin**
+device. It wires itself into the chain like any other device, has Mix and Gain knobs, and
+double-click (or right-click) its card to open the plugin's own window. Instruments take the
+track's notes; their state is saved inside the project. Scanning happens in the background and a
+plugin that crashes the scan is skipped next time.
+
+**Saving**: projects are JSON files with a `.glowtag` extension holding every track, clip, note,
+device patch, rack, plugin state, send and fader. Audio clips reference their files by path. The
+title bar shows the file and a dot when there are unsaved changes; quitting with changes asks
+first, and the last project opens again next time.
 
 ## Tests
 
-Offline checks for the engine (transport, loop, clips, live MIDI, recording, patching, the sequencer rack):
+Offline checks for the engine (transport, loop, clips, live MIDI, recording, patching, the sequencer rack,
+save / load round trips, sends / returns / master routing):
 
 ```sh
 cmake -B build -G Xcode -DGLOWTAG_TESTS=ON
@@ -115,14 +136,15 @@ cmake --build build --target GlowtagTests --config Debug
 ```
 Source/
   Main.cpp              app and window
-  MainComponent.*       owns the project, engine and views; layout and shortcuts
+  MainComponent.*       owns the project, engine and views; layout, shortcuts, File menu and saving
   Theme.*               colours (one-colour shades or Rainbow) and fonts
   Engine/
-    Project.*           tracks, clips, step patterns, tempo
+    Project.*           tracks, returns, master, clips, tempo; JSON save and load
     Patch.*             modular device patch per track: modules, jacks, cables, auto-wiring
-    Graph.*             the running audio side of a patch (virtual analog nodes)
+    Graph.*             the running audio side of a patch (virtual analog nodes, hosted plugins)
+    PluginHost.*        AU / VST3 scanning and instance creation
     Sequencer.*         rolling sequencer rack: modules, cables, auto-wiring, and the tick-based runtime
-    AudioEngine.*       plays clips, live MIDI and sequencer racks through each track's graph
+    AudioEngine.*       plays clips, live MIDI and sequencer racks through each slot's graph, then sends, returns and master
   UI/
     Icons.*             glowing line-art icons and panel drawing
     GlowLookAndFeel.*   pill buttons, glowing knobs, faders
@@ -135,5 +157,6 @@ Source/
 1. **Foundation** (done): app shell, audio engine, themed UI with Arrange, Mix and Edit.
 2. **Core engine** (done): timeline with MIDI and audio clips, loop, metronome, piano roll editing, MIDI keyboard playing and recording.
 3. **Sounds and devices** (done): virtual analog synth, sampler, drum rack and effects running through the modular patch.
-3b. **Eurorack rolling sequencer** (this version): a per-track alternative to clips, with module-style visuals.
-4. **Mix, Edit and polish**: full mixer routing, full piano roll, AU / VST hosting, saving projects.
+3b. **Eurorack rolling sequencer** (done): a per-track alternative to clips, with module-style visuals.
+4. **Mix, save and plugins** (this version): sends, two returns and a master chain; saving and loading projects; AU / VST3 hosting.
+5. **Polish**: adding and removing tracks, undo, automation playback, more piano roll tools.

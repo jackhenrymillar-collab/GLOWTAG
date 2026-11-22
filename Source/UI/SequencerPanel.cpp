@@ -112,6 +112,7 @@ SeqModuleView::SeqModuleView (AppContext& c, SeqRack& r, int trackIdx, int id)
             if (auto* m = rack.find (moduleId))
                 m->knobs[k] = v;
             ctx.engine.setSeqKnob (trackIndex, moduleId, (int) k, v);
+            ctx.touched();
             repaint();
         };
         addAndMakeVisible (s);
@@ -168,6 +169,7 @@ void SeqModuleView::pushStep (int step)
 {
     const auto& m = module();
     ctx.engine.setSeqStep (trackIndex, moduleId, step, m.stepPitch[(size_t) step], m.stepOn[(size_t) step]);
+    ctx.touched();
 }
 
 void SeqModuleView::mouseDown (const juce::MouseEvent& e)
@@ -868,7 +870,7 @@ SequencerPanel::~SequencerPanel()
 
 void SequencerPanel::changeListenerCallback (juce::ChangeBroadcaster*)
 {
-    if (builtFor != ctx.selectedTrack)
+    if (builtFor != ctx.selectedTrack || builtGeneration != ctx.generation)
         rebuild();
 }
 
@@ -882,6 +884,7 @@ SeqModuleView* SequencerPanel::viewFor (int moduleId)
 void SequencerPanel::changed()
 {
     ctx.engine.rebuildSequencer (ctx.selectedTrack);
+    ctx.touched();
     rebuild();
 }
 
@@ -894,6 +897,7 @@ void SequencerPanel::addModule (SeqType t)
 void SequencerPanel::rebuild()
 {
     builtFor = ctx.selectedTrack;
+    builtGeneration = ctx.generation;
     auto& track = ctx.selected();
     views.clear();
     for (auto& m : track.seq.modules)

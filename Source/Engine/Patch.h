@@ -7,8 +7,8 @@
 // A track's modular device patch: modules joined by audio and modulation cables.
 // New modules wire themselves in automatically; any cable can be re-patched by hand.
 
-enum class ModuleType { Input, Output, Sampler, Synth, Drums, Filter, Drive, Delay, Reverb, EQ, Compressor, LFO };
-constexpr int numModuleTypes = 12;
+enum class ModuleType { Input, Output, Sampler, Synth, Drums, Filter, Drive, Delay, Reverb, EQ, Compressor, LFO, Plugin };
+constexpr int numModuleTypes = 13;
 
 // Jacks on a module
 namespace Port
@@ -42,6 +42,8 @@ struct Module
     std::vector<float> knobValues;
     juce::String sampleName;                          // Sampler: built-in sample name, or a file path
     std::array<juce::String, 16> padNames;            // Drum Rack: sample per pad
+    juce::String pluginId, pluginName;                // Plugin: AU / VST3 identifier and display name
+    juce::MemoryBlock pluginState;                    // Plugin: its saved state
 };
 
 struct Cable
@@ -82,6 +84,9 @@ public:
     void tidy();
 
     juce::Point<float> nextFreePosition() const;
+
+    juce::var toVar() const;
+    void fromVar (const juce::var&);
 
 private:
     int nextId = 3;

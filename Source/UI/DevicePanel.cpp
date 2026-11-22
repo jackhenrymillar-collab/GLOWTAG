@@ -17,6 +17,7 @@ namespace
             case ModuleType::Compressor: return Icon::Compressor;
             case ModuleType::LFO:        return Icon::LFO;
             case ModuleType::Drive:      return Icon::Drive;
+            case ModuleType::Plugin:     return Icon::Plugin;
             case ModuleType::Input:      return Icon::Play;
             case ModuleType::Output:     return Icon::Velocity;
         }
@@ -26,8 +27,8 @@ namespace
     constexpr float headerHeight = 44.0f;
     constexpr float jackY = 60.0f;
 
-    bool hasExtra (ModuleType t) { return t == ModuleType::Sampler || t == ModuleType::Drums || t == ModuleType::LFO || t == ModuleType::Compressor; }
-    int extraWidth (ModuleType t) { return t == ModuleType::Sampler ? 96 : (t == ModuleType::Drums ? 104 : 26); }
+    bool hasExtra (ModuleType t) { return t == ModuleType::Sampler || t == ModuleType::Drums || t == ModuleType::LFO || t == ModuleType::Compressor || t == ModuleType::Plugin; }
+    int extraWidth (ModuleType t) { return t == ModuleType::Sampler ? 96 : (t == ModuleType::Drums ? 104 : (t == ModuleType::Plugin ? 110 : 26)); }
 }
 
 //==============================================================================
@@ -52,6 +53,7 @@ ModuleCard::ModuleCard (AppContext& c, Patch& p, Track& t, int trackIdx, int id,
             if (auto* m = patch.find (moduleId))
                 m->knobValues[k] = v;
             ctx.engine.setKnob (trackIndex, moduleId, (int) k, v);   // straight to the running patch
+            ctx.touched();
         };
         addAndMakeVisible (s);
     }
@@ -150,7 +152,13 @@ void ModuleCard::paint (juce::Graphics& g)
     g.setFont (th.heading (11.0f));
     g.drawText (romanNumeral (numeral), head.removeFromRight (30.0f).toNearestInt(), juce::Justification::centredRight);
     g.setColour (th.text);
-    Glow::drawSpacedText (g, info.title.toUpperCase(), head, th.heading (12.5f), 1.6f, juce::Justification::centredLeft);
+    if (module().type == ModuleType::Plugin)
+    {
+        g.setFont (th.heading (12.5f));
+        g.drawFittedText (module().pluginName.isNotEmpty() ? module().pluginName : info.title, head.toNearestInt(), juce::Justification::centredLeft, 1);
+    }
+    else
+        Glow::drawSpacedText (g, info.title.toUpperCase(), head, th.heading (12.5f), 1.6f, juce::Justification::centredLeft);
 
     // Module-specific displays
     switch (module().type)
@@ -234,6 +242,33 @@ void ModuleCard::paint (juce::Graphics& g)
             g.drawText ("GR", extraArea.withTrimmedTop (extraArea.getHeight() - 12).expanded (8, 0), juce::Justification::centred);
             break;
         }
+        case ModuleType::Plugin:
+        {
+            // Plugin plate: format, state and an invitation to open its window
+            auto a = extraArea.toFloat();
+            auto* node = ctx.engine.liveNode (trackIndex, moduleId);
+            const bool loaded = node != nullptr && node->hostedPlugin() != nullptr;
+            g.setColour (th.display);
+            g.fillRoundedRectangle (a, 6.0f);
+            g.setColour (loaded ? c.withAlpha (0.5f) : th.pal ((int) Pal::Amber).withAlpha (0.6f));
+            g.drawRoundedRectangle (a.reduced (0.5f), 6.0f, 1.0f);
+            auto inner = a.reduced (6.0f, 8.0f);
+            g.setColour (loaded ? c : th.pal ((int) Pal::Amber));
+            auto* instance = loaded ? dynamic_cast<juce::AudioPluginInstance*> (node->hostedPlugin()) : nullptr;
+            Glow::drawSpacedText (g, instance != nullptr ? instance->getPluginDescription().pluginFormatName.toUpperCase()
+                                                         : juce::String (loaded ? "PLUGIN" : "NOT FOUND"),
+                                  inner.removeFromTop (16.0f), th.heading (11.0f), 1.5f, juce::Justification::centred);
+            g.setColour (th.muted);
+            g.setFont (th.label (7.0f));
+            g.drawFittedText (loaded ? "DOUBLE-CLICK\nTO OPEN" : "SCAN PLUGINS\nIN THE BROWSER", inner.toNearestInt(), juce::Justification::centred, 2);
+            // Output level
+            auto m = a.reduced (8.0f, 0.0f).removeFromBottom (5.0f).translated (0.0f, -6.0f);
+            g.setColour (th.line2);
+            g.fillRoundedRectangle (m, 2.0f);
+            g.setColour (c.withAlpha (0.85f));
+            g.fillRoundedRectangle (m.withWidth (m.getWidth() * juce::jlimit (0.0f, 1.0f, shownDisplay)), 2.0f);
+            break;
+        }
         case ModuleType::Input: case ModuleType::Output: case ModuleType::Synth: case ModuleType::Filter:
         case ModuleType::Drive: case ModuleType::Delay: case ModuleType::Reverb: case ModuleType::EQ:
             break;
@@ -310,6 +345,12 @@ void ModuleCard::mouseUp (const juce::MouseEvent&)
     if (litPad >= 0) { litPad = -1; repaint (extraArea); }
 }
 
+void ModuleCard::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (module().type == ModuleType::Plugin && ! e.mods.isPopupMenu() && onOpenPlugin)
+        onOpenPlugin();
+}
+
 bool ModuleCard::isInterestedInFileDrag (const juce::StringArray& files)
 {
     if (module().type != ModuleType::Sampler && module().type != ModuleType::Drums) return false;
@@ -364,12 +405,16 @@ void ModuleCard::mouseDown (const juce::MouseEvent& e)
     if (e.mods.isPopupMenu() && ! isEndpoint())
     {
         juce::PopupMenu menu;
-        menu.addItem (1, "Remove " + moduleInfo (module().type).title);
+        if (module().type == ModuleType::Plugin)
+            menu.addItem (2, "Open " + module().pluginName);
+        menu.addItem (1, "Remove " + (module().type == ModuleType::Plugin ? module().pluginName : moduleInfo (module().type).title));
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
                             [safe = juce::Component::SafePointer<ModuleCard> (this)] (int result)
                             {
                                 if (result == 1 && safe != nullptr && safe->onRemove)
                                     safe->onRemove();
+                                else if (result == 2 && safe != nullptr && safe->onOpenPlugin)
+                                    safe->onOpenPlugin();
                             });
         return;
     }
@@ -389,6 +434,28 @@ void ModuleCard::mouseDrag (const juce::MouseEvent& e)
         if (onMoved)
             onMoved();
     }
+}
+
+//==============================================================================
+PluginWindow::PluginWindow (const juce::String& title, std::shared_ptr<Graph> g, juce::AudioProcessor& processor, int s, int m)
+    : juce::DocumentWindow (title, Theme::get().panel, juce::DocumentWindow::closeButton | juce::DocumentWindow::minimiseButton),
+      slot (s), moduleId (m), graph (std::move (g))
+{
+    setUsingNativeTitleBar (true);
+    juce::AudioProcessorEditor* editor = processor.hasEditor() ? processor.createEditorIfNeeded() : nullptr;
+    if (editor == nullptr)
+        editor = new juce::GenericAudioProcessorEditor (processor);
+    setContentOwned (editor, true);
+    setResizable (editor->isResizable(), false);
+    centreWithSize (getWidth(), getHeight());
+    setVisible (true);
+    toFront (true);
+}
+
+PluginWindow::~PluginWindow()
+{
+    // The editor must go before the processor it edits: release it while the graph is still alive
+    clearContentComponent();
 }
 
 //==============================================================================
@@ -682,7 +749,7 @@ void DevicePanel::Canvas::paint (juce::Graphics& g)
 DevicePanel::DevicePanel (AppContext& c) : ctx (c)
 {
     cables = std::make_unique<CableLayer> (ctx, [this] (int id) { return cardFor (id); });
-    cables->onChanged = [this] { ctx.engine.rebuildTrack (ctx.selectedTrack); cables->repaint(); };
+    cables->onChanged = [this] { ctx.engine.rebuildTrack (ctx.selectedTrack); ctx.touched(); cables->repaint(); };
 
     addButton.getProperties().set ("pal", (int) Pal::Green);
     addButton.onClick = [this]
@@ -736,6 +803,10 @@ void DevicePanel::rebuild()
     auto& track = ctx.selected();
     auto& patch = track.patch;
     cards.clear();
+    // Patch edits replace the running graph, so windows into the old one close
+    for (int i = pluginWindows.size(); --i >= 0;)
+        if (pluginWindows[i]->slot == ctx.selectedTrack || ctx.engine.uiGraph (pluginWindows[i]->slot) == nullptr)
+            pluginWindows.remove (i);
 
     // Numerals follow left-to-right order on the canvas
     std::vector<const Module*> byPosition;
@@ -766,7 +837,8 @@ void DevicePanel::rebuild()
             });
         };
         card->setTopLeftPosition (m.position.toInt());
-        card->onMoved = [this] { updateCanvasSize(); cables->repaint(); };
+        card->onOpenPlugin = [this, id = m.id] { openPluginEditor (ctx.selectedTrack, id); };
+        card->onMoved = [this] { updateCanvasSize(); cables->repaint(); ctx.touched(); };
         card->onRemove = [this, id = m.id]
         {
             juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<DevicePanel> (this), id]
@@ -775,6 +847,7 @@ void DevicePanel::rebuild()
                 {
                     safe->ctx.selected().patch.remove (id);
                     safe->ctx.engine.rebuildTrack (safe->ctx.selectedTrack);
+                    safe->ctx.touched();
                     safe->rebuild();
                 }
             });
@@ -793,9 +866,58 @@ void DevicePanel::addModule (ModuleType type)
     auto& patch = ctx.selected().patch;
     const int id = patch.add (type);
     ctx.engine.rebuildTrack (ctx.selectedTrack);
+    ctx.touched();
     rebuild();
     if (auto* card = cardFor (id))
         viewport.setViewPosition (juce::jmax (0, card->getRight() + 120 - viewport.getWidth()), 0);
+}
+
+void DevicePanel::addPlugin (const juce::PluginDescription& desc)
+{
+    auto& patch = ctx.selected().patch;
+    const int id = patch.add (ModuleType::Plugin);
+    if (auto* m = patch.find (id))
+    {
+        m->pluginId = desc.createIdentifierString();
+        m->pluginName = desc.name;
+    }
+    ctx.engine.rebuildTrack (ctx.selectedTrack);
+    ctx.touched();
+    rebuild();
+    if (auto* card = cardFor (id))
+        viewport.setViewPosition (juce::jmax (0, card->getRight() + 120 - viewport.getWidth()), 0);
+    // Rebuilt graphs are picked up by the audio thread at the next block; open the editor once it is live
+    juce::Timer::callAfterDelay (120, [safe = juce::Component::SafePointer<DevicePanel> (this), slot = ctx.selectedTrack, id]
+    {
+        if (safe != nullptr) safe->openPluginEditor (slot, id);
+    });
+}
+
+void DevicePanel::openPluginEditor (int slot, int moduleId)
+{
+    for (auto* w : pluginWindows)
+        if (w->slot == slot && w->moduleId == moduleId) { w->toFront (true); return; }
+
+    auto graph = ctx.engine.uiGraph (slot);
+    if (graph == nullptr) return;
+    auto* node = graph->find (moduleId);
+    if (node == nullptr || node->hostedPlugin() == nullptr) return;
+    auto* m = ctx.project.slot (slot).patch.find (moduleId);
+    const juce::String title = (m != nullptr && m->pluginName.isNotEmpty() ? m->pluginName : juce::String ("Plugin"))
+                             + "  \u2014  " + ctx.project.slot (slot).name;
+    auto* w = pluginWindows.add (new PluginWindow (juce::String::fromUTF8 (title.toRawUTF8()), graph, *node->hostedPlugin(), slot, moduleId));
+    w->onClose = [this, w]
+    {
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<DevicePanel> (this), w]
+        {
+            if (safe != nullptr) safe->pluginWindows.removeObject (w);
+        });
+    };
+}
+
+void DevicePanel::closePluginWindows()
+{
+    pluginWindows.clear();
 }
 
 void DevicePanel::loadSample (const juce::String& nameOrPath)
@@ -808,6 +930,7 @@ void DevicePanel::loadSample (const juce::String& nameOrPath)
         sampler = patch.find (patch.add (ModuleType::Sampler));
     sampler->sampleName = nameOrPath;
     ctx.engine.rebuildTrack (ctx.selectedTrack);
+    ctx.touched();
     rebuild();
 }
 

@@ -1,7 +1,23 @@
 #include "MainComponent.h"
+#include "Engine/PluginHost.h"
+
+namespace
+{
+    enum MenuIds { menuNew = 1, menuOpen, menuSave, menuSaveAs, menuClearRecent, menuArrange, menuMix, menuEdit, menuPlay, menuRecord,
+                   menuMetronome, menuPalette, menuRecentBase = 100 };
+}
 
 MainComponent::MainComponent()
 {
+    juce::PropertiesFile::Options options;
+    options.applicationName = "GLOWTAG";
+    options.filenameSuffix = "settings";
+    options.folderName = AppData::dir().getFullPathName();
+    options.osxLibrarySubFolder = "Application Support";
+    settings = std::make_unique<juce::PropertiesFile> (AppData::dir().getChildFile ("settings.xml"), options);
+    recent.setMaxNumberOfItems (10);
+    recent.restoreFromString (settings->getValue ("recent"));
+
     setLookAndFeel (&lookAndFeel);
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
 
@@ -13,16 +29,18 @@ MainComponent::MainComponent()
     topBar.onPlayStop = [this] { togglePlay(); };
     topBar.onCommandPalette = [this] { showCommandPalette(); };
     arranger.onOpenEditor = [this] { setMode (Mode::Edit); };
-    browser.onAddDevice = [this] (ModuleType t) { if (mode == Mode::Mix) setMode (Mode::Arrange); devices.addModule (t); };
-    browser.onLoadSample = [this] (const juce::String& name) { if (mode == Mode::Mix) setMode (Mode::Arrange); devices.loadSample (name); };
+    browser.onAddDevice = [this] (ModuleType t) { devices.addModule (t); };
+    browser.onLoadSample = [this] (const juce::String& name) { devices.loadSample (name); };
     browser.onAddSequencer = [this] (SeqType t)
     {
         // Adding a sequencer module switches the track to its rack
         if (mode == Mode::Mix) setMode (Mode::Arrange);
+        if (! ctx.selectedIsTrack()) ctx.selectTrack (0);
         ctx.selected().rolling = true;
         ctx.clipsChanged();
         sequencer.addModule (t);
     };
+    browser.onAddPlugin = [this] (const juce::PluginDescription& d) { devices.addPlugin (d); };
 
     Theme::get().addChangeListener (this);
     ctx.addChangeListener (this);
@@ -37,6 +55,14 @@ MainComponent::MainComponent()
     enableMidiInputs();
     engine.liveTrack = ctx.selectedTrack;
 
+   #if JUCE_MAC
+    juce::MenuBarModel::setMacMainMenu (this);
+   #endif
+
+    // Carry on from the last project when it is still there
+    if (const auto last = lastFile(); last.existsAsFile())
+        openFile (last);
+
     stopKeyboardFocus (*this);
     startTimerHz (30);
 }
@@ -44,6 +70,12 @@ MainComponent::MainComponent()
 MainComponent::~MainComponent()
 {
     stopTimer();
+   #if JUCE_MAC
+    juce::MenuBarModel::setMacMainMenu (nullptr);
+   #endif
+    devices.closePluginWindows();
+    settings->setValue ("recent", recent.toString());
+    settings->saveIfNeeded();
     deviceManager.removeMidiInputDeviceCallback ({}, &engine.midiInput);
     shutdownAudio();
     Theme::get().removeChangeListener (this);
@@ -75,7 +107,7 @@ void MainComponent::setMode (Mode m)
     arranger.setVisible (m == Mode::Arrange);
     mixer.setVisible (m == Mode::Mix);
     editor.setVisible (m == Mode::Edit);
-    devices.setVisible (m != Mode::Mix);
+    devices.setVisible (true);
     sequencer.setVisible (rackShown && m != Mode::Mix);
     resized();
     repaint();
@@ -92,6 +124,11 @@ void MainComponent::togglePlay()
 void MainComponent::showCommandPalette()
 {
     juce::PopupMenu menu;
+    menu.addSectionHeader ("File");
+    menu.addItem (10, "New project");
+    menu.addItem (11, "Open project...");
+    menu.addItem (12, "Save");
+    menu.addItem (13, "Save as...");
     menu.addSectionHeader ("Transport");
     menu.addItem (1, engine.isPlaying() ? "Stop" : "Play");
     menu.addSectionHeader ("Views");
@@ -109,6 +146,10 @@ void MainComponent::showCommandPalette()
                         [this] (int result)
                         {
                             if (result == 1) togglePlay();
+                            else if (result == 10) newProject();
+                            else if (result == 11) openProject();
+                            else if (result == 12) saveProject (false);
+                            else if (result == 13) saveProject (true);
                             else if (result >= 2 && result <= 4) setMode ((Mode) (result - 2));
                             else if (result == 99) Theme::get().setRainbow (! Theme::get().isRainbow());
                             else if (result >= 100) Theme::get().setThemeIndex (result - 100);
@@ -144,6 +185,11 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     const auto mods = key.getModifiers();
     if (key == juce::KeyPress::spaceKey)                         { togglePlay(); return true; }
     if (key == juce::KeyPress ('k', juce::ModifierKeys::commandModifier, 0)) { showCommandPalette(); return true; }
+    if (key == juce::KeyPress ('n', juce::ModifierKeys::commandModifier, 0)) { newProject(); return true; }
+    if (key == juce::KeyPress ('o', juce::ModifierKeys::commandModifier, 0)) { openProject(); return true; }
+    if (key == juce::KeyPress ('s', juce::ModifierKeys::commandModifier, 0)) { saveProject (false); return true; }
+    if (key == juce::KeyPress ('s', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0)) { saveProject (true); return true; }
+    if (key == juce::KeyPress ('S', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0)) { saveProject (true); return true; }
     if (key == juce::KeyPress ('d', juce::ModifierKeys::commandModifier, 0)) { arranger.duplicateSelectedClip(); return true; }
     if (key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey)
     {
@@ -152,7 +198,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
     if (key == juce::KeyPress::upKey)                            { ctx.selectTrack (ctx.selectedTrack - 1); return true; }
-    if (key == juce::KeyPress::downKey)                          { ctx.selectTrack (ctx.selectedTrack + 1); return true; }
+    if (key == juce::KeyPress::downKey)                          { ctx.selectTrack (juce::jmin (ctx.selectedTrack + 1, mode == Mode::Mix ? project.numSlots() - 1 : (int) project.tracks.size() - 1)); return true; }
     if (key == juce::KeyPress::homeKey || key == juce::KeyPress::returnKey) { engine.setPosition (0.0); return true; }
 
     if (mods.isCommandDown() || mods.isCtrlDown() || mods.isAltDown())
@@ -303,6 +349,9 @@ void MainComponent::timerCallback()
             grabKeyboardFocus();
     }
 
+    if (statusCounter % 10 == 0)
+        updateTitle();
+
     if (++statusCounter % 15 == 0)
     {
         juce::String info = "No audio device";
@@ -317,6 +366,13 @@ void MainComponent::timerCallback()
 
 void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 {
+    if (seenGeneration != ctx.generation)
+    {
+        // A new song: the track list and mixer strips point at tracks that no longer exist
+        seenGeneration = ctx.generation;
+        trackList.rebuild();
+        mixer.rebuild();
+    }
     // The sequencer rack appears under the arrangement when the selected track is rolling
     const bool wantRack = ctx.selected().rolling.load();
     if (wantRack != rackShown)
@@ -355,12 +411,250 @@ void MainComponent::resized()
             arranger.setBounds (r);
             break;
         case Mode::Mix:
+            devices.setBounds (r.removeFromBottom (240));
             mixer.setBounds (r);
             break;
         case Mode::Edit:
             devices.setBounds (r.removeFromBottom (rackShown ? 240 : 276));
             if (rackShown) sequencer.setBounds (r.removeFromBottom (SequencerPanel::preferredHeight));
             editor.setBounds (r);
+            break;
+    }
+}
+
+
+//==============================================================================
+// Files
+
+void MainComponent::updateTitle()
+{
+    juce::String title = "GLOWTAG";
+    title << "  —  " << (project.file == juce::File() ? juce::String ("Untitled") : project.file.getFileNameWithoutExtension());
+    if (project.dirty)
+        title << " •";
+    title = juce::String::fromUTF8 (title.toRawUTF8());
+    if (title != shownTitle)
+    {
+        shownTitle = title;
+        if (auto* w = dynamic_cast<juce::DocumentWindow*> (getTopLevelComponent()))
+            w->setName (title);
+    }
+}
+
+juce::File MainComponent::lastFile() const
+{
+    return juce::File (settings->getValue ("lastProject"));
+}
+
+void MainComponent::rememberFile (const juce::File& f)
+{
+    recent.addFile (f);
+    settings->setValue ("recent", recent.toString());
+    settings->setValue ("lastProject", f.getFullPathName());
+    settings->saveIfNeeded();
+   #if JUCE_MAC
+    juce::MenuBarModel::setMacMainMenu (this);   // refresh Open Recent
+   #endif
+}
+
+void MainComponent::confirmDiscard (std::function<void()> then)
+{
+    if (! project.dirty)
+    {
+        then();
+        return;
+    }
+    const auto name = project.file == juce::File() ? juce::String ("this project") : project.file.getFileNameWithoutExtension();
+    juce::AlertWindow::showAsync (juce::MessageBoxOptions()
+                                      .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                                      .withTitle ("Save changes?")
+                                      .withMessage ("Save the changes to " + name + " first?")
+                                      .withButton ("Save")
+                                      .withButton ("Don't save")
+                                      .withButton ("Cancel")
+                                      .withAssociatedComponent (this),
+                                  [this, then] (int result)
+                                  {
+                                      if (result == 1)
+                                      {
+                                          // Save, then carry on once it has a file
+                                          if (project.file == juce::File())
+                                          {
+                                              saveProject (true);
+                                              juce::Timer::callAfterDelay (300, [safe = juce::Component::SafePointer<MainComponent> (this), then]
+                                              {
+                                                  if (safe != nullptr && ! safe->project.dirty) then();
+                                              });
+                                          }
+                                          else
+                                          {
+                                              saveProject (false);
+                                              if (! project.dirty) then();
+                                          }
+                                      }
+                                      else if (result == 2)
+                                          then();
+                                  });
+}
+
+void MainComponent::newProject()
+{
+    confirmDiscard ([this]
+    {
+        devices.closePluginWindows();
+        ctx.replaceProject ([this] { project.makeEmpty(); return true; });
+        settings->setValue ("lastProject", juce::String());
+        setMode (Mode::Arrange);
+        updateTitle();
+    });
+}
+
+void MainComponent::openProject()
+{
+    confirmDiscard ([this]
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Open project", lastFile().getParentDirectory(), "*" + Project::fileExtension());
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this] (const juce::FileChooser& fc)
+                              {
+                                  if (fc.getResult().existsAsFile())
+                                      openFile (fc.getResult());
+                              });
+    });
+}
+
+void MainComponent::openFile (const juce::File& f)
+{
+    devices.closePluginWindows();
+    const bool ok = ctx.replaceProject ([this, f]
+    {
+        if (project.loadFrom (f))
+            return true;
+        project.makeEmpty();   // the file was not a project: start clean rather than half-loaded
+        return false;
+    });
+    if (ok)
+        rememberFile (f);
+    else
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Couldn't open",
+                                                f.getFileName() + " isn't a GLOWTAG project file.");
+    setMode (Mode::Arrange);
+    updateTitle();
+}
+
+void MainComponent::saveProject (bool saveAs)
+{
+    if (! saveAs && project.file != juce::File())
+    {
+        engine.capturePluginStates();
+        if (! project.saveTo (project.file))
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Couldn't save",
+                                                    "GLOWTAG couldn't write " + project.file.getFullPathName());
+        else
+            rememberFile (project.file);
+        updateTitle();
+        return;
+    }
+
+    auto folder = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+    if (! folder.isDirectory())
+        folder = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
+    auto start = project.file != juce::File() ? project.file : folder.getChildFile ("Untitled" + Project::fileExtension());
+    chooser = std::make_unique<juce::FileChooser> ("Save project", start, "*" + Project::fileExtension());
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+                          [this] (const juce::FileChooser& fc)
+                          {
+                              auto f = fc.getResult();
+                              if (f == juce::File()) return;
+                              if (! f.hasFileExtension (Project::fileExtension()))
+                                  f = f.withFileExtension (Project::fileExtension());
+                              engine.capturePluginStates();
+                              if (project.saveTo (f))
+                                  rememberFile (f);
+                              else
+                                  juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Couldn't save",
+                                                                          "GLOWTAG couldn't write " + f.getFullPathName());
+                              updateTitle();
+                          });
+}
+
+void MainComponent::requestQuit()
+{
+    confirmDiscard ([] { juce::JUCEApplication::getInstance()->quit(); });
+}
+
+//==============================================================================
+// Menu bar
+
+juce::StringArray MainComponent::getMenuBarNames()
+{
+    return { "File", "View", "Transport" };
+}
+
+juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
+{
+    juce::PopupMenu m;
+    auto item = [] (int id, const juce::String& text, const juce::String& shortcut, bool ticked = false)
+    {
+        juce::PopupMenu::Item i (text);
+        i.itemID = id;
+        i.shortcutKeyDescription = shortcut;
+        i.isTicked = ticked;
+        return i;
+    };
+    if (index == 0)
+    {
+        m.addItem (item (menuNew, "New Project", "Cmd+N"));
+        m.addItem (item (menuOpen, "Open...", "Cmd+O"));
+        juce::PopupMenu recentMenu;
+        recent.createPopupMenuItems (recentMenu, menuRecentBase, true, true);
+        recentMenu.addSeparator();
+        recentMenu.addItem (menuClearRecent, "Clear Menu", recent.getNumFiles() > 0);
+        m.addSubMenu ("Open Recent", recentMenu);
+        m.addSeparator();
+        m.addItem (item (menuSave, "Save", "Cmd+S"));
+        m.addItem (item (menuSaveAs, "Save As...", "Shift+Cmd+S"));
+    }
+    else if (index == 1)
+    {
+        m.addItem (item (menuArrange, "Arrange", "1", mode == Mode::Arrange));
+        m.addItem (item (menuMix, "Mix", "2", mode == Mode::Mix));
+        m.addItem (item (menuEdit, "Edit", "3", mode == Mode::Edit));
+        m.addSeparator();
+        m.addItem (item (menuPalette, "Command Palette", "Cmd+K"));
+    }
+    else
+    {
+        m.addItem (item (menuPlay, engine.isPlaying() ? "Stop" : "Play", "Space"));
+        m.addItem (item (menuRecord, "Record Arm", "R", engine.recordArmed.load()));
+        m.addItem (item (menuMetronome, "Metronome", "", engine.metronome.load()));
+    }
+    return m;
+}
+
+void MainComponent::menuItemSelected (int id, int)
+{
+    switch (id)
+    {
+        case menuNew:       newProject(); break;
+        case menuOpen:      openProject(); break;
+        case menuSave:      saveProject (false); break;
+        case menuSaveAs:    saveProject (true); break;
+        case menuClearRecent: recent.clear(); rememberFile (project.file); break;
+        case menuArrange:   setMode (Mode::Arrange); break;
+        case menuMix:       setMode (Mode::Mix); break;
+        case menuEdit:      setMode (Mode::Edit); break;
+        case menuPlay:      togglePlay(); break;
+        case menuRecord:    engine.recordArmed = ! engine.recordArmed.load(); break;
+        case menuMetronome: engine.metronome = ! engine.metronome.load(); break;
+        case menuPalette:   showCommandPalette(); break;
+        default:
+            if (id >= menuRecentBase)
+            {
+                const auto f = recent.getFile (id - menuRecentBase);
+                if (f.existsAsFile())
+                    confirmDiscard ([this, f] { openFile (f); });
+            }
             break;
     }
 }

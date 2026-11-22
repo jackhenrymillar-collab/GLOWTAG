@@ -16,6 +16,7 @@ const ModuleInfo& moduleInfo (ModuleType t)
     static const ModuleInfo eq         { "EQ",         3, true,  true,  false, { { "Low", 0.0f }, { "Mid", 0.0f }, { "High", 0.0f }, { "Output", 0.7f } }, 200.0f };
     static const ModuleInfo compressor { "Compressor", 1, true,  true,  false, { { "Thresh", 0.5f }, { "Ratio", 0.4f }, { "Attack", 0.2f }, { "Release", 0.4f }, { "Makeup", 0.3f } }, 240.0f };
     static const ModuleInfo lfo        { "LFO",        4, false, false, true,  { { "Rate", 0.4f }, { "Depth", 0.6f }, { "Shape", 0.0f } }, 170.0f };
+    static const ModuleInfo plugin     { "Plugin",     5, true,  true,  false, { { "Mix", 1.0f }, { "Gain", 0.7f } }, 240.0f };
 
     switch (t)
     {
@@ -31,6 +32,7 @@ const ModuleInfo& moduleInfo (ModuleType t)
         case ModuleType::EQ:         return eq;
         case ModuleType::Compressor: return compressor;
         case ModuleType::LFO:        return lfo;
+        case ModuleType::Plugin:     return plugin;
     }
     return filter;
 }
@@ -225,4 +227,75 @@ void Patch::tidy()
             m->position = { x, top };
             x += moduleInfo (m->type).width + gap;
         }
+}
+
+//==============================================================================
+juce::var Patch::toVar() const
+{
+    auto* o = new juce::DynamicObject();
+    juce::Array<juce::var> ms, cs;
+    for (auto& m : modules)
+    {
+        auto* mo = new juce::DynamicObject();
+        mo->setProperty ("id", m.id);
+        mo->setProperty ("type", (int) m.type);
+        mo->setProperty ("x", m.position.x);
+        mo->setProperty ("y", m.position.y);
+        juce::Array<juce::var> knobs;
+        for (float k : m.knobValues) knobs.add (k);
+        mo->setProperty ("knobs", knobs);
+        if (m.sampleName.isNotEmpty()) mo->setProperty ("sample", m.sampleName);
+        juce::Array<juce::var> pads;
+        bool anyPad = false;
+        for (auto& pn : m.padNames) { pads.add (pn); anyPad = anyPad || pn.isNotEmpty(); }
+        if (anyPad) mo->setProperty ("pads", pads);
+        if (m.pluginId.isNotEmpty()) mo->setProperty ("plugin", m.pluginId);
+        if (m.pluginName.isNotEmpty()) mo->setProperty ("pluginName", m.pluginName);
+        if (m.pluginState.getSize() > 0) mo->setProperty ("pluginState", m.pluginState.toBase64Encoding());
+        ms.add (juce::var (mo));
+    }
+    for (auto& c : cables)
+    {
+        juce::Array<juce::var> a { c.fromModule, c.fromPort, c.toModule, c.toPort };
+        cs.add (a);
+    }
+    o->setProperty ("modules", ms);
+    o->setProperty ("cables", cs);
+    o->setProperty ("nextId", nextId);
+    return juce::var (o);
+}
+
+void Patch::fromVar (const juce::var& v)
+{
+    modules.clear();
+    cables.clear();
+    if (auto* ms = v["modules"].getArray())
+        for (auto& mv : *ms)
+        {
+            Module m;
+            m.id = (int) mv["id"];
+            m.type = (ModuleType) juce::jlimit (0, numModuleTypes - 1, (int) mv["type"]);
+            m.position = { (float) mv["x"], (float) mv["y"] };
+            const auto& info = moduleInfo (m.type);
+            for (auto& k : info.knobs) m.knobValues.push_back (k.second);
+            if (auto* ks = mv["knobs"].getArray())
+                for (int i = 0; i < ks->size() && i < (int) m.knobValues.size(); ++i)
+                    m.knobValues[(size_t) i] = (float) (*ks)[i];
+            m.sampleName = mv["sample"].toString();
+            if (auto* ps = mv["pads"].getArray())
+                for (int i = 0; i < ps->size() && i < 16; ++i)
+                    m.padNames[(size_t) i] = (*ps)[i].toString();
+            m.pluginId = mv["plugin"].toString();
+            m.pluginName = mv["pluginName"].toString();
+            if (mv.hasProperty ("pluginState")) m.pluginState.fromBase64Encoding (mv["pluginState"].toString());
+            modules.push_back (m);
+        }
+    if (auto* cs = v["cables"].getArray())
+        for (auto& cv : *cs)
+            if (auto* a = cv.getArray(); a != nullptr && a->size() == 4)
+                cables.push_back ({ (int) (*a)[0], (int) (*a)[1], (int) (*a)[2], (int) (*a)[3] });
+    nextId = juce::jmax ((int) v.getProperty ("nextId", 3), 3);
+    for (auto& m : modules) nextId = juce::jmax (nextId, m.id + 1);
+    if (find (inputId) == nullptr || find (outputId) == nullptr)
+        *this = Patch();
 }

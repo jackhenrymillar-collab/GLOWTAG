@@ -7,7 +7,7 @@
 #include "Patch.h"
 #include "Sequencer.h"
 
-enum class TrackKind { Audio, Sampler, Midi, Automation };
+enum class TrackKind { Audio, Sampler, Midi, Automation, Return, Master };
 
 // Times are in beats (quarter notes). The project is in 4/4.
 constexpr double beatsPerBar = 4.0;
@@ -43,6 +43,7 @@ struct Clip
     ClipKind kind = ClipKind::Midi;
     std::vector<Note> notes;
     std::shared_ptr<const AudioData> audio;
+    juce::String audioPath;   // the file the audio came from, for saving
 
     double end() const { return start + length; }
 };
@@ -64,22 +65,57 @@ struct Track
     std::atomic<float> volume { 0.8f }; // linear gain
     std::atomic<float> pan { 0.0f };    // -1 .. 1
     std::atomic<float> meter { 0.0f };  // peak level written by the audio thread
+    std::array<std::atomic<float>, 2> send { 0.0f, 0.0f };   // post-fader sends to Return A / B
 
     int clipAt (double beat) const;     // index or -1
+    bool isBus() const { return kind == TrackKind::Return || kind == TrackKind::Master; }
+
+    juce::var toVar() const;
+    void fromVar (const juce::var&);
 };
 
+// The song: its tracks, two return buses (A and B) fed by the track sends, and the master.
+// The engine addresses all of them by slot: tracks first, then Return A, Return B, Master.
 class Project
 {
 public:
     Project();
 
     static constexpr int lengthBars = 64;
+    static constexpr int numReturns = 2;
 
     std::vector<std::unique_ptr<Track>> tracks;
+    std::array<std::unique_ptr<Track>, numReturns> returns;
+    std::unique_ptr<Track> master;
     std::atomic<double> bpm { 124.0 };
+
+    // Where it lives on disk, and whether it has changed since
+    juce::File file;
+    bool dirty = false;
 
     // Guards every track's clips. Hold it briefly on the message thread when changing clips.
     juce::SpinLock lock;
 
-    bool isAudible (int trackIndex) const;
+    int numSlots() const { return (int) tracks.size() + numReturns + 1; }
+    int returnSlot (int r) const { return (int) tracks.size() + r; }
+    int masterSlot() const { return (int) tracks.size() + numReturns; }
+    Track& slot (int index);
+    const Track& slot (int index) const;
+
+    bool isAudible (int slotIndex) const;
+
+    // Start again: the demo song, or a bare song with a few empty instrument tracks
+    void makeDemo();
+    void makeEmpty();
+
+    // Save and load (JSON). Loading replaces every track; tell the engine and the views afterwards.
+    juce::var toVar() const;
+    bool fromVar (const juce::var&);
+    bool saveTo (const juce::File&);
+    bool loadFrom (const juce::File&);
+    static juce::String fileExtension() { return ".glowtag"; }
+
+private:
+    void makeBuses();
+    void clear();
 };

@@ -4,8 +4,44 @@
 AudioEngine::AudioEngine (Project& p) : project (p)
 {
     midiInput.reset (44100.0);
-    for (size_t i = 0; i < project.tracks.size(); ++i)
+    makeSlots();
+}
+
+void AudioEngine::makeSlots()
+{
+    slots.clear();
+    for (int i = 0; i < project.numSlots(); ++i)
+    {
         slots.push_back (std::make_unique<TrackSlot>());
+        slots.back()->input.setSize (2, blockSize);
+        slots.back()->output.setSize (2, blockSize);
+    }
+}
+
+void AudioEngine::projectChanged()
+{
+    replaceProject ([] { return true; });
+}
+
+bool AudioEngine::replaceProject (const std::function<bool()>& load)
+{
+    const juce::SpinLock::ScopedLockType sl (engineLock);
+    playing = false;
+    position = 0.0;
+    playStartPosition = 0.0;
+    requestedPosition = -1.0;
+    const bool ok = load();
+    makeSlots();
+    rebuildAll();
+    // Nothing is playing while we hold the lock, so the new graphs can go straight in
+    for (auto& s : slots)
+    {
+        s->current = s->pending;
+        s->seq = s->seqPending;
+        s->pending.reset();
+        s->seqPending.reset();
+    }
+    return ok;
 }
 
 std::shared_ptr<const AudioData> AudioEngine::resolveSample (const juce::String& nameOrPath)
@@ -27,7 +63,7 @@ void AudioEngine::rebuildTrack (int track)
     if (track < 0 || track >= (int) slots.size())
         return;
     auto& slot = *slots[(size_t) track];
-    auto graph = std::make_shared<Graph> (project.tracks[(size_t) track]->patch, sr,
+    auto graph = std::make_shared<Graph> (project.slot (track).patch, sr,
                                           [this] (const juce::String& n) { return resolveSample (n); });
     std::shared_ptr<Graph> old;
     {
@@ -53,7 +89,7 @@ void AudioEngine::rebuildSequencer (int track)
     if (track < 0 || track >= (int) slots.size())
         return;
     auto& slot = *slots[(size_t) track];
-    auto rt = std::make_shared<SeqRuntime> (project.tracks[(size_t) track]->seq);
+    auto rt = std::make_shared<SeqRuntime> (project.slot (track).seq);
     std::shared_ptr<SeqRuntime> old;
     {
         const juce::SpinLock::ScopedLockType sl (slot.lock);
@@ -96,7 +132,7 @@ void AudioEngine::runSequencers (int numSamples, double beatsPerSample, bool isP
     const auto now = juce::Time::getCurrentTime();
     const double seconds = now.getHours() * 3600.0 + now.getMinutes() * 60.0 + now.getSeconds() + now.getMilliseconds() / 1000.0;
 
-    for (size_t ti = 0; ti < slots.size(); ++ti)
+    for (size_t ti = 0; ti < project.tracks.size() && ti < slots.size(); ++ti)
     {
         auto& slot = *slots[ti];
         auto* rt = slot.seq.get();
@@ -145,6 +181,18 @@ void AudioEngine::setKnob (int track, int moduleId, int knob, float value)
             node->knob[(size_t) knob] = value;
 }
 
+std::shared_ptr<Graph> AudioEngine::uiGraph (int track)
+{
+    return track >= 0 && track < (int) slots.size() ? slots[(size_t) track]->ui : nullptr;
+}
+
+void AudioEngine::capturePluginStates()
+{
+    for (size_t i = 0; i < slots.size() && (int) i < project.numSlots(); ++i)
+        if (auto g = slots[i]->ui)
+            g->capturePluginState (project.slot ((int) i).patch);
+}
+
 Node* AudioEngine::liveNode (int track, int moduleId)
 {
     if (track < 0 || track >= (int) slots.size())
@@ -184,8 +232,8 @@ void AudioEngine::stop()
     }
     playing = false;
     setPosition (playStartPosition);
-    for (auto& t : project.tracks)
-        t->meter = 0.0f;
+    for (int i = 0; i < project.numSlots(); ++i)
+        project.slot (i).meter = 0.0f;
     pulse = 0.0f;
 }
 
@@ -248,6 +296,9 @@ void AudioEngine::renderAudioClips (TrackSlot& slot, Track& track, int offset, i
 void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
 {
     info.clearActiveBufferRegion();
+    const juce::SpinLock::ScopedTryLockType engineScope (engineLock);
+    if (! engineScope.isLocked())
+        return;             // the project is being replaced; a block of silence
     const int numSamples = info.numSamples;
     if (numSamples > blockSize)
     {
@@ -381,22 +432,23 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
 
     auto* left  = info.buffer->getWritePointer (0, info.startSample);
     auto* right = info.buffer->getNumChannels() > 1 ? info.buffer->getWritePointer (1, info.startSample) : nullptr;
-    std::array<float, 32> peaks {};
+    std::vector<float>& peaks = slotPeaks;
+    peaks.assign (slots.size(), 0.0f);
 
-    // Each track: run its graph between events so notes land on their exact sample
-    for (size_t ti = 0; ti < slots.size(); ++ti)
+    const int numTracks = (int) project.tracks.size();
+    auto& masterSlot = *slots[(size_t) project.masterSlot()];
+    float* mixL = masterSlot.input.getWritePointer (0);
+    float* mixR = masterSlot.input.getWritePointer (1);
+
+    auto runGraph = [&] (size_t ti, Graph& graph, Track& track)
     {
         auto& slot = *slots[ti];
-        auto& track = *project.tracks[ti];
-        auto* graph = slot.current.get();
-        if (graph == nullptr)
-            continue;
-
         const float* inL = slot.input.getReadPointer (0);
         const float* inR = slot.input.getReadPointer (1);
         float* outL = slot.output.getWritePointer (0);
         float* outR = slot.output.getWritePointer (1);
 
+        // Run the graph between this track's events so notes land on their exact sample
         int cursor = 0;
         for (auto& e : events)
         {
@@ -405,35 +457,109 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             const int at = juce::jlimit (0, numSamples, e.offset);
             if (at > cursor)
             {
-                graph->process (inL + cursor, inR + cursor, outL + cursor, outR + cursor, at - cursor, bpm);
+                graph.process (inL + cursor, inR + cursor, outL + cursor, outR + cursor, at - cursor, bpm);
                 cursor = at;
             }
             if (e.lengthBeats <= -2.5)
-                graph->noteOff (e.pitch);
+                graph.noteOff (e.pitch);
             else
             {
-                graph->noteOn (e.pitch, e.velocity, e.lengthBeats < 0.0 ? -1.0 : e.lengthBeats * 60.0 / bpm * sr);
+                graph.noteOn (e.pitch, e.velocity, e.lengthBeats < 0.0 ? -1.0 : e.lengthBeats * 60.0 / bpm * sr);
                 if (e.pitch <= 38 && track.kind == TrackKind::Audio)
                     pulse = juce::jmax (pulse.load(), e.velocity);
             }
         }
         if (cursor < numSamples)
-            graph->process (inL + cursor, inR + cursor, outL + cursor, outR + cursor, numSamples - cursor, bpm);
+            graph.process (inL + cursor, inR + cursor, outL + cursor, outR + cursor, numSamples - cursor, bpm);
+    };
 
+    // Tracks: through their patch, then to the master and the return sends (post-fader)
+    for (size_t ti = 0; ti < (size_t) numTracks; ++ti)
+    {
+        auto& slot = *slots[ti];
+        auto& track = *project.tracks[ti];
+        auto* graph = slot.current.get();
+        if (graph == nullptr)
+            continue;
+        runGraph (ti, *graph, track);
         if (! project.isAudible ((int) ti))
             continue;
 
         const float vol = track.volume.load(), pan = track.pan.load();
         const float gl = vol * std::sqrt (0.5f * (1.0f - pan)), gr = vol * std::sqrt (0.5f * (1.0f + pan));
+        const float* outL = slot.output.getReadPointer (0);
+        const float* outR = slot.output.getReadPointer (1);
         float peak = 0.0f;
         for (int i = 0; i < numSamples; ++i)
         {
-            left[i] += outL[i] * gl;
-            if (right != nullptr) right[i] += outR[i] * gr;
+            mixL[i] += outL[i] * gl;
+            mixR[i] += outR[i] * gr;
             peak = juce::jmax (peak, std::abs (outL[i]) * vol);
         }
-        if (ti < peaks.size())
-            peaks[ti] = peak;
+        peaks[ti] = peak;
+        for (int r = 0; r < Project::numReturns; ++r)
+        {
+            const float amount = track.send[(size_t) r].load();
+            if (amount <= 0.001f) continue;
+            auto& ret = *slots[(size_t) project.returnSlot (r)];
+            ret.input.addFrom (0, 0, slot.output, 0, 0, numSamples, gl * amount);
+            ret.input.addFrom (1, 0, slot.output, 1, 0, numSamples, gr * amount);
+        }
+    }
+
+    // Returns: their effect chain onto the master
+    for (int r = 0; r < Project::numReturns; ++r)
+    {
+        const int si = project.returnSlot (r);
+        auto& slot = *slots[(size_t) si];
+        auto& track = *project.returns[(size_t) r];
+        auto* graph = slot.current.get();
+        if (graph == nullptr)
+            continue;
+        runGraph ((size_t) si, *graph, track);
+        if (! project.isAudible (si))
+            continue;
+        const float vol = track.volume.load(), pan = track.pan.load();
+        const float gl = vol * std::sqrt (0.5f * (1.0f - pan)), gr = vol * std::sqrt (0.5f * (1.0f + pan));
+        const float* outL = slot.output.getReadPointer (0);
+        const float* outR = slot.output.getReadPointer (1);
+        float peak = 0.0f;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            mixL[i] += outL[i] * gl;
+            mixR[i] += outR[i] * gr;
+            peak = juce::jmax (peak, std::abs (outL[i]) * vol);
+        }
+        peaks[(size_t) si] = peak;
+    }
+
+    // Master chain, then out
+    {
+        const int si = project.masterSlot();
+        auto& track = *project.master;
+        const float vol = track.volume.load();
+        if (auto* graph = masterSlot.current.get())
+        {
+            runGraph ((size_t) si, *graph, track);
+            const float* outL = masterSlot.output.getReadPointer (0);
+            const float* outR = masterSlot.output.getReadPointer (1);
+            float peak = 0.0f;
+            for (int i = 0; i < numSamples; ++i)
+            {
+                left[i] = outL[i] * vol;
+                if (right != nullptr) right[i] = outR[i] * vol;
+                peak = juce::jmax (peak, std::abs (outL[i]) * vol);
+            }
+            peaks[(size_t) si] = peak;
+        }
+        else
+        {
+            for (int i = 0; i < numSamples; ++i)
+            {
+                left[i] = mixL[i] * vol;
+                if (right != nullptr) right[i] = mixR[i] * vol;
+            }
+        }
     }
 
     // Metronome clicks and a gentle master limiter
@@ -460,9 +586,9 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     if (isPlaying)
         position = pos;
 
-    for (size_t i = 0; i < project.tracks.size() && i < peaks.size(); ++i)
+    for (size_t i = 0; i < slots.size() && i < peaks.size(); ++i)
     {
-        auto& m = project.tracks[i]->meter;
+        auto& m = project.slot ((int) i).meter;
         m = std::max (std::min (1.0f, peaks[i]), m.load() * 0.82f);
     }
     pulse = pulse.load() * 0.86f;

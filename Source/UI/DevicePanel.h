@@ -2,6 +2,22 @@
 
 #include "AppContext.h"
 #include "Widgets.h"
+#include <juce_gui_extra/juce_gui_extra.h>
+
+// A hosted plugin's own window. It keeps the graph that owns the plugin alive until it closes.
+class PluginWindow : public juce::DocumentWindow
+{
+public:
+    PluginWindow (const juce::String& title, std::shared_ptr<Graph> graph, juce::AudioProcessor& processor, int slot, int moduleId);
+    ~PluginWindow() override;
+
+    const int slot, moduleId;
+    std::function<void()> onClose;
+    void closeButtonPressed() override { if (onClose) onClose(); }
+
+private:
+    std::shared_ptr<Graph> graph;
+};
 
 // One module on the patch canvas: a framed card with an icon, title, numeral, knobs and jacks.
 // Drag the header to move it; right-click it to remove it.
@@ -17,6 +33,7 @@ public:
     std::vector<int> jacks() const;
 
     std::function<void()> onMoved, onRemove, onPatchChanged;   // onPatchChanged: sample or pad changed, rebuild
+    std::function<void()> onOpenPlugin;                          // Plugin: double-click opens its editor
     float pulse = 0.0f;
 
     void tick();
@@ -25,6 +42,7 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
 
     bool isInterestedInFileDrag (const juce::StringArray&) override;
     void filesDropped (const juce::StringArray&, int, int) override;
@@ -102,6 +120,9 @@ public:
     ~DevicePanel() override;
 
     void addModule (ModuleType);
+    void addPlugin (const juce::PluginDescription&);
+    void openPluginEditor (int slot, int moduleId);
+    void closePluginWindows();
     void loadSample (const juce::String& nameOrPath);   // into the selected track's sampler, adding one if needed
     void tick();
     void paint (juce::Graphics&) override;
@@ -119,6 +140,7 @@ private:
     Canvas canvas;
     juce::OwnedArray<ModuleCard> cards;
     std::unique_ptr<CableLayer> cables;
+    juce::OwnedArray<PluginWindow> pluginWindows;
 
     void rebuild();
     void updateCanvasSize();

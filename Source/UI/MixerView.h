@@ -3,41 +3,43 @@
 #include "AppContext.h"
 #include "Widgets.h"
 
-// One channel strip: inserts, pan, fader with meter, mute / solo and name.
+// One channel strip: inserts (the slot's devices), send A / B, pan, fader with meter, mute / solo and name.
+// Tracks, the two return buses and the master are all strips; clicking one selects its slot so the
+// device panel below shows its patch.
 class ChannelStrip : public juce::Component
 {
 public:
-    ChannelStrip (AppContext&, Track* track, const juce::String& name, int colourIndex, bool isMaster);
+    ChannelStrip (AppContext&, int slot);
 
     void tick();
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
 
-    int trackIndex = -1;
+    const int slot;
 
 private:
     AppContext& ctx;
-    Track* track;
-    juce::String name;
-    int colourIndex;
-    bool isMaster;
+    Track& track;
+    const bool isMaster, isReturn;
     float shownLevel = 0.0f;
 
     juce::Slider pan { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider fader { juce::Slider::LinearVertical, juce::Slider::NoTextBox };
+    juce::OwnedArray<juce::Slider> sends;
     SmallToggle mute { "M", Pal::Amber }, solo { "S", Pal::Gold };
-    juce::Rectangle<int> meterArea, insertArea;
+    juce::Rectangle<int> meterArea, insertArea, sendArea;
 
-    float level() const;
+    juce::StringArray insertNames() const;
 };
 
-// Logic-style mixer, in the GLOWTAG theme.
+// Logic-style mixer, in the GLOWTAG theme: tracks, then Return A, Return B and Master.
 class MixerView : public juce::Component
 {
 public:
     explicit MixerView (AppContext&);
 
+    void rebuild();     // after the project's tracks were replaced
     void tick();
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -47,4 +49,5 @@ private:
     juce::Viewport viewport;
     juce::Component content;
     juce::OwnedArray<ChannelStrip> strips;
+    int builtGeneration = -1;
 };
