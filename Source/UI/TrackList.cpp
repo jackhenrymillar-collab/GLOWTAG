@@ -12,6 +12,7 @@ namespace
             case TrackKind::Automation: return "AUTOMATION";
             case TrackKind::Return:     return "RETURN";
             case TrackKind::Master:     return "MASTER";
+            case TrackKind::Bus:        return "BUS";
         }
         return {};
     }
