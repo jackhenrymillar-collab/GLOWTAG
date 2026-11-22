@@ -9,7 +9,7 @@
 // Everything here is plain data so it can be saved with the app's settings and checked offline.
 namespace Wall
 {
-    constexpr int numDevices = 21;
+    constexpr int numDevices = 27;
     constexpr float designWidth = 1600.0f;   // the wall is laid out on a sheet this wide, then scaled to the window
     constexpr float aspect = 0.7f;           // a piece is this tall for its width
     constexpr float minPieceWidth = 110.0f;

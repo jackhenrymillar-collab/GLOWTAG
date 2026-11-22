@@ -309,6 +309,8 @@ std::unique_ptr<Node> createNode (const Module& m, double sr, const Graph::Sampl
         case ModuleType::Sampler: case ModuleType::Synth: case ModuleType::Drums: case ModuleType::Filter:
         case ModuleType::Drive: case ModuleType::Delay: case ModuleType::Reverb: case ModuleType::EQ:
         case ModuleType::Compressor: case ModuleType::LFO:        // made by createDeviceNode
+        case ModuleType::GasTube: case ModuleType::CrateDigger: case ModuleType::StringWall:
+        case ModuleType::GhostTag: case ModuleType::Crowd: case ModuleType::Transformer:
         case ModuleType::Input:
         case ModuleType::Output:     break;
     }

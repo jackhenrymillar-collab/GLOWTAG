@@ -5,7 +5,8 @@ import { ART, ART2, ART3, deco3 } from './art.mjs';
 
 // Same order as the device table in Source/UI/DeviceWallModel.cpp
 const ids = ['synth','sampler','drums','filter','delay','reverb','eq','comp','drive','lfo',
-             'clock','steps','euclid','turing','burst','chance','quantise','mutate','circadian','tide','out'];
+             'clock','steps','euclid','turing','burst','chance','quantise','mutate','circadian','tide','out',
+             'gas','crate','strings','ghost','crowd','xfmr'];
 
 const mul = (a, b) => [a[0]*b[0]+a[2]*b[1], a[1]*b[0]+a[3]*b[1], a[0]*b[2]+a[2]*b[3], a[1]*b[2]+a[3]*b[3],
                        a[0]*b[4]+a[2]*b[5]+a[4], a[1]*b[4]+a[3]*b[5]+a[5]];

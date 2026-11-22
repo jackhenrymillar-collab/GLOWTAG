@@ -9,8 +9,9 @@
 // both ends carry the same kind of signal.
 
 enum class ModuleType { Input, Output, Sampler, Synth, Drums, Filter, Drive, Delay, Reverb, EQ, Compressor, LFO, Plugin,
-                        Attenuator, Mixer, Inverter, Crossfade, Slew };
-constexpr int numModuleTypes = 18;
+                        Attenuator, Mixer, Inverter, Crossfade, Slew,
+                        GasTube, CrateDigger, StringWall, GhostTag, Crowd, Transformer };
+constexpr int numModuleTypes = 24;
 
 // What a jack carries. Notes are the track's MIDI: pitch, velocity, gate and the rest, from clips, the
 // keyboard and the sequencer rack. A utility's signal jacks are `Any`: they take on whatever they are

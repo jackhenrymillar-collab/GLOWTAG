@@ -1224,6 +1224,9 @@ std::unique_ptr<Node> createDeviceNode (const Module& m, double sr, const Graph:
         case ModuleType::Inverter:
         case ModuleType::Crossfade:
         case ModuleType::Slew:       break;
+        case ModuleType::GasTube: case ModuleType::CrateDigger: case ModuleType::StringWall:
+        case ModuleType::GhostTag: case ModuleType::Crowd: case ModuleType::Transformer:
+            return createWorkshopNode (m, sr, resolve);
     }
     return nullptr;
 }

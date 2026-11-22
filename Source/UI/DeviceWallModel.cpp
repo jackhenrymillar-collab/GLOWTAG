@@ -29,6 +29,12 @@ namespace
         { "circadian", "Circadian",  Kind::RackModule, "Day-and-night modulation",   true,  ModuleType::Filter,     SeqType::Circadian, { OR, YL, VI } },
         { "tide",      "Tide",       Kind::RackModule, "Synced LFO, a 16th to 8 bars", true, ModuleType::Filter,    SeqType::Tide,      { BL, CY, YL } },
         { "out",       "Out",        Kind::RackModule, "The rack's notes to the track", true, ModuleType::Filter,   SeqType::Out,       { CY, GR, PK } },
+        { "gas",       "Gas Tube",   Kind::Instrument, "Neon tubes that strike and buzz", false, ModuleType::GasTube, SeqType::Clock,    { OR, PK, YL } },
+        { "crate",     "Crate Digger", Kind::Instrument, "Digs slices out of a record", false, ModuleType::CrateDigger, SeqType::Clock, { PK, YL, BL } },
+        { "strings",   "String Wall", Kind::Instrument, "Pluck, bow or feed back",   false, ModuleType::StringWall, SeqType::Clock,     { CY, VI, YL } },
+        { "ghost",     "Ghost Tag",  Kind::Effect,     "Echoes that fade and drift", false, ModuleType::GhostTag,   SeqType::Clock,     { VI, CY, PK } },
+        { "crowd",     "Crowd",      Kind::Effect,     "One sound sung by a crowd",  false, ModuleType::Crowd,      SeqType::Clock,     { YL, PK, CY } },
+        { "xfmr",      "Transformer", Kind::Effect,    "Circuit bending, broken parts", false, ModuleType::Transformer, SeqType::Clock,  { GR, OR, CY } },
     };
 
     int indexOfId (const juce::String& id)
@@ -73,7 +79,8 @@ std::array<juce::uint32, 3> rainbowColours (int index, int style)
 std::array<Piece, numDevices> defaultLayout()
 {
     static const char* order[numDevices] = { "synth", "clock", "filter", "steps", "sampler", "euclid", "delay", "turing", "drums", "reverb", "burst",
-                                             "chance", "eq", "quantise", "comp", "mutate", "drive", "lfo", "circadian", "tide", "out" };
+                                             "chance", "eq", "quantise", "comp", "mutate", "drive", "lfo", "circadian", "tide", "out",
+                                             "gas", "ghost", "crate", "crowd", "strings", "xfmr" };
     static const float tilt[8] = { -3.0f, 2.0f, -1.5f, 3.0f, -2.5f, 1.0f, 2.5f, -1.0f };
 
     std::array<Piece, numDevices> out;

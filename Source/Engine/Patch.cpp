@@ -72,6 +72,38 @@ namespace
                  { "Low Width", 0.9f, 0.9f }, { "Low Mid Width", 0.9f, 0.9f }, { "Mid Width", 0.9f, 0.9f }, { "High Width", 0.9f, 0.9f },
                  { "Low Cut", 0.0f, 0.0f }, { "High Cut", 1.0f, 1.0f }, { "Tilt", 0.0f, 0.0f }, { "Analog Warmth", 0.0f, 0.0f } };
     }
+    std::vector<ModuleInfo::Extra> crateExtras()
+    {
+        using namespace Param::Crate;
+        std::vector<ModuleInfo::Extra> e { { "Spread", 0.45f, 0.45f }, { "Depth", 1.0f, 1.0f }, { "Era", 1.0f, 1.0f }, { "Selected Slice", 0.0f, 0.0f } };
+        // Before the first dig the slices sit evenly round the record, at their own pitch, forwards
+        for (int i = 0; i < slices; ++i) e.push_back ({ "Slice " + juce::String (i + 1) + " Position", (float) i / (float) slices, (float) i / (float) slices });
+        for (int i = 0; i < slices; ++i) e.push_back ({ "Slice " + juce::String (i + 1) + " Pitch", 0.5f, 0.5f });
+        for (int i = 0; i < slices; ++i) e.push_back ({ "Slice " + juce::String (i + 1) + " Reverse", 0.0f, 0.0f });
+        for (int i = 0; i < slices; ++i) e.push_back ({ "Slice " + juce::String (i + 1) + " Lock", 0.0f, 0.0f });
+        return e;
+    }
+
+    std::vector<ModuleInfo::Extra> crowdExtras()
+    {
+        using namespace Param::Crowd;
+        std::vector<ModuleInfo::Extra> e { { "Tuning", 0.35f, 0.35f }, { "Sway", 0.35f, 0.35f }, { "Depth", 0.35f, 0.35f }, { "Preset", 1.0f, 1.0f } };
+        // Where everyone stands to begin with: a fixed scatter, the first person front and centre
+        float home[people][3];
+        long long seed = 5;
+        auto rnd = [&seed] { seed = (seed * 16807) % 2147483647; return (float) ((double) seed / 2147483647.0); };
+        for (int i = 0; i < people; ++i)
+        {
+            home[i][0] = i ? rnd() * 2.0f - 1.0f : 0.0f;
+            home[i][1] = i ? rnd() : 0.2f;
+            home[i][2] = rnd();
+        }
+        for (int i = 0; i < people; ++i) e.push_back ({ "Person " + juce::String (i + 1) + " Across", home[i][0] * 0.5f + 0.5f, home[i][0] * 0.5f + 0.5f });
+        for (int i = 0; i < people; ++i) e.push_back ({ "Person " + juce::String (i + 1) + " Back", home[i][1], home[i][1] });
+        for (int i = 0; i < people; ++i) e.push_back ({ "Person " + juce::String (i + 1) + " Quirk", home[i][2], home[i][2] });
+        return e;
+    }
+
 }
 
 float ModuleInfo::defaultValue (int param, bool legacy) const
@@ -122,6 +154,26 @@ const ModuleInfo& moduleInfo (ModuleType t)
     static const ModuleInfo lfo = withExtras ({ "LFO",        4, false, false, true,  { { "Rate", 0.4f }, { "Depth", 0.6f }, { "Shape", 0.0f } }, 170.0f },
                                               { { "Phase", 0.0f, 0.0f }, { "Smooth", 0.0f, 0.0f }, { "Fade In", 0.0f, 0.0f }, { "Chaos", 0.0f, 0.0f },
                                                 { "Sync", 0.0f, 0.0f }, { "Polarity", 0.0f, 0.0f }, { "Restart On Note", 0.0f, 0.0f } });
+    // The workshop devices
+    static const ModuleInfo gasTube = withExtras ({ "Gas Tube",   6, false, true,  false, { { "Voltage", 0.3f }, { "Strike", 0.12f }, { "Body", 0.45f }, { "Glow", 0.7f }, { "Fade", 0.38f }, { "Gain", 0.7f } }, 240.0f, true },
+                                                  { { "Pressure", 0.55f, 0.55f }, { "Hum", 0.22f, 0.22f }, { "Crackle", 0.18f, 0.18f }, { "Length", 0.5f, 0.5f },
+                                                    { "Warm-up", 0.3f, 0.3f }, { "Gas", 0.0f, 0.0f }, { "Mains", 0.0f, 0.0f } });
+    static const ModuleInfo crate = withExtras ({ "Crate Digger", 0, false, true, false, { { "Wear", 0.35f }, { "Dust", 0.3f }, { "Wow", 0.18f }, { "Pitch", 0.5f }, { "Chop", 0.5f }, { "Gain", 0.75f } }, 240.0f, true },
+                                                crateExtras());
+    static const ModuleInfo strings = withExtras ({ "String Wall", 7, false, true,  false, { { "Tone", 0.55f }, { "Sustain", 0.6f }, { "Pick", 0.3f }, { "Body", 0.5f }, { "Sympathy", 0.35f }, { "Bar", 0.42f }, { "Gain", 0.75f } }, 270.0f, true },
+                                                  { { "Bow Pressure", 0.5f, 0.5f }, { "Slide Bar", 0.0f, 0.0f }, { "Pedal A", 0.0f, 0.0f }, { "Pedal B", 0.0f, 0.0f },
+                                                    { "Mode", 0.0f, 0.0f }, { "Material", 1.0f, 1.0f }, { "Tuning", 0.0f, 0.0f } });
+    static const ModuleInfo ghost = withExtras ({ "Ghost Tag",  4, true,  true,  false, { { "Time", 0.55f }, { "Fade", 0.6f }, { "Wash", 0.45f }, { "Mix", 0.45f } }, 200.0f },
+                                                { { "Drift", 0.3f, 0.3f }, { "Blur", 0.25f, 0.25f }, { "Hold", 0.0f, 0.0f }, { "Hold As", 0.0f, 0.0f },
+                                                  { "Hold From", 2.0f, 2.0f }, { "Hold To", 4.0f, 4.0f } });
+    static const ModuleInfo crowd = withExtras ({ "Crowd",      3, true,  true,  false, { { "Size", 0.6f }, { "Spread", 0.55f }, { "Timing", 0.35f }, { "Mix", 0.6f } }, 200.0f },
+                                                crowdExtras());
+    static const ModuleInfo transformer = withExtras ({ "Transformer", 1, true, true, false, { { "Battery", 0.75f }, { "Cap", 0.5f }, { "Pot", 0.45f }, { "Diode", 0.5f }, { "Sag", 0.55f },
+                                                                                              { "Clock", 0.4f }, { "Joint", 0.4f }, { "Hum", 0.35f }, { "Mix", 1.0f }, { "Output", 0.7f } }, 300.0f },
+                                                      { { "Dying Cap On", 1.0f, 1.0f }, { "Scratchy Pot On", 1.0f, 1.0f }, { "Leaky Diode On", 0.0f, 0.0f },
+                                                        { "Sagging Supply On", 1.0f, 1.0f }, { "Bent Clock On", 0.0f, 0.0f }, { "Cold Joint On", 0.0f, 0.0f },
+                                                        { "Hot Hum On", 0.0f, 0.0f } });
+
     // A plugin may be an instrument or an effect, so it has both a notes and an audio input
     static const ModuleInfo plugin     { "Plugin",     5, true,  true,  false, { { "Mix", 1.0f }, { "Gain", 0.7f } }, 240.0f, true };
 
@@ -152,6 +204,12 @@ const ModuleInfo& moduleInfo (ModuleType t)
         case ModuleType::Inverter:   return inverter;
         case ModuleType::Crossfade:  return crossfade;
         case ModuleType::Slew:       return slew;
+        case ModuleType::GasTube:    return gasTube;
+        case ModuleType::CrateDigger: return crate;
+        case ModuleType::StringWall: return strings;
+        case ModuleType::GhostTag:   return ghost;
+        case ModuleType::Crowd:      return crowd;
+        case ModuleType::Transformer: return transformer;
     }
     return filter;
 }
@@ -319,6 +377,8 @@ int Patch::addAt (ModuleType type, juce::Point<float> position, bool asInstrumen
     m.position = { position.x, rowY (type) };
     for (int i = 0; i < info.numParams(); ++i)
         m.knobValues.push_back (info.defaultValue (i));
+    if (type == ModuleType::CrateDigger)
+        m.sampleName = "Found Record";          // the built-in soul loop, until you load your own
     modules.push_back (m);
     const int id = m.id;
 

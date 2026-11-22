@@ -6,7 +6,8 @@
 // (ported from the mockup's SVG symbols).
 enum class Icon { Sampler, Synth, Drums, Filter, Delay, Reverb, EQ, Compressor, LFO,
                   Pencil, Cursor, Scissors, Velocity, Play, Stop, Record, Loop, Metronome, Drive,
-                  Clock, Steps, Euclid, Turing, Burst, Chance, Quantise, Mutate, Circadian, Tide, Plugin };
+                  Clock, Steps, Euclid, Turing, Burst, Chance, Quantise, Mutate, Circadian, Tide, Plugin,
+                  GasTube, Crate, Strings, Ghost, Crowd, Transformer };
 
 namespace Glow
 {
