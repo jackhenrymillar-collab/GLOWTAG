@@ -35,6 +35,7 @@ public:
     std::function<void()> onMoved, onRemove, onPatchChanged;   // onPatchChanged: sample or pad changed, rebuild
     std::function<void()> onRaise;                               // clicked: come forward, but stay under the cables
     std::function<void()> onOpenPlugin;                          // Plugin: double-click opens its editor
+    std::function<void()> onOpenExpanded;                        // built-in device: double-click opens its expanded view
     float pulse = 0.0f;
     float flash = 0.0f;      // lit up after the mixer jumped here
 
@@ -145,6 +146,8 @@ public:
     bool isFullScreen() const { return fullScreen; }
     void setFullScreen (bool);
     std::function<void()> onFullScreenChanged;
+    std::function<void (int track, int moduleId)> onOpenExpanded;
+    void refresh() { rebuild(); }       // the patch changed elsewhere (the expanded view): show it again
 
     // Height the panel wants in the window: the device row, the utility row and the header
     static constexpr int preferredHeight = 362;

@@ -448,8 +448,13 @@ void ModuleCard::mouseUp (const juce::MouseEvent&)
 
 void ModuleCard::mouseDoubleClick (const juce::MouseEvent& e)
 {
-    if (module().type == ModuleType::Plugin && ! e.mods.isPopupMenu() && onOpenPlugin)
+    if (e.mods.isPopupMenu()) return;
+    if (module().type == ModuleType::Plugin && onOpenPlugin)
         onOpenPlugin();
+    // Empty space on a built-in device opens its expanded view (the pads and the waveform keep their clicks)
+    else if (! isEndpoint() && ! isUtility() && onOpenExpanded
+             && ! ((module().type == ModuleType::Drums || module().type == ModuleType::Sampler) && extraArea.contains (e.getPosition())))
+        onOpenExpanded();
 }
 
 bool ModuleCard::isInterestedInFileDrag (const juce::StringArray& files)
@@ -1100,6 +1105,7 @@ void DevicePanel::rebuild()
         // A clicked card comes forward among the cards, but the cables and jacks stay on top of it
         card->onRaise = [this, card] { card->toFront (false); cables->toFront (false); };
         card->onOpenPlugin = [this, id = m.id] { openPluginEditor (ctx.selectedTrack, id); };
+        card->onOpenExpanded = [this, id = m.id] { if (onOpenExpanded) onOpenExpanded (ctx.selectedTrack, id); };
         card->onMoved = [this] { updateCanvasSize(); cables->repaint(); ctx.touched(); };
         card->onRemove = [this, id = m.id]
         {

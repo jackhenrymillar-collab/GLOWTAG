@@ -43,6 +43,14 @@ MainComponent::MainComponent()
     wall.onReleaseFocus = [this] { grabKeyboardFocus(); };
     wall.restoreState (settings->getValue ("deviceWall"));
 
+    // A device's expanded view covers the window until Esc
+    addChildComponent (expanded);
+    expanded.lookFromVar (juce::JSON::parse (settings->getValue ("expandedView")));
+    devices.onOpenExpanded = [this] (int track, int moduleId) { expanded.open (track, moduleId); };
+    expanded.onClose = [this] { devices.refresh(); grabKeyboardFocus(); };
+    expanded.onLookChanged = [this] { settings->setValue ("expandedView", juce::JSON::toString (expanded.lookToVar(), true)); };
+    expanded.onPatchChanged = [this] (int track) { engine.rebuildTrack (track); };
+
     // Look: theme colour, Rainbow and the vintage console come back as they were left
     Theme::get().setThemeIndex (settings->getIntValue ("theme", 0));
     Theme::get().setRainbow (settings->getBoolValue ("rainbow", false));
@@ -396,6 +404,35 @@ void MainComponent::timerCallback()
             engine.getNextAudioBlock (info);
         }
 
+    // GLOWTAG_SHOW_DEVICE=Synth (with the offline clock) opens that device's expanded view on start,
+    // and GLOWTAG_SNAPSHOT=file.png saves the window a moment later: for checking the walls headless.
+    if (offlineClock && statusCounter == 20)
+    {
+        const auto want = juce::SystemStats::getEnvironmentVariable ("GLOWTAG_SHOW_DEVICE", {});
+        for (int t = 0; want.isNotEmpty() && t < (int) project.tracks.size() && ! expanded.isOpen(); ++t)
+            for (auto& m : project.tracks[(size_t) t]->patch.modules)
+                if (moduleInfo (m.type).title.equalsIgnoreCase (want)) { expanded.open (t, m.id); break; }
+        for (int ti = 0; want.isNotEmpty() && ! expanded.isOpen() && ti <= (int) ModuleType::Slew; ++ti)
+            if (moduleInfo ((ModuleType) ti).title.equalsIgnoreCase (want))
+            {
+                const int track = ctx.selectedTrack;
+                const int id = project.slot (track).patch.add ((ModuleType) ti);
+                engine.rebuildTrack (track);
+                expanded.open (track, id);
+            }
+        if (expanded.isOpen()) { engine.midiInput.addMessageToQueue (juce::MidiMessage::noteOn (1, 48, 0.9f).withTimeStamp (juce::Time::getMillisecondCounterHiRes() * 0.001)); engine.play(); }
+    }
+    if (offlineClock && statusCounter == 50)
+        if (const auto shot = juce::SystemStats::getEnvironmentVariable ("GLOWTAG_SNAPSHOT", {}); shot.isNotEmpty())
+        {
+            juce::File f (shot);
+            f.deleteFile();
+            juce::FileOutputStream out (f);
+            juce::PNGImageFormat().writeImageToStream (createComponentSnapshot (getLocalBounds(), true, 1.0f), out);
+            out.flush();
+            juce::JUCEApplication::quit();
+        }
+
     topBar.tick();
     if (arranger.isVisible()) arranger.tick();
     if (trackList.isVisible()) trackList.tick();
@@ -467,6 +504,7 @@ void MainComponent::resized()
 {
     auto r = getLocalBounds();
     wall.setBounds (r);
+    expanded.setBounds (r);
     topBar.setBounds (r.removeFromTop (56));
     status.setBounds (r.removeFromBottom (26));
     browser.setBounds (r.removeFromLeft (260));

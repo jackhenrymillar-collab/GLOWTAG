@@ -47,6 +47,7 @@ public:
     bool restructure (const std::function<bool()>& edit);
     void setKnob (int track, int moduleId, int knob, float value);
     Node* liveNode (int track, int moduleId);          // for UI readouts; may be null
+    double getSampleRate() const { return sr; }
     std::shared_ptr<Graph> uiGraph (int track);        // keeps a graph (and its plugins) alive while an editor is open
     void capturePluginStates();                        // hosted plugins' state back into the project, before saving
 

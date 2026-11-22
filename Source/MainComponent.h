@@ -16,6 +16,7 @@
 #include "UI/MixerView.h"
 #include "UI/EditorView.h"
 #include "UI/DeviceWall.h"
+#include "UI/ExpandedDevice.h"
 
 // The whole window: owns the project, the audio engine and every view.
 // Also the application's menu bar model (File / View / Transport) on the Mac.
@@ -98,6 +99,7 @@ private:
     EditorView editor { ctx };
     StatusBar status;
     DeviceWall wall;                            // hold Tab: every device as neon on a brick wall
+    ExpandedDevice expanded { ctx };            // double-click a device: its controls as a neon wall
 
     Mode mode = Mode::Arrange;
     bool rackShown = false;

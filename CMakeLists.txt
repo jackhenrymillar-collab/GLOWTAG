@@ -52,7 +52,11 @@ target_sources(Glowtag PRIVATE
     Source/UI/EditorView.cpp
     Source/UI/DeviceWallModel.cpp
     Source/UI/DeviceWallArt.cpp
-    Source/UI/DeviceWall.cpp)
+    Source/UI/DeviceWall.cpp
+    Source/UI/NeonKit.cpp
+    Source/UI/DeviceViews.cpp
+    Source/UI/DeviceViewsFx.cpp
+    Source/UI/ExpandedDevice.cpp)
 
 # Lettering for the device wall (SIL Open Font License, see Source/Fonts)
 juce_add_binary_data(GlowtagFonts SOURCES
