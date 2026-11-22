@@ -37,9 +37,19 @@ namespace Neon
         // Turns what was collected into blurred light, ready for draw(). `unit` is view pixels per wall unit.
         void build (int width, int height, float unit);
         void draw (juce::Graphics&, juce::Rectangle<float> area) const;
+        float bloomAmount = 0.55f;          // small things (a button) keep the wide bloom faint
     private:
         juce::Image halo, bloom;
     };
+
+    // Paints `draw` with its glow, all at once: a first pass only collects the lit shapes (nothing is
+    // drawn), they are blurred, laid down, and then the real pass draws the glass over them. For the
+    // app's ordinary components; `unit` sets how far the light spreads.
+    void paintLit (juce::Graphics&, int width, int height, GlowLayer&, float unit, const std::function<void (juce::Graphics&, bool real)>& draw);
+    GlowLayer& scratchGlow();               // a shared layer for one-off paints (buttons)
+
+    // A word that is a button: lit glass when on, grey glass when off, a little light under the pointer
+    void wordButton (juce::Graphics&, const juce::String&, juce::Rectangle<float> box, float size, juce::Colour, bool on, bool over, juce::Justification = juce::Justification::centred);
 
     inline juce::Colour mix (juce::Colour a, juce::Colour b, float t) { return a.interpolatedWith (b, juce::jlimit (0.0f, 1.0f, t)); }
     inline juce::Colour rgba (juce::Colour c, float a) { return c.withAlpha (juce::jlimit (0.0f, 1.0f, a)); }
@@ -176,6 +186,7 @@ namespace Neon
         std::vector<std::unique_ptr<Group>> groups;
         std::vector<Wire> wires;
         std::function<const juce::Colour* (int mod)> colours;   // three colours for a group
+        float labelSize = 17.0f;                                  // fader labels (the rack cards use smaller ones)
 
         Group& add (int mod, float x, float y, float rotDegrees, float poolX, float poolY, float poolR);
 

@@ -1,5 +1,6 @@
 #include "GlowLookAndFeel.h"
 #include "Icons.h"
+#include "NeonKit.h"
 #include "../Theme.h"
 
 // A component can carry a "pal" property (a Pal index) so its accent follows the theme live.
@@ -35,36 +36,25 @@ void GlowLookAndFeel::refreshColours()
     setColour (juce::ScrollBar::trackColourId, juce::Colours::transparentBlack);
 }
 
-void GlowLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&,
-                                            bool highlighted, bool down)
+// Buttons are sign words: lit glass when on, grey glass when off, a little light under the pointer.
+// No pill, no outline, the same as every control on the device walls.
+void GlowLookAndFeel::drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&, bool, bool)
 {
-    auto& th = Theme::get();
-    auto r = b.getLocalBounds().toFloat().reduced (0.5f);
-    const float radius = r.getHeight() * 0.5f;
-    const auto accent = accentFor (b, juce::TextButton::buttonOnColourId);
-
-    if (b.getToggleState())
-    {
-        g.setColour (accent.withAlpha (0.14f));
-        g.fillRoundedRectangle (r, radius);
-        g.setColour (accent);
-        g.drawRoundedRectangle (r, radius, 1.0f);
-    }
-    else
-    {
-        g.setColour (highlighted || down ? th.panel2.brighter (0.08f) : juce::Colours::transparentBlack);
-        g.fillRoundedRectangle (r, radius);
-        g.setColour (th.line);
-        g.drawRoundedRectangle (r, radius, 1.0f);
-    }
 }
 
-void GlowLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b, bool, bool)
+void GlowLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b, bool highlighted, bool down)
 {
     auto& th = Theme::get();
-    g.setColour (b.getToggleState() ? th.text : th.muted);
-    Glow::drawSpacedText (g, b.getButtonText().toUpperCase(), b.getLocalBounds().toFloat(),
-                          th.label (10.5f), 1.4f, juce::Justification::centred);
+    const auto accent = b.getProperties().contains ("pal") ? th.pal ((int) b.getProperties()["pal"]) : th.themeColour();
+    const auto r = b.getLocalBounds().toFloat();
+    const float size = b.getProperties().contains ("wordSize") ? (float) b.getProperties()["wordSize"]
+                                                                : juce::jlimit (12.0f, 20.0f, r.getHeight() * 0.62f);
+    const bool on = b.getToggleState() || (bool) b.getProperties()["alwaysLit"];
+    const auto text = b.getButtonText().toLowerCase();
+    Neon::paintLit (g, b.getWidth(), b.getHeight(), Neon::scratchGlow(), 0.6f, [&] (juce::Graphics& gg, bool)
+    {
+        Neon::wordButton (gg, text, r, size, accent, on, highlighted || down);
+    });
 }
 
 void GlowLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,

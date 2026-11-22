@@ -95,7 +95,8 @@ void EditorView::resized()
     tools.removeFromLeft (220);
     for (auto* b : { &pencil, &cursor, &scissors, &velocity })
     {
-        b->setBounds (tools.removeFromLeft (44));
+        b->wordSize = 20.0f;
+        b->setBounds (tools.removeFromLeft (juce::roundToInt (Neon::textWidth (b->getName().toLowerCase(), 20.0f)) + 12));
         tools.removeFromLeft (6);
     }
     tools.removeFromLeft (10);
@@ -352,11 +353,12 @@ void EditorView::paint (juce::Graphics& g)
     g.setColour (th.line2);
     g.drawHorizontalLine (toolbar.getBottom() - 1, 0.0f, (float) getWidth());
     auto title = toolbar.reduced (14, 0).toFloat();
-    g.setColour (c);
-    Glow::drawSpacedText (g, t.name.toUpperCase(), title, th.heading (14.0f), 2.5f, juce::Justification::centredLeft);
-    g.setColour (th.muted);
-    Glow::drawSpacedText (g, clip != nullptr ? clip->name.toUpperCase() : juce::String ("NO CLIP SELECTED"), title, th.label (8.5f), 1.5f,
-                          juce::Justification::centredRight);
+    Neon::paintLit (g, getWidth(), toolbar.getBottom(), Neon::scratchGlow(), 0.7f, [&] (juce::Graphics& gg, bool)
+    {
+        Neon::text (gg, t.name.toLowerCase(), title.getX(), title.getCentreY() + 7.0f, 21.0f, c, 0.9f);
+        Neon::label (gg, clip != nullptr ? clip->name.toLowerCase() : juce::String ("no clip selected"), title.getRight(), title.getCentreY() + 4.0f,
+                     Neon::Align::right, juce::Colour (0xff6d7077), 12.0f);
+    });
 
     if (clip == nullptr)
     {

@@ -128,61 +128,61 @@ const ModuleInfo& moduleInfo (ModuleType t)
     // Fields: title, colour, audio in, audio out, mod out, knobs, width, notes in, notes out, signal ins, utility
     static const ModuleInfo input      { "Track In",   1, false, true,  false, {}, 74.0f, false, true };
     static const ModuleInfo output     { "Out",        1, true,  false, false, {}, 74.0f };
-    static const ModuleInfo sampler = withExtras ({ "Sampler",    0, false, true,  false, { { "Start", 0.0f }, { "Length", 1.0f }, { "Pitch", 0.5f }, { "Attack", 0.0f }, { "Release", 0.3f }, { "Gain", 0.8f } }, 300.0f, true },
+    static const ModuleInfo sampler = withExtras ({ "Sampler",    0, false, true,  false, { { "Start", 0.0f }, { "Length", 1.0f }, { "Pitch", 0.5f }, { "Attack", 0.0f }, { "Release", 0.3f }, { "Gain", 0.8f } }, 440.0f, true },
                                                   samplerExtras());
     static const ModuleInfo synth = withExtras ({ "Synth",      4, false, true,  false, { { "Wave", 0.0f }, { "Sub", 0.3f }, { "Detune", 0.15f }, { "Cutoff", 0.6f }, { "Res", 0.25f }, { "Env", 0.4f },
-                                                                                          { "Attack", 0.02f }, { "Decay", 0.3f }, { "Sustain", 0.6f }, { "Release", 0.3f }, { "Drive", 0.2f }, { "Gain", 0.7f } }, 330.0f, true },
+                                                                                          { "Attack", 0.02f }, { "Decay", 0.3f }, { "Sustain", 0.6f }, { "Release", 0.3f }, { "Drive", 0.2f }, { "Gain", 0.7f } }, 480.0f, true },
                                                 synthExtras());
-    static const ModuleInfo drums = withExtras ({ "Drum Rack",  6, false, true,  false, { { "Tune", 0.5f }, { "Decay", 0.7f }, { "Snap", 0.3f }, { "Gain", 0.8f } }, 300.0f, true },
+    static const ModuleInfo drums = withExtras ({ "Drum Rack",  6, false, true,  false, { { "Tune", 0.5f }, { "Decay", 0.7f }, { "Snap", 0.3f }, { "Gain", 0.8f } }, 420.0f, true },
                                                 drumExtras());
-    static const ModuleInfo filter = withExtras ({ "Filter",     2, true,  true,  false, { { "Cutoff", 0.65f }, { "Res", 0.3f }, { "Drive", 0.2f }, { "Mode", 0.0f } }, 200.0f },
+    static const ModuleInfo filter = withExtras ({ "Filter",     2, true,  true,  false, { { "Cutoff", 0.65f }, { "Res", 0.3f }, { "Drive", 0.2f }, { "Mode", 0.0f } }, 320.0f },
                                                  { { "Mix", 1.0f, 1.0f }, { "Follow", 0.0f, 0.0f }, { "Wobble", 0.0f, 0.0f }, { "Wobble Rate", 0.3f, 0.3f },
                                                    { "Vowel", 0.0f, 0.0f }, { "Slope", 0.0f, 0.0f }, { "Wobble In Time", 0.0f, 0.0f } });
-    static const ModuleInfo drive = withExtras ({ "Drive",      6, true,  true,  false, { { "Drive", 0.4f }, { "Tone", 0.6f }, { "Mix", 0.8f }, { "Type", 0.0f } }, 200.0f },
+    static const ModuleInfo drive = withExtras ({ "Drive",      6, true,  true,  false, { { "Drive", 0.4f }, { "Tone", 0.6f }, { "Mix", 0.8f }, { "Type", 0.0f } }, 300.0f },
                                                 { { "Bias", 0.5f, 0.5f }, { "Output", 0.7f, 0.7f }, { "Sag", 0.0f, 0.0f }, { "Oversample", 1.0f, 0.0f } });
-    static const ModuleInfo delay = withExtras ({ "Delay",      5, true,  true,  false, { { "Time", 0.5f }, { "Feedback", 0.4f }, { "Tone", 0.5f }, { "Mix", 0.25f } }, 200.0f },
+    static const ModuleInfo delay = withExtras ({ "Delay",      5, true,  true,  false, { { "Time", 0.5f }, { "Feedback", 0.4f }, { "Tone", 0.5f }, { "Mix", 0.25f } }, 330.0f },
                                                 { { "Flutter", 0.15f, 0.0f }, { "Duck", 0.0f, 0.0f }, { "Spread", 0.5f, 1.0f }, { "Ping Pong", 1.0f, 1.0f },
                                                   { "Freeze", 0.0f, 0.0f }, { "Tempo Sync", 1.0f, 1.0f } });
-    static const ModuleInfo reverb = withExtras ({ "Reverb",     7, true,  true,  false, { { "Size", 0.6f }, { "Damp", 0.4f }, { "Width", 0.8f }, { "Mix", 0.3f } }, 200.0f },
+    static const ModuleInfo reverb = withExtras ({ "Reverb",     7, true,  true,  false, { { "Size", 0.6f }, { "Damp", 0.4f }, { "Width", 0.8f }, { "Mix", 0.3f } }, 310.0f },
                                                  { { "Pre-delay", 0.1f, 0.0f }, { "Low Cut", 0.0f, 0.0f }, { "Shimmer", 0.0f, 0.0f }, { "Drift", 0.2f, 0.0f },
                                                    { "Space", 1.0f, 1.0f }, { "Freeze", 0.0f, 0.0f }, { "Gated", 0.0f, 0.0f } });
-    static const ModuleInfo eq = withExtras ({ "EQ",         3, true,  true,  false, { { "Low", 0.0f }, { "Mid", 0.0f }, { "High", 0.0f }, { "Output", 0.7f } }, 200.0f },
+    static const ModuleInfo eq = withExtras ({ "EQ",         3, true,  true,  false, { { "Low", 0.0f }, { "Mid", 0.0f }, { "High", 0.0f }, { "Output", 0.7f } }, 350.0f },
                                              eqExtras());
-    static const ModuleInfo compressor = withExtras ({ "Compressor", 1, true,  true,  false, { { "Thresh", 0.5f }, { "Ratio", 0.4f }, { "Attack", 0.2f }, { "Release", 0.4f }, { "Makeup", 0.3f } }, 240.0f },
+    static const ModuleInfo compressor = withExtras ({ "Compressor", 1, true,  true,  false, { { "Thresh", 0.5f }, { "Ratio", 0.4f }, { "Attack", 0.2f }, { "Release", 0.4f }, { "Makeup", 0.3f } }, 350.0f },
                                                      { { "Knee", 0.25f, 0.25f }, { "Mix", 1.0f, 1.0f }, { "Sidechain Cut", 0.0f, 0.0f }, { "Auto Makeup", 0.0f, 0.0f },
                                                        { "Character", 0.0f, 0.0f }, { "Listens To", 0.0f, 0.0f } });
-    static const ModuleInfo lfo = withExtras ({ "LFO",        4, false, false, true,  { { "Rate", 0.4f }, { "Depth", 0.6f }, { "Shape", 0.0f } }, 170.0f },
+    static const ModuleInfo lfo = withExtras ({ "LFO",        4, false, false, true,  { { "Rate", 0.4f }, { "Depth", 0.6f }, { "Shape", 0.0f } }, 310.0f },
                                               { { "Phase", 0.0f, 0.0f }, { "Smooth", 0.0f, 0.0f }, { "Fade In", 0.0f, 0.0f }, { "Chaos", 0.0f, 0.0f },
                                                 { "Sync", 0.0f, 0.0f }, { "Polarity", 0.0f, 0.0f }, { "Restart On Note", 0.0f, 0.0f } });
     // The workshop devices
-    static const ModuleInfo gasTube = withExtras ({ "Gas Tube",   6, false, true,  false, { { "Voltage", 0.3f }, { "Strike", 0.12f }, { "Body", 0.45f }, { "Glow", 0.7f }, { "Fade", 0.38f }, { "Gain", 0.7f } }, 240.0f, true },
+    static const ModuleInfo gasTube = withExtras ({ "Gas Tube",   6, false, true,  false, { { "Voltage", 0.3f }, { "Strike", 0.12f }, { "Body", 0.45f }, { "Glow", 0.7f }, { "Fade", 0.38f }, { "Gain", 0.7f } }, 400.0f, true },
                                                   { { "Pressure", 0.55f, 0.55f }, { "Hum", 0.22f, 0.22f }, { "Crackle", 0.18f, 0.18f }, { "Length", 0.5f, 0.5f },
                                                     { "Warm-up", 0.3f, 0.3f }, { "Gas", 0.0f, 0.0f }, { "Mains", 0.0f, 0.0f } });
-    static const ModuleInfo crate = withExtras ({ "Crate Digger", 0, false, true, false, { { "Wear", 0.35f }, { "Dust", 0.3f }, { "Wow", 0.18f }, { "Pitch", 0.5f }, { "Chop", 0.5f }, { "Gain", 0.75f } }, 240.0f, true },
+    static const ModuleInfo crate = withExtras ({ "Crate Digger", 0, false, true, false, { { "Wear", 0.35f }, { "Dust", 0.3f }, { "Wow", 0.18f }, { "Pitch", 0.5f }, { "Chop", 0.5f }, { "Gain", 0.75f } }, 400.0f, true },
                                                 crateExtras());
-    static const ModuleInfo strings = withExtras ({ "String Wall", 7, false, true,  false, { { "Tone", 0.55f }, { "Sustain", 0.6f }, { "Pick", 0.3f }, { "Body", 0.5f }, { "Sympathy", 0.35f }, { "Bar", 0.42f }, { "Gain", 0.75f } }, 270.0f, true },
+    static const ModuleInfo strings = withExtras ({ "String Wall", 7, false, true,  false, { { "Tone", 0.55f }, { "Sustain", 0.6f }, { "Pick", 0.3f }, { "Body", 0.5f }, { "Sympathy", 0.35f }, { "Bar", 0.42f }, { "Gain", 0.75f } }, 430.0f, true },
                                                   { { "Bow Pressure", 0.5f, 0.5f }, { "Slide Bar", 0.0f, 0.0f }, { "Pedal A", 0.0f, 0.0f }, { "Pedal B", 0.0f, 0.0f },
                                                     { "Mode", 0.0f, 0.0f }, { "Material", 1.0f, 1.0f }, { "Tuning", 0.0f, 0.0f } });
-    static const ModuleInfo ghost = withExtras ({ "Ghost Tag",  4, true,  true,  false, { { "Time", 0.55f }, { "Fade", 0.6f }, { "Wash", 0.45f }, { "Mix", 0.45f } }, 200.0f },
+    static const ModuleInfo ghost = withExtras ({ "Ghost Tag",  4, true,  true,  false, { { "Time", 0.55f }, { "Fade", 0.6f }, { "Wash", 0.45f }, { "Mix", 0.45f } }, 320.0f },
                                                 { { "Drift", 0.3f, 0.3f }, { "Blur", 0.25f, 0.25f }, { "Hold", 0.0f, 0.0f }, { "Hold As", 0.0f, 0.0f },
                                                   { "Hold From", 2.0f, 2.0f }, { "Hold To", 4.0f, 4.0f } });
-    static const ModuleInfo crowd = withExtras ({ "Crowd",      3, true,  true,  false, { { "Size", 0.6f }, { "Spread", 0.55f }, { "Timing", 0.35f }, { "Mix", 0.6f } }, 200.0f },
+    static const ModuleInfo crowd = withExtras ({ "Crowd",      3, true,  true,  false, { { "Size", 0.6f }, { "Spread", 0.55f }, { "Timing", 0.35f }, { "Mix", 0.6f } }, 320.0f },
                                                 crowdExtras());
     static const ModuleInfo transformer = withExtras ({ "Transformer", 1, true, true, false, { { "Battery", 0.75f }, { "Cap", 0.5f }, { "Pot", 0.45f }, { "Diode", 0.5f }, { "Sag", 0.55f },
-                                                                                              { "Clock", 0.4f }, { "Joint", 0.4f }, { "Hum", 0.35f }, { "Mix", 1.0f }, { "Output", 0.7f } }, 300.0f },
+                                                                                              { "Clock", 0.4f }, { "Joint", 0.4f }, { "Hum", 0.35f }, { "Mix", 1.0f }, { "Output", 0.7f } }, 430.0f },
                                                       { { "Dying Cap On", 1.0f, 1.0f }, { "Scratchy Pot On", 1.0f, 1.0f }, { "Leaky Diode On", 0.0f, 0.0f },
                                                         { "Sagging Supply On", 1.0f, 1.0f }, { "Bent Clock On", 0.0f, 0.0f }, { "Cold Joint On", 0.0f, 0.0f },
                                                         { "Hot Hum On", 0.0f, 0.0f } });
 
     // A plugin may be an instrument or an effect, so it has both a notes and an audio input
-    static const ModuleInfo plugin     { "Plugin",     5, true,  true,  false, { { "Mix", 1.0f }, { "Gain", 0.7f } }, 240.0f, true };
+    static const ModuleInfo plugin     { "Plugin",     5, true,  true,  false, { { "Mix", 1.0f }, { "Gain", 0.7f } }, 260.0f, true };
 
     // Utilities: small signal tools for the second row. They work on sound or on modulation.
-    static const ModuleInfo attenuator { "Atten",      3, false, false, false, { { "Level", 1.0f } }, 92.0f, false, false, 1, true };
-    static const ModuleInfo mixer      { "Mixer",      2, false, false, false, { { "1", 1.0f }, { "2", 1.0f }, { "3", 1.0f }, { "4", 1.0f } }, 204.0f, false, false, 4, true };
-    static const ModuleInfo inverter   { "Invert",     0, false, false, false, {}, 84.0f, false, false, 1, true };
-    static const ModuleInfo crossfade  { "X-Fade",     4, false, false, false, { { "Mix", 0.5f } }, 100.0f, false, false, 2, true };
-    static const ModuleInfo slew       { "Slew",       7, false, false, false, { { "Time", 0.3f } }, 92.0f, false, false, 1, true };
+    static const ModuleInfo attenuator { "Atten",      3, false, false, false, { { "Level", 1.0f } }, 120.0f, false, false, 1, true };
+    static const ModuleInfo mixer      { "Mixer",      2, false, false, false, { { "1", 1.0f }, { "2", 1.0f }, { "3", 1.0f }, { "4", 1.0f } }, 290.0f, false, false, 4, true };
+    static const ModuleInfo inverter   { "Invert",     0, false, false, false, {}, 110.0f, false, false, 1, true };
+    static const ModuleInfo crossfade  { "X-Fade",     4, false, false, false, { { "Mix", 0.5f } }, 130.0f, false, false, 2, true };
+    static const ModuleInfo slew       { "Slew",       7, false, false, false, { { "Time", 0.3f } }, 120.0f, false, false, 1, true };
 
     switch (t)
     {

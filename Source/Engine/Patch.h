@@ -102,9 +102,9 @@ public:
     std::vector<Cable> cables;
 
     static constexpr int inputId = 1, outputId = 2;
-    static constexpr float cardHeight = 172.0f, gap = 34.0f, top = 14.0f;
-    // Utilities sit on a second row under the devices, half as tall
-    static constexpr float utilityHeight = cardHeight * 0.5f, utilityTop = top + cardHeight + 22.0f, utilityGap = 16.0f;
+    static constexpr float cardHeight = 250.0f, gap = 34.0f, top = 14.0f;
+    // Utilities sit on a second row under the devices, much shorter
+    static constexpr float utilityHeight = 100.0f, utilityTop = top + cardHeight + 22.0f, utilityGap = 16.0f;
     static constexpr float rowsBottom = utilityTop + utilityHeight;
     static float rowY (ModuleType t)      { return moduleInfo (t).utility ? utilityTop : top; }
     static float heightOf (ModuleType t)  { return moduleInfo (t).utility ? utilityHeight : cardHeight; }

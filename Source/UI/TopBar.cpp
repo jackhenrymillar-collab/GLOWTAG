@@ -30,6 +30,11 @@ TopBar::TopBar (AppContext& c) : ctx (c)
     metroButton.onClick = [this] { ctx.engine.metronome = metroButton.getToggleState(); };
     for (auto* b : { &playButton, &stopButton, &recButton, &loopButton, &metroButton })
         addAndMakeVisible (*b);
+    playButton.wordSize = stopButton.wordSize = recButton.wordSize = 28.0f;
+    loopButton.wordSize = metroButton.wordSize = 19.0f;
+    for (auto& b : modeButtons) b.getProperties().set ("wordSize", 20.0f);
+    rainbowButton.getProperties().set ("wordSize", 18.0f);
+    commandButton.getProperties().set ("wordSize", 18.0f);
 
     rainbowButton.setClickingTogglesState (true);
     rainbowButton.getProperties().set ("pal", (int) Pal::Gold);
@@ -68,33 +73,32 @@ juce::Rectangle<float> TopBar::swatchBounds (int index) const
 
 void TopBar::resized()
 {
-    auto r = getLocalBounds().reduced (14, 10);
+    auto r = getLocalBounds().reduced (14, 6);
 
-    logoArea = r.removeFromLeft (200);
-    r.removeFromLeft (8);
-    for (auto& b : modeButtons)
-    {
-        b.setBounds (r.removeFromLeft (84).reduced (2, 2));
-    }
+    logoArea = r.removeFromLeft (170);
+    r.removeFromLeft (6);
+    const int modeW[] = { 92, 52, 54 };
+    for (int i = 0; i < 3; ++i)
+        modeButtons[i].setBounds (r.removeFromLeft (modeW[i]));
 
-    commandButton.setBounds (r.removeFromRight (64).reduced (2));
-    r.removeFromRight (8);
-    rainbowButton.setBounds (r.removeFromRight (92).reduced (2));
+    commandButton.setBounds (r.removeFromRight (66));
+    r.removeFromRight (6);
+    rainbowButton.setBounds (r.removeFromRight (84));
     r.removeFromRight (6);
     swatchArea = r.removeFromRight (Theme::get().choices().size() * 22);
 
-    // Transport and LCD sit together in the middle
-    const int transportW = 3 * 50 + 12 + 340 + 12 + 2 * 46;
+    // Transport words and the readouts sit together in the middle
+    const int transportW = 72 + 76 + 58 + 22 + 380 + 16 + 56 + 62;
     auto mid = r.withSizeKeepingCentre (juce::jmin (transportW, r.getWidth()), r.getHeight());
-    playButton.setBounds (mid.removeFromLeft (50).reduced (3, 0));
-    stopButton.setBounds (mid.removeFromLeft (50).reduced (3, 0));
-    recButton.setBounds (mid.removeFromLeft (50).reduced (3, 0));
-    mid.removeFromLeft (12);
-    metroButton.setBounds (mid.removeFromRight (46).reduced (3, 2));
-    loopButton.setBounds (mid.removeFromRight (46).reduced (3, 2));
-    mid.removeFromRight (12);
+    playButton.setBounds (mid.removeFromLeft (72));
+    stopButton.setBounds (mid.removeFromLeft (76));
+    recButton.setBounds (mid.removeFromLeft (58));
+    mid.removeFromLeft (22);
+    metroButton.setBounds (mid.removeFromRight (62));
+    loopButton.setBounds (mid.removeFromRight (56));
+    mid.removeFromRight (16);
     lcdArea = mid;
-    tempoArea = lcdArea.withWidth (100);
+    tempoArea = lcdArea.withWidth (90);
 }
 
 void TopBar::paint (juce::Graphics& g)
@@ -104,74 +108,44 @@ void TopBar::paint (juce::Graphics& g)
     g.setColour (th.line2);
     g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
 
-    // Logo: serif caps with a soft neon halo that breathes with the kick
+    const auto c = th.themeColour();
+    const double beats = ctx.playheadBeats();
+    const int bar = (int) (beats / beatsPerBar) + 1;
+    const int beat = (int) std::fmod (beats, beatsPerBar) + 1;
+    const int sixteenth = (int) std::fmod (beats * 4.0, 4.0) + 1;
+    const double secs = beats * 60.0 / ctx.project.bpm.load();
+    struct Cell { juce::String value, caption; float width; };
+    const Cell cells[] = {
+        { juce::String (ctx.project.bpm.load(), 1), "bpm", 90.0f },
+        { "4/4", "sig", 60.0f },
+        { juce::String (bar).paddedLeft ('0', 3) + "." + juce::String (beat) + "." + juce::String (sixteenth), "bar", 112.0f },
+        { juce::String ((int) secs / 60).paddedLeft ('0', 2) + ":" + juce::String (std::fmod (secs, 60.0), 2).paddedLeft ('0', 5), "time", 110.0f },
+    };
+
+    Neon::paintLit (g, getWidth(), getHeight(), glowLayer, 0.8f, [&] (juce::Graphics& gg, bool)
     {
-        const auto c = th.pal (Pal::Green);
-        const float pulse = ctx.engine.getPulse();
-        auto font = th.heading (22.0f);
-        auto lr = logoArea.toFloat();
-        g.setColour (c.withAlpha (0.18f + 0.25f * pulse));
-        Glow::drawSpacedText (g, "GLOWTAG", lr.translated (0.0f, 1.0f), font, 4.0f, juce::Justification::centredLeft);
-        g.setColour (c);
-        Glow::drawSpacedText (g, "GLOWTAG", lr, font, 4.0f, juce::Justification::centredLeft);
-    }
+        // The logo, a lit tag in the theme colour
+        Neon::text (gg, "glowtag", (float) logoArea.getX() + 4.0f, (float) logoArea.getCentreY() + 10.0f, 32.0f, c, 1.0f);
 
-    // LCD
-    {
-        auto r = lcdArea.toFloat();
-        g.setColour (th.display);
-        g.fillRoundedRectangle (r, 8.0f);
-        g.setColour (th.line);
-        g.drawRoundedRectangle (r.reduced (0.5f), 8.0f, 1.0f);
-
-        const auto c = th.pal (Pal::Green);
-        const double beats = ctx.playheadBeats();
-        const int bar = (int) (beats / beatsPerBar) + 1;
-        const int beat = (int) std::fmod (beats, beatsPerBar) + 1;
-        const int sixteenth = (int) std::fmod (beats * 4.0, 4.0) + 1;
-        const double secs = beats * 60.0 / ctx.project.bpm.load();
-
-        struct Cell { juce::String value, caption; };
-        const Cell cells[] = {
-            { juce::String (ctx.project.bpm.load(), 1), "BPM" },
-            { "4/4", "SIG" },
-            { juce::String (bar).paddedLeft ('0', 3) + "." + juce::String (beat) + "." + juce::String (sixteenth), "BAR" },
-            { juce::String ((int) secs / 60).paddedLeft ('0', 2) + ":" + juce::String (std::fmod (secs, 60.0), 2).paddedLeft ('0', 5), "TIME" },
-        };
-        const float widths[] = { 100.0f, 60.0f, 100.0f, 80.0f };
-
-        float x = r.getX();
-        for (int i = 0; i < 4; ++i)
+        // The readouts: numbers in neon, a small word under each
+        float x = (float) lcdArea.getX();
+        const float base = (float) lcdArea.getCentreY() + 4.0f;
+        for (auto& cell : cells)
         {
-            auto cell = juce::Rectangle<float> (x, r.getY(), widths[i], r.getHeight());
-            if (i > 0)
-            {
-                g.setColour (th.line2);
-                g.drawVerticalLine ((int) x, r.getY() + 7.0f, r.getBottom() - 7.0f);
-            }
-            g.setColour (i == 0 || i == 2 ? c : th.text);
-            g.setFont (th.label (15.0f));
-            g.drawText (cells[i].value, cell.withTrimmedBottom (10.0f).toNearestInt(), juce::Justification::centred);
-            g.setColour (th.muted);
-            Glow::drawSpacedText (g, cells[i].caption, cell.withTrimmedTop (cell.getHeight() - 14.0f).translated (0.0f, -3.0f),
-                                  th.label (7.5f), 1.5f, juce::Justification::centred);
-            x += widths[i];
+            Neon::text (gg, cell.value, x, base, 21.0f, c, 0.8f);
+            Neon::label (gg, cell.caption, x + 1.0f, base + 13.0f, Neon::Align::left, juce::Colour (0xff6d7077), 11.0f);
+            x += cell.width;
         }
-    }
 
-    // Theme swatches
-    const auto& choices = th.choices();
-    for (int i = 0; i < choices.size(); ++i)
-    {
-        auto s = swatchBounds (i);
-        g.setColour (choices[i].colour.withAlpha (0.85f));
-        g.fillEllipse (s.reduced (3.0f));
-        if (! th.isRainbow() && i == th.getThemeIndex())
+        // Theme colours as bulbs; the chosen one lit
+        const auto& choices = th.choices();
+        for (int i = 0; i < choices.size(); ++i)
         {
-            g.setColour (choices[i].colour);
-            g.drawEllipse (s.expanded (1.5f), 1.2f);
+            auto s = swatchBounds (i);
+            const bool on = ! th.isRainbow() && i == th.getThemeIndex();
+            Neon::bulb (gg, s.getCentreX(), s.getCentreY(), choices[i].colour, on ? 1.0f : 0.3f, on ? 6.0f : 4.6f);
         }
-    }
+    });
 }
 
 void TopBar::mouseDown (const juce::MouseEvent& e)

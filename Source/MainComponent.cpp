@@ -420,6 +420,27 @@ void MainComponent::timerCallback()
                 engine.rebuildTrack (track);
                 expanded.open (track, id);
             }
+        // GLOWTAG_MODE=1 or 2 shows the mixer or the editor
+        if (const auto modeVar = juce::SystemStats::getEnvironmentVariable ("GLOWTAG_MODE", {}); modeVar.isNotEmpty())
+            setMode ((Mode) juce::jlimit (0, 2, modeVar.getIntValue()));
+        // GLOWTAG_CARDS="Gas Tube,Crowd" swaps the selected track's devices for those, to check the cards
+        const auto cards = juce::StringArray::fromTokens (juce::SystemStats::getEnvironmentVariable ("GLOWTAG_CARDS", {}), ",", {});
+        if (! cards.isEmpty())
+        {
+            auto& patch = project.slot (ctx.selectedTrack).patch;
+            for (int i = (int) patch.modules.size(); --i >= 0;)
+                if (patch.modules[(size_t) i].id != Patch::inputId && patch.modules[(size_t) i].id != Patch::outputId)
+                    patch.remove (patch.modules[(size_t) i].id);
+            for (auto& name : cards)
+                for (int ti = 0; ti < numModuleTypes; ++ti)
+                    if (moduleInfo ((ModuleType) ti).title.equalsIgnoreCase (name.trim()))
+                        patch.add ((ModuleType) ti);
+            patch.tidy();
+            engine.rebuildTrack (ctx.selectedTrack);
+            devices.refresh();
+            engine.midiInput.addMessageToQueue (juce::MidiMessage::noteOn (1, 48, 0.9f).withTimeStamp (juce::Time::getMillisecondCounterHiRes() * 0.001));
+            engine.play();
+        }
         if (expanded.isOpen()) { engine.midiInput.addMessageToQueue (juce::MidiMessage::noteOn (1, 48, 0.9f).withTimeStamp (juce::Time::getMillisecondCounterHiRes() * 0.001)); engine.play(); }
     }
     if (offlineClock && statusCounter == 50)

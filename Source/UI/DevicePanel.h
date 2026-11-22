@@ -2,6 +2,7 @@
 
 #include "AppContext.h"
 #include "Widgets.h"
+#include "DeviceCards.h"
 #include <juce_gui_extra/juce_gui_extra.h>
 
 // A hosted plugin's own window. It keeps the graph that owns the plugin alive until it closes.
@@ -19,8 +20,9 @@ private:
     std::shared_ptr<Graph> graph;
 };
 
-// One module on the patch canvas: a framed card with an icon, title, numeral, knobs and jacks.
-// Drag the header to move it; right-click it to remove it.
+// One module on the patch canvas: a neon card with its small art piece, its name in lit lettering,
+// and sign words and tube faders (each fader's modulation jack sits at its left end). Drag empty
+// space to move it; right-click it to remove it; double-click empty space for the expanded view.
 class ModuleCard : public juce::Component, public juce::FileDragAndDropTarget
 {
 public:
@@ -41,11 +43,13 @@ public:
 
     void tick();
     void paint (juce::Graphics&) override;
-    void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
     bool isInterestedInFileDrag (const juce::StringArray&) override;
     void filesDropped (const juce::StringArray&, int, int) override;
@@ -59,22 +63,19 @@ private:
     int trackIndex;
     int moduleId;
     int numeral;
-    juce::OwnedArray<juce::Slider> sliders;
+    std::unique_ptr<DeviceCards::Card> card;
+    Neon::GlowLayer glowLayer;
     juce::Point<float> dragStart;
-    juce::Rectangle<int> extraArea;     // waveform (Sampler), pads (Drum Rack), scope (LFO), meter (Compressor)
-    bool dropHover = false;
-    int litPad = -1;
+    bool dropHover = false, onControl = false, moving = false;
     float shownDisplay = 0.0f;
+    double lastPaint = 0.0, lastReadout = -10.0;
 
-    int padAt (juce::Point<int>) const;
-    juce::Rectangle<float> padBounds (int pad) const;
     void showSampleMenu (std::function<void (const juce::String&)> choose);
-    void playPad (int pad);
+    void chooseSample();
 
     const Module& module() const { return *patch.find (moduleId); }
     bool isEndpoint() const;
     bool isUtility() const;
-    void paintUtility (juce::Graphics&);
 };
 
 // Transparent layer above the cards that draws the cables and jacks and handles patching:
@@ -116,6 +117,7 @@ private:
     JackRef jackAt (juce::Point<float>, float radius = 9.0f) const;
     int cableAt (juce::Point<float>) const;
     juce::Path cablePath (const Cable&) const;
+    bool skipsCard (float fromX, float toX) const;      // a card lies between these two points on the device row
     juce::Path cablePath (juce::Point<float> from, juce::Point<float> to, bool intoKnob) const;
     bool canConnect (JackRef a, JackRef b) const;
     juce::String describe (JackRef) const;
@@ -150,7 +152,7 @@ public:
     void refresh() { rebuild(); }       // the patch changed elsewhere (the expanded view): show it again
 
     // Height the panel wants in the window: the device row, the utility row and the header
-    static constexpr int preferredHeight = 362;
+    static constexpr int preferredHeight = 36 + (int) Patch::rowsBottom + 22 + 8 + 6;
 
 private:
     struct Canvas : public juce::Component
@@ -161,7 +163,7 @@ private:
     };
 
     AppContext& ctx;
-    juce::TextButton addButton { "+ Add module" }, tidyButton { "Tidy" }, fullButton { "Full screen" };
+    juce::TextButton addButton { "+ add" }, tidyButton { "tidy" }, fullButton { "full screen" };
     juce::Viewport viewport;
     juce::Component holder;               // what the viewport scrolls: the canvas, scaled up in full screen
     Canvas canvas;
@@ -171,6 +173,7 @@ private:
     juce::OwnedArray<ModuleCard> cards;
     std::unique_ptr<CableLayer> cables;
     juce::OwnedArray<PluginWindow> pluginWindows;
+    Neon::GlowLayer headGlow;
 
     void rebuild();
     void keepTrackSound();
