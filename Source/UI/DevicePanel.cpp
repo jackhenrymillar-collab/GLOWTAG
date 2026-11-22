@@ -20,12 +20,16 @@ namespace
             case ModuleType::Plugin:     return Icon::Plugin;
             case ModuleType::Input:      return Icon::Play;
             case ModuleType::Output:     return Icon::Velocity;
+            case ModuleType::Attenuator: case ModuleType::Mixer: case ModuleType::Inverter:
+            case ModuleType::Crossfade:  case ModuleType::Slew:
+                break;                   // utilities draw their own small glyph
         }
         return Icon::Filter;
     }
 
     constexpr float headerHeight = 44.0f;
     constexpr float jackY = 60.0f;
+    constexpr float notesJackDrop = 26.0f;      // a second jack on the same edge sits this far below the first
 
     bool hasExtra (ModuleType t) { return t == ModuleType::Sampler || t == ModuleType::Drums || t == ModuleType::LFO || t == ModuleType::Compressor || t == ModuleType::Plugin; }
     int extraWidth (ModuleType t) { return t == ModuleType::Sampler ? 96 : (t == ModuleType::Drums ? 104 : (t == ModuleType::Plugin ? 110 : 26)); }
@@ -46,7 +50,7 @@ ModuleCard::ModuleCard (AppContext& c, Patch& p, Track& t, int trackIdx, int id,
         s->setDoubleClickReturnValue (true, info.knobs[k].second);
         s->setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
         s->getProperties().set ("pal", info.pal);
-        s->setTooltip (name);
+        s->setTooltip (info.utility && module().type == ModuleType::Mixer ? "Level of input " + name : name);
         s->onValueChange = [this, k, s]
         {
             const float v = (float) s->getValue();
@@ -57,7 +61,7 @@ ModuleCard::ModuleCard (AppContext& c, Patch& p, Track& t, int trackIdx, int id,
         };
         addAndMakeVisible (s);
     }
-    setSize ((int) info.width, (int) Patch::cardHeight);
+    setSize ((int) info.width, (int) Patch::heightOf (module().type));
 }
 
 // Knob value as stored in the patch (for drawing the sampler window)
@@ -68,23 +72,35 @@ bool ModuleCard::isEndpoint() const
     return module().type == ModuleType::Input || module().type == ModuleType::Output;
 }
 
+bool ModuleCard::isUtility() const
+{
+    return moduleInfo (module().type).utility;
+}
+
 std::vector<int> ModuleCard::jacks() const
 {
-    const auto& info = moduleInfo (module().type);
-    std::vector<int> j;
-    if (info.hasAudioIn)  j.push_back (Port::audioIn);
-    if (info.hasAudioOut) j.push_back (Port::audioOut);
-    if (info.hasModOut)   j.push_back (Port::modOut);
-    for (int k = 0; k < (int) info.knobs.size(); ++k)
-        j.push_back (Port::modIn (k));
-    return j;
+    return moduleInfo (module().type).ports();
 }
 
 juce::Point<float> ModuleCard::jackPosition (int port) const
 {
-    const float w = (float) getWidth();
+    const float w = (float) getWidth(), h = (float) getHeight();
+    const auto& info = moduleInfo (module().type);
+    if (info.utility)
+    {
+        // Signal inputs down the left edge, the output half way down the right
+        if (port == Port::sigOut)
+            return { w, h * 0.5f };
+        if (Port::isSigIn (port))
+        {
+            const float spacing = info.sigIns > 2 ? 15.0f : 22.0f;
+            return { 0.0f, h * 0.5f + ((float) (port - Port::sigInBase) - (float) (info.sigIns - 1) * 0.5f) * spacing };
+        }
+    }
     if (port == Port::audioIn)  return { 0.0f, jackY };
+    if (port == Port::notesIn)  return { 0.0f, info.hasAudioIn ? jackY + notesJackDrop : jackY };
     if (port == Port::audioOut) return { w, jackY };
+    if (port == Port::notesOut) return { w, info.hasAudioOut ? jackY + notesJackDrop : jackY };
     if (port == Port::modOut)   return { w, jackY };
 
     // Modulation inputs sit just left of each knob's label
@@ -102,6 +118,16 @@ void ModuleCard::resized()
     const int n = sliders.size();
     if (n == 0)
         return;
+
+    if (isUtility())
+    {
+        // One row of small knobs under the title
+        auto u = getLocalBounds().reduced (14, 0).withTrimmedTop (24).withTrimmedBottom (18);
+        const int cell = u.getWidth() / n;
+        for (int i = 0; i < n; ++i)
+            sliders[i]->setBounds (juce::Rectangle<int> (u.getX() + i * cell, u.getY(), cell, u.getHeight()).withSizeKeepingCentre (32, 32));
+        return;
+    }
 
     auto r = getLocalBounds().reduced (10, 0).withTrimmedTop ((int) headerHeight).withTrimmedBottom (8);
     if (hasExtra (module().type))
@@ -123,8 +149,64 @@ void ModuleCard::resized()
     }
 }
 
+// A utility: half height, a small title, what it is working on, and a glyph or a row of small knobs
+void ModuleCard::paintUtility (juce::Graphics& g)
+{
+    auto& th = Theme::get();
+    const auto& info = moduleInfo (module().type);
+    const auto c = th.pal (info.pal);
+    auto r = getLocalBounds().toFloat();
+    Glow::drawPanel (g, r, c, 8.0f, pulse);
+
+    g.setColour (th.text);
+    Glow::drawSpacedText (g, info.title.toUpperCase(), juce::Rectangle<float> (11.0f, 6.0f, r.getWidth() - 22.0f, 14.0f), th.heading (9.5f), 1.3f,
+                          juce::Justification::centredLeft);
+
+    // What it has settled on, with a lamp that follows the signal going through
+    const auto kind = patch.kindOf (moduleId, Port::sigOut);
+    const float lamp = juce::jlimit (0.0f, 1.0f, shownDisplay * 1.6f);
+    g.setColour (c.withAlpha (0.25f + 0.75f * lamp));
+    g.fillEllipse (r.getRight() - 15.0f, 10.0f, 5.0f, 5.0f);
+    g.setColour (th.muted);
+    g.setFont (th.label (6.5f));
+    g.drawText (kind == Signal::Audio ? "SOUND" : (kind == Signal::Mod ? "MOD" : "FREE"),
+                juce::Rectangle<float> (11.0f, r.getBottom() - 15.0f, r.getWidth() - 22.0f, 10.0f).toNearestInt(),
+                sliders.isEmpty() ? juce::Justification::centred : juce::Justification::centredRight);
+
+    if (module().type == ModuleType::Inverter)
+    {
+        // A wave and the same wave turned over
+        const float cx = r.getCentreX(), cy = r.getCentreY() + 3.0f;
+        juce::Path up, down;
+        up.startNewSubPath (cx - 20.0f, cy);
+        up.quadraticTo (cx - 10.0f, cy - 22.0f, cx, cy);
+        up.quadraticTo (cx + 10.0f, cy + 22.0f, cx + 20.0f, cy);
+        down.startNewSubPath (cx - 20.0f, cy);
+        down.quadraticTo (cx - 10.0f, cy + 22.0f, cx, cy);
+        down.quadraticTo (cx + 10.0f, cy - 22.0f, cx + 20.0f, cy);
+        g.setColour (c.withAlpha (0.3f));
+        g.strokePath (up, juce::PathStrokeType (1.2f));
+        Glow::strokeGlow (g, down, c, 1.5f, pulse);
+    }
+
+    g.setColour (th.muted);
+    for (int i = 0; i < sliders.size(); ++i)
+    {
+        auto b = sliders[i]->getBounds();
+        const auto name = module().type == ModuleType::Mixer ? "IN " + info.knobs[(size_t) i].first : info.knobs[(size_t) i].first.toUpperCase();
+        Glow::drawSpacedText (g, name, juce::Rectangle<float> ((float) b.getX() - 10.0f, (float) b.getBottom(), (float) b.getWidth() + 20.0f, 11.0f),
+                              th.label (6.5f), 1.0f, sliders.size() == 1 ? juce::Justification::centredLeft : juce::Justification::centred);
+    }
+}
+
 void ModuleCard::paint (juce::Graphics& g)
 {
+    if (isUtility())
+    {
+        paintUtility (g);
+        return;
+    }
+
     auto& th = Theme::get();
     const auto& info = moduleInfo (module().type);
     const auto c = th.pal (info.pal);
@@ -148,7 +230,16 @@ void ModuleCard::paint (juce::Graphics& g)
         g.setColour (c);
         Glow::drawSpacedText (g, in ? "IN" : "OUT", r.withHeight (24.0f).translated (0.0f, 34.0f), th.heading (15.0f), 2.0f,
                               juce::Justification::centred);
-        drawMeter (g, juce::Rectangle<float> (r.getCentreX() - 4.0f, 76.0f, 8.0f, r.getHeight() - 92.0f), track.meter.load(), c);
+        if (in)
+        {
+            // Two outputs: the track's own sound, and its notes
+            g.setColour (th.muted);
+            g.setFont (th.label (6.5f));
+            g.drawText ("SOUND", juce::Rectangle<float> (0.0f, jackY - 6.0f, r.getWidth() - 10.0f, 12.0f).toNearestInt(), juce::Justification::centredRight);
+            g.drawText ("NOTES", juce::Rectangle<float> (0.0f, jackY + notesJackDrop - 6.0f, r.getWidth() - 10.0f, 12.0f).toNearestInt(), juce::Justification::centredRight);
+        }
+        const float meterTop = in ? 104.0f : 76.0f;
+        drawMeter (g, juce::Rectangle<float> (r.getCentreX() - 4.0f, meterTop, 8.0f, r.getHeight() - meterTop - 16.0f), track.meter.load(), c);
         return;
     }
 
@@ -278,6 +369,8 @@ void ModuleCard::paint (juce::Graphics& g)
         }
         case ModuleType::Input: case ModuleType::Output: case ModuleType::Synth: case ModuleType::Filter:
         case ModuleType::Drive: case ModuleType::Delay: case ModuleType::Reverb: case ModuleType::EQ:
+        case ModuleType::Attenuator: case ModuleType::Mixer: case ModuleType::Inverter:
+        case ModuleType::Crossfade: case ModuleType::Slew:
             break;
     }
 
@@ -343,6 +436,7 @@ void ModuleCard::tick()
         {
             shownDisplay = d;
             if (hasExtra (module().type)) repaint (extraArea);
+            else if (isUtility()) repaint (getWidth() - 20, 6, 14, 14);      // its lamp
         }
     }
 }
@@ -426,7 +520,7 @@ void ModuleCard::mouseDown (const juce::MouseEvent& e)
         return;
     }
     dragStart = module().position;
-    toFront (false);
+    if (onRaise) onRaise();
 }
 
 void ModuleCard::mouseDrag (const juce::MouseEvent& e)
@@ -435,9 +529,9 @@ void ModuleCard::mouseDrag (const juce::MouseEvent& e)
         return;
     if (auto* m = patch.find (moduleId))
     {
-        m->position = { juce::jmax (0.0f, dragStart.x + (float) e.getDistanceFromDragStartX()),
-                        juce::jlimit (0.0f, 60.0f, dragStart.y + (float) e.getDistanceFromDragStartY()) };
-        setTopLeftPosition (m->position.toInt());
+        // Cards slide along their row
+        m->position = { juce::jmax (0.0f, dragStart.x + (float) e.getDistanceFromDragStartX()), Patch::rowY (m->type) };
+        setTopLeftPosition (juce::roundToInt (m->position.x), getY());
         if (onMoved)
             onMoved();
     }
@@ -506,16 +600,44 @@ CableLayer::JackRef CableLayer::jackAt (juce::Point<float> p, float radius) cons
     return best;
 }
 
-juce::Path CableLayer::cablePath (juce::Point<float> a, juce::Point<float> b, bool intoKnob)
+juce::Path CableLayer::cablePath (juce::Point<float> a, juce::Point<float> b, bool intoKnob) const
 {
-    // A hanging cable: leaves the jack sideways, sags a little, and arrives from below for knob inputs
-    // Neighbours get a short slack loop; longer runs drape underneath the cards in between
+    // A hanging cable: leaves the jack sideways, sags a little, and arrives from below for knob inputs.
+    // Neighbours get a short slack loop; longer runs drape underneath the cards in between. A cable
+    // between the device row and the utility row just curves across the gap.
+    const float split = rowOffset + Patch::utilityTop - 6.0f;
+    const bool lowA = a.y > split, lowB = b.y > split;
     const float dx = std::abs (b.x - a.x);
     const float reach = juce::jmax (24.0f, dx * 0.4f);
-    const float sag = dx < 90.0f ? juce::jmin (16.0f, dx * 0.3f) : (Patch::cardHeight - jackY + 18.0f) / 0.75f;
+    if (lowA != lowB)
+    {
+        // Between the rows: out sideways, along the gap between the two rows, then into the jack.
+        // Each cable takes its own lane in the gap so two of them do not lie on top of each other.
+        const float lane = std::fmod (a.x * 0.37f + b.x * 0.11f, 10.0f) - 5.0f;
+        const float gapY = rowOffset + Patch::top + Patch::cardHeight + 11.0f + lane;
+        const float outX = a.x + 14.0f;
+        juce::Path line;
+        line.startNewSubPath (a);
+        line.lineTo (outX, a.y);
+        line.lineTo (outX, gapY);
+        if (intoKnob)
+            line.lineTo (b.x, gapY);
+        else
+        {
+            const float inX = juce::jmax (3.0f, b.x - 14.0f);
+            line.lineTo (inX, gapY);
+            line.lineTo (inX, b.y);
+        }
+        line.lineTo (b);
+        return line.createPathWithRoundedCorners (11.0f);
+    }
+    float sag;
+    if (dx < 90.0f)          sag = juce::jmin (16.0f, dx * 0.3f);
+    else if (lowA)           sag = (Patch::utilityHeight * 0.5f + 12.0f) / 0.75f;
+    else                     sag = (Patch::cardHeight - jackY + 18.0f) / 0.75f;
     juce::Path p;
     p.startNewSubPath (a);
-    p.cubicTo (a.translated (reach, sag), intoKnob ? b.translated (0.0f, 56.0f) : b.translated (-reach, sag), b);
+    p.cubicTo (a.translated (reach, sag), intoKnob ? b.translated (0.0f, lowB ? 30.0f : 56.0f) : b.translated (-reach, sag), b);
     return p;
 }
 
@@ -540,11 +662,73 @@ int CableLayer::cableAt (juce::Point<float> p) const
 
 bool CableLayer::canConnect (JackRef a, JackRef b) const
 {
-    if (! a.valid() || ! b.valid() || a.module == b.module)
+    if (patch == nullptr || ! a.valid() || ! b.valid())
         return false;
-    if (Port::isInput (a.port) == Port::isInput (b.port))
-        return false;
-    return Port::isMod (a.port) == Port::isMod (b.port);
+    // Either end may be the one being dragged: the patch wants output first
+    return Port::isInput (a.port) ? patch->canConnect (b.module, b.port, a.module, a.port)
+                                  : patch->canConnect (a.module, a.port, b.module, b.port);
+}
+
+namespace
+{
+    const char* kindName (Signal k)
+    {
+        switch (k)
+        {
+            case Signal::Audio: return "sound";
+            case Signal::Notes: return "notes";
+            case Signal::Mod:   return "modulation";
+            case Signal::Any:   break;
+        }
+        return "sound or modulation";
+    }
+}
+
+juce::String CableLayer::describe (JackRef j) const
+{
+    if (patch == nullptr || ! j.valid())
+        return {};
+    const auto* m = patch->find (j.module);
+    if (m == nullptr)
+        return {};
+    const auto& info = moduleInfo (m->type);
+    const auto title = m->type == ModuleType::Plugin && m->pluginName.isNotEmpty() ? m->pluginName : info.title;
+    const auto kind = patch->kindOf (j.module, j.port);
+
+    if (j.port == Port::notesOut) return "Track notes out: pitch, velocity and gate from clips, the keyboard and the rack. Patch it to an instrument.";
+    if (j.port == Port::notesIn)  return title + " notes in: takes notes from the track input only.";
+    if (Port::isModIn (j.port))   return title + " " + info.knobs[(size_t) (j.port - Port::modInBase)].first + ": takes modulation (an LFO, or a utility working on one).";
+    if (j.port == Port::modOut)   return title + " out: modulation, for any knob.";
+    if (Port::isSigIn (j.port) || j.port == Port::sigOut)
+        return title + (j.port == Port::sigOut ? " out: " : " in: ")
+               + (kind == Signal::Any ? juce::String ("takes sound or modulation, and works on whichever it is given.")
+                                      : "working on " + juce::String (kindName (kind)) + ".");
+    return title + (Port::isInput (j.port) ? " in: " : " out: ") + kindName (kind) + ".";
+}
+
+juce::String CableLayer::whyNot (JackRef from, JackRef to) const
+{
+    if (patch == nullptr || ! from.valid() || ! to.valid() || canConnect (from, to))
+        return {};
+    if (from.module == to.module)
+        return "A module can't be patched to itself.";
+    if (Port::isInput (from.port) == Port::isInput (to.port))
+        return Port::isInput (to.port) ? "Two inputs: a cable runs from an output to an input." : "Two outputs: a cable runs from an output to an input.";
+    const auto a = patch->kindOf (from.module, from.port), b = patch->kindOf (to.module, to.port);
+    const auto out = Port::isInput (from.port) ? b : a, in = Port::isInput (from.port) ? a : b;
+    if (in == Signal::Notes)
+        return "An instrument only takes notes, from the track's notes output.";
+    if (out == Signal::Notes)
+        return "Notes only go to an instrument's notes input.";
+    return juce::String ("That carries ") + kindName (out) + ", and this jack takes " + kindName (in) + ".";
+}
+
+void CableLayer::hint (const juce::String& text)
+{
+    if (text == lastHint)
+        return;
+    lastHint = text;
+    if (onHint) onHint (text);
 }
 
 bool CableLayer::hitTest (int x, int y)
@@ -561,8 +745,15 @@ void CableLayer::mouseMove (const juce::MouseEvent& e)
         hoverCable = c;
         repaint();
     }
-    setMouseCursor (jackAt (e.position).valid() ? juce::MouseCursor::CrosshairCursor
+    const auto jack = jackAt (e.position);
+    setMouseCursor (jack.valid() ? juce::MouseCursor::CrosshairCursor
                     : (c >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor));
+    hint (describe (jack));
+}
+
+void CableLayer::mouseExit (const juce::MouseEvent&)
+{
+    hint ({});
 }
 
 void CableLayer::mouseDown (const juce::MouseEvent& e)
@@ -617,6 +808,7 @@ void CableLayer::mouseDrag (const juce::MouseEvent& e)
     dragEnd = e.position;
     auto j = jackAt (e.position, 14.0f);
     hoverJack = canConnect (dragFrom, j) ? j : JackRef {};
+    hint (hoverJack.valid() ? describe (j) : whyNot (dragFrom, j));
     repaint();
 }
 
@@ -633,6 +825,7 @@ void CableLayer::mouseUp (const juce::MouseEvent&)
         patch->connect (out.module, out.port, in.module, in.port);
     }
     dragFrom = hoverJack = {};
+    hint ({});
     if (onChanged) onChanged();
     repaint();
 }
@@ -667,8 +860,27 @@ void CableLayer::paint (juce::Graphics& g)
         const auto path = cablePath (c);
         const auto col = colourFor (c.fromModule);
         const bool hot = (int) i == hoverCable;
+        const auto kind = patch->kindOf (c);
 
-        if (c.isMod())
+        if (kind == Signal::Notes)
+        {
+            // Notes: a string of bulbs
+            g.setColour (col.withAlpha (0.16f));
+            g.strokePath (path, juce::PathStrokeType (5.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            const float len = path.getLength();
+            const int bulbs = juce::jmax (2, juce::roundToInt (len / 7.0f));
+            const auto lamp = hot ? col.brighter (0.4f) : col;
+            const int running = playing && level > 0.02f ? (int) (phase * bulbs) : -1;
+            for (int b = 0; b <= bulbs; ++b)
+            {
+                const auto p = path.getPointAlongPath (len * (float) b / (float) bulbs);
+                const bool lit = running >= 0 && ((b - running) % 6 + 6) % 6 == 0;
+                g.setColour (lit ? lamp.brighter (0.7f) : lamp.withAlpha (0.85f));
+                const float rad = lit ? 2.1f : 1.5f;
+                g.fillEllipse (p.x - rad, p.y - rad, rad * 2.0f, rad * 2.0f);
+            }
+        }
+        else if (kind == Signal::Mod)
         {
             g.setColour (col.withAlpha (0.18f));
             g.strokePath (path, juce::PathStrokeType (5.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
@@ -718,25 +930,32 @@ void CableLayer::paint (juce::Graphics& g)
         for (int port : card->jacks())
         {
             const auto p = jackPos (m.id, port);
-            const bool mod = Port::isMod (port);
-            const float r = mod ? 4.0f : 6.0f;
+            const auto kind = patch->kindOf (m.id, port);
+            // Sound: a large ring. Modulation: a small one. Notes: a square. A free utility jack: in between.
+            const bool square = kind == Signal::Notes;
+            const float r = kind == Signal::Mod ? 4.0f : (kind == Signal::Any ? 5.0f : (square ? 5.5f : 6.0f));
+            const float corner = square ? 1.8f : r;
             bool patched = false;
             for (auto& c : patch->cables)
                 patched = patched || (c.fromModule == m.id && c.fromPort == port) || (c.toModule == m.id && c.toPort == port);
+            const bool source = dragging && dragFrom.module == m.id && dragFrom.port == port;
             const bool target = dragging && canConnect (dragFrom, { m.id, port });
             const bool lit = target && hoverJack.module == m.id && hoverJack.port == port;
+            // While a cable is in the hand, jacks it can't go to fade back
+            const float fade = dragging && ! target && ! source ? 0.28f : 1.0f;
+            const auto box = juce::Rectangle<float> (p.x - r, p.y - r, r * 2.0f, r * 2.0f);
 
             g.setColour (th.display);
-            g.fillEllipse (p.x - r, p.y - r, r * 2.0f, r * 2.0f);
+            g.fillRoundedRectangle (box, corner);
             if (lit)
             {
                 g.setColour (col.withAlpha (0.35f));
-                g.fillEllipse (p.x - r - 4.0f, p.y - r - 4.0f, (r + 4.0f) * 2.0f, (r + 4.0f) * 2.0f);
+                g.fillRoundedRectangle (box.expanded (4.0f), corner + 4.0f);
             }
-            g.setColour (target ? col : (patched ? col : col.withAlpha (0.45f)));
-            g.drawEllipse (p.x - r, p.y - r, r * 2.0f, r * 2.0f, target ? 1.6f : 1.1f);
+            g.setColour ((target ? col : (patched ? col : col.withAlpha (0.45f))).withMultipliedAlpha (fade));
+            g.drawRoundedRectangle (box, corner, target ? 1.6f : 1.1f);
             if (patched)
-                g.fillEllipse (p.x - r * 0.45f, p.y - r * 0.45f, r * 0.9f, r * 0.9f);
+                g.fillRoundedRectangle (box.reduced (r * 0.55f), square ? 0.8f : r);
         }
     }
 }
@@ -756,32 +975,52 @@ void DevicePanel::Canvas::paint (juce::Graphics& g)
 DevicePanel::DevicePanel (AppContext& c) : ctx (c)
 {
     cables = std::make_unique<CableLayer> (ctx, [this] (int id) { return cardFor (id); });
-    cables->onChanged = [this] { ctx.engine.rebuildTrack (ctx.selectedTrack); ctx.touched(); cables->repaint(); };
+    cables->onChanged = [this]
+    {
+        ctx.engine.rebuildTrack (ctx.selectedTrack);
+        ctx.touched();
+        cables->repaint();
+        for (auto* card : cards) card->repaint();       // a utility shows what it has settled on
+    };
+    cables->onHint = [this] (const juce::String& text) { hintText = text; repaint (0, 0, getWidth(), 36); };
 
     addButton.getProperties().set ("pal", (int) Pal::Green);
     addButton.onClick = [this]
     {
-        const std::pair<ModuleType, const char*> types[] = {
+        struct Entry { ModuleType type; const char* name; };
+        static const Entry devices[] = {
             { ModuleType::Sampler, "Sampler" }, { ModuleType::Synth, "Synth" }, { ModuleType::Drums, "Drum Rack" },
             { ModuleType::Filter, "Filter" }, { ModuleType::Delay, "Delay" }, { ModuleType::Reverb, "Reverb" },
             { ModuleType::EQ, "EQ" }, { ModuleType::Compressor, "Compressor" }, { ModuleType::Drive, "Drive" }, { ModuleType::LFO, "LFO" } };
+        static const Entry utilities[] = {
+            { ModuleType::Attenuator, "Attenuator  (turn a signal down)" }, { ModuleType::Mixer, "Mixer  (four inputs summed)" },
+            { ModuleType::Inverter, "Inverter  (flip a signal over)" }, { ModuleType::Crossfade, "Crossfade  (blend A into B)" },
+            { ModuleType::Slew, "Slew  (smooth a signal)" } };
         juce::PopupMenu menu;
-        menu.addSectionHeader ("Add and auto-wire");
-        for (int i = 0; i < 10; ++i)
-            menu.addItem (i + 1, types[i].second);
+        menu.addSectionHeader ("Devices: added and auto-wired");
+        for (auto& e : devices)
+            menu.addItem (1 + (int) e.type, e.name);
+        menu.addSectionHeader ("Utilities: patch by hand, for sound or modulation");
+        for (auto& e : utilities)
+            menu.addItem (1 + (int) e.type, e.name);
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&addButton),
-                            [this, types] (int r) { if (r > 0) addModule (types[r - 1].first); });
+                            [this] (int r) { if (r > 0) addModule ((ModuleType) (r - 1)); });
     };
     tidyButton.onClick = [this] { ctx.selected().patch.tidy(); rebuild(); };
-    addButton.setTooltip ("Add a module; it wires itself into the chain");
+    addButton.setTooltip ("Add a device (it wires itself into the chain) or a utility for the lower row");
+    fullButton.setTooltip ("Fill the window with the patch. Double-clicking empty space does the same; Esc closes it");
+    fullButton.onClick = [this] { setFullScreen (! fullScreen); };
 
     addAndMakeVisible (addButton);
     addAndMakeVisible (tidyButton);
-    viewport.setViewedComponent (&canvas, false);
-    viewport.setScrollBarsShown (false, true);
+    addAndMakeVisible (fullButton);
+    holder.addAndMakeVisible (canvas);
+    viewport.setViewedComponent (&holder, false);
+    viewport.setScrollBarsShown (true, true);
     viewport.setScrollBarThickness (6);
     addAndMakeVisible (viewport);
     canvas.addAndMakeVisible (*cables);
+    canvas.onDoubleClick = [this] { setFullScreen (! fullScreen); };
 
     ctx.addChangeListener (this);
     rebuild();
@@ -801,8 +1040,8 @@ void DevicePanel::changeListenerCallback (juce::ChangeBroadcaster*)
         ctx.showPending = false;
         if (auto* card = cardFor (ctx.shownModule))
         {
-            viewport.setViewPosition (juce::jlimit (0, juce::jmax (0, canvas.getWidth() - viewport.getWidth()),
-                                                    card->getBounds().getCentreX() - viewport.getWidth() / 2), 0);
+            viewport.setViewPosition (juce::jlimit (0, juce::jmax (0, holder.getWidth() - viewport.getWidth()),
+                                                    juce::roundToInt ((float) card->getBounds().getCentreX() * zoom) - viewport.getWidth() / 2), 0);
             card->flash = 1.6f;
         }
     }
@@ -828,10 +1067,11 @@ void DevicePanel::rebuild()
         if (pluginWindows[i]->slot == ctx.selectedTrack || ctx.engine.uiGraph (pluginWindows[i]->slot) == nullptr)
             pluginWindows.remove (i);
 
-    // Numerals follow left-to-right order on the canvas
+    // Numerals follow left-to-right order along the device row
     std::vector<const Module*> byPosition;
     for (auto& m : patch.modules)
-        byPosition.push_back (&m);
+        if (! moduleInfo (m.type).utility)
+            byPosition.push_back (&m);
     std::sort (byPosition.begin(), byPosition.end(), [] (auto* a, auto* b) { return a->position.x < b->position.x; });
     auto numeralFor = [&byPosition] (int id)
     {
@@ -856,7 +1096,9 @@ void DevicePanel::rebuild()
                 if (safe != nullptr) { safe->ctx.engine.rebuildTrack (safe->ctx.selectedTrack); safe->rebuild(); }
             });
         };
-        card->setTopLeftPosition (m.position.toInt());
+        card->setTopLeftPosition (juce::roundToInt (m.position.x), juce::roundToInt (Patch::rowY (m.type) + rowOffset));
+        // A clicked card comes forward among the cards, but the cables and jacks stay on top of it
+        card->onRaise = [this, card] { card->toFront (false); cables->toFront (false); };
         card->onOpenPlugin = [this, id = m.id] { openPluginEditor (ctx.selectedTrack, id); };
         card->onMoved = [this] { updateCanvasSize(); cables->repaint(); ctx.touched(); };
         card->onRemove = [this, id = m.id]
@@ -881,31 +1123,44 @@ void DevicePanel::rebuild()
     repaint();
 }
 
+// After adding an instrument: if the track has audio clips, they keep sounding beside it
+void DevicePanel::keepTrackSound()
+{
+    for (auto& c : ctx.selected().clips)
+        if (c.kind == ClipKind::Audio)
+        {
+            ctx.selected().patch.patchTrackSound();
+            return;
+        }
+}
+
 void DevicePanel::addModule (ModuleType type)
 {
     auto& patch = ctx.selected().patch;
     const int id = patch.add (type);
+    keepTrackSound();
     ctx.engine.rebuildTrack (ctx.selectedTrack);
     ctx.touched();
     rebuild();
     if (auto* card = cardFor (id))
-        viewport.setViewPosition (juce::jmax (0, card->getRight() + 120 - viewport.getWidth()), 0);
+        viewport.setViewPosition (juce::jmax (0, juce::roundToInt ((float) (card->getRight() + 120) * zoom) - viewport.getWidth()), 0);
 }
 
 void DevicePanel::addPlugin (const juce::PluginDescription& desc)
 {
     auto& patch = ctx.selected().patch;
-    const int id = patch.add (ModuleType::Plugin);
+    const int id = patch.add (ModuleType::Plugin, desc.isInstrument);
     if (auto* m = patch.find (id))
     {
         m->pluginId = desc.createIdentifierString();
         m->pluginName = desc.name;
     }
+    keepTrackSound();
     ctx.engine.rebuildTrack (ctx.selectedTrack);
     ctx.touched();
     rebuild();
     if (auto* card = cardFor (id))
-        viewport.setViewPosition (juce::jmax (0, card->getRight() + 120 - viewport.getWidth()), 0);
+        viewport.setViewPosition (juce::jmax (0, juce::roundToInt ((float) (card->getRight() + 120) * zoom) - viewport.getWidth()), 0);
     // Rebuilt graphs are picked up by the audio thread at the next block; open the editor once it is live
     juce::Timer::callAfterDelay (120, [safe = juce::Component::SafePointer<DevicePanel> (this), slot = ctx.selectedTrack, id]
     {
@@ -947,7 +1202,11 @@ void DevicePanel::loadSample (const juce::String& nameOrPath)
     for (auto& m : patch.modules)
         if (m.type == ModuleType::Sampler) { sampler = &m; break; }
     if (sampler == nullptr)
-        sampler = patch.find (patch.add (ModuleType::Sampler));
+    {
+        const int id = patch.add (ModuleType::Sampler);
+        keepTrackSound();
+        sampler = patch.find (id);
+    }
     sampler->sampleName = nameOrPath;
     ctx.engine.rebuildTrack (ctx.selectedTrack);
     ctx.touched();
@@ -956,10 +1215,35 @@ void DevicePanel::loadSample (const juce::String& nameOrPath)
 
 void DevicePanel::updateCanvasSize()
 {
-    int right = viewport.getWidth();
+    int right = 0;
     for (auto* card : cards)
         right = juce::jmax (right, card->getRight() + 24);
-    canvas.setSize (right, juce::jmax (1, viewport.getHeight() - (right > viewport.getWidth() ? 6 : 0)));
+
+    const float viewW = (float) viewport.getWidth(), viewH = (float) viewport.getHeight();
+    const float rows = Patch::rowsBottom + 22.0f;            // both rows, with room for cables to hang
+
+    // Full screen draws the patch as large as fits: both rows down the window, and the whole chain across
+    // it when it can, between actual size and two and a half times.
+    zoom = 1.0f;
+    if (fullScreen && viewW > 0.0f && viewH > 0.0f)
+        zoom = juce::jlimit (1.0f, 2.5f, juce::jmin (viewH / rows, viewW / (float) juce::jmax (1, right)));
+
+    const bool scrolls = (float) right * zoom > viewW;
+    // Never shorter than the two rows: a short panel scrolls down to the utilities instead
+    const float canvasH = juce::jmax (rows, (viewH - (scrolls ? 6.0f : 0.0f)) / zoom);
+    const float offset = std::floor (juce::jmax (0.0f, (canvasH - rows) * 0.5f));
+    if (! juce::approximatelyEqual (offset, rowOffset))
+    {
+        rowOffset = offset;
+        for (auto* card : cards)
+            if (auto* m = ctx.selected().patch.find (card->getModuleId()))
+                card->setTopLeftPosition (card->getX(), juce::roundToInt (Patch::rowY (m->type) + rowOffset));
+    }
+
+    canvas.setTransform (juce::AffineTransform::scale (zoom));
+    canvas.setBounds (0, 0, juce::jmax (right, juce::roundToInt (std::ceil (viewW / zoom))), juce::roundToInt (canvasH));
+    holder.setSize (juce::roundToInt ((float) canvas.getWidth() * zoom), juce::roundToInt (canvasH * zoom));
+    cables->rowOffset = rowOffset;
     cables->setBounds (canvas.getLocalBounds());
 }
 
@@ -967,11 +1251,32 @@ void DevicePanel::resized()
 {
     auto r = getLocalBounds().reduced (12, 0);
     auto head = r.removeFromTop (36).reduced (0, 6);
+    fullButton.setBounds (head.removeFromRight (fullScreen ? 150 : 100));
+    head.removeFromRight (8);
     tidyButton.setBounds (head.removeFromRight (70));
     head.removeFromRight (8);
     addButton.setBounds (head.removeFromRight (130));
     viewport.setBounds (r.withTrimmedBottom (8));
     updateCanvasSize();
+}
+
+void DevicePanel::setFullScreen (bool full)
+{
+    if (fullScreen == full)
+        return;
+    fullScreen = full;
+    fullButton.setButtonText (full ? "Exit full screen" : "Full screen");
+    fullButton.setToggleState (full, juce::dontSendNotification);
+    viewport.setViewPosition (0, 0);
+    if (onFullScreenChanged)
+        onFullScreenChanged();      // the window gives the panel its new bounds
+    resized();
+    repaint();
+}
+
+void DevicePanel::mouseDoubleClick (const juce::MouseEvent&)
+{
+    setFullScreen (! fullScreen);   // the header and the edges count as empty space too
 }
 
 void DevicePanel::tick()
@@ -1009,8 +1314,12 @@ void DevicePanel::paint (juce::Graphics& g)
     g.setColour (th.pal (t.colourIndex));
     Glow::drawSpacedText (g, t.name.toUpperCase(), head.withTrimmedLeft (84.0f), th.heading (13.0f), 2.0f,
                           juce::Justification::centredLeft);
-    g.setColour (th.muted.withAlpha (0.7f));
+    // Hint line: what the jack under the pointer carries, or why a cable won't go there
+    const bool telling = hintText.isNotEmpty();
+    g.setColour (telling ? th.text.withAlpha (0.85f) : th.muted.withAlpha (0.7f));
     g.setFont (th.body (11.0f));
-    g.drawText ("Drag between jacks to patch.  Pull a plugged jack to re-wire.  Double-click a cable to remove it.",
-                head.withTrimmedLeft (260.0f).withTrimmedRight (230.0f).toNearestInt(), juce::Justification::centredRight);
+    const juce::String help = fullScreen ? "Drag between jacks to patch.  Double-click a cable to remove it.  Esc or double-click empty space to leave full screen."
+                                         : "Drag between jacks to patch.  Double-click a cable to remove it.  Double-click empty space for full screen.";
+    g.drawFittedText (telling ? hintText : help,
+                      head.withTrimmedLeft (260.0f).withTrimmedRight (fullScreen ? 392.0f : 342.0f).toNearestInt(), juce::Justification::centredRight, 1, 0.8f);
 }

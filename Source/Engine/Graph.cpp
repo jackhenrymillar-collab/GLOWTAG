@@ -618,6 +618,146 @@ namespace
     };
 }
 
+//==============================================================================
+// Utilities
+
+void UtilityNode::clearInputs()
+{
+    for (auto& b : inL) b.fill (0.0f);
+    for (auto& b : inR) b.fill (0.0f);
+    inMod.fill (0.0f);
+}
+
+void UtilityNode::process (float* l, float* r, int n, double)
+{
+    if (modMode)
+    {
+        modOut = control (n);
+        std::fill (l, l + n, 0.0f);
+        std::fill (r, r + n, 0.0f);
+        display = std::abs (modOut);
+        return;
+    }
+    audio (l, r, n);
+    float peak = 0.0f;
+    for (int i = 0; i < n; ++i)
+        peak = juce::jmax (peak, std::abs (l[i]));
+    display = peak;
+}
+
+namespace
+{
+    // Level: turns a signal down. Patch an LFO into its knob and it is a tremolo, or a VCA.
+    struct AttenuatorNode : public UtilityNode
+    {
+        using UtilityNode::UtilityNode;
+        float last = -1.0f;
+        void audio (float* l, float* r, int n) override
+        {
+            const float target = k (0);
+            if (last < 0.0f) last = target;
+            const float step = (target - last) / (float) n;
+            for (int i = 0; i < n; ++i)
+            {
+                last += step;
+                l[i] = inL[0][(size_t) i] * last;
+                r[i] = inR[0][(size_t) i] * last;
+            }
+        }
+        float control (int) override { return inMod[0] * k (0); }
+    };
+
+    // Four inputs, each with a level, summed
+    struct MixerNode : public UtilityNode
+    {
+        using UtilityNode::UtilityNode;
+        std::array<float, Port::maxSigIns> last { -1.0f, -1.0f, -1.0f, -1.0f };
+        void audio (float* l, float* r, int n) override
+        {
+            std::fill (l, l + n, 0.0f);
+            std::fill (r, r + n, 0.0f);
+            for (size_t in = 0; in < (size_t) Port::maxSigIns; ++in)
+            {
+                const float target = k ((int) in);
+                if (last[in] < 0.0f) last[in] = target;
+                const float step = (target - last[in]) / (float) n;
+                for (int i = 0; i < n; ++i)
+                {
+                    last[in] += step;
+                    l[i] += inL[in][(size_t) i] * last[in];
+                    r[i] += inR[in][(size_t) i] * last[in];
+                }
+            }
+        }
+        float control (int) override
+        {
+            float sum = 0.0f;
+            for (size_t in = 0; in < (size_t) Port::maxSigIns; ++in)
+                sum += inMod[in] * k ((int) in);
+            return sum;
+        }
+    };
+
+    // Flips the signal: polarity for sound, direction for modulation
+    struct InverterNode : public UtilityNode
+    {
+        using UtilityNode::UtilityNode;
+        void audio (float* l, float* r, int n) override
+        {
+            for (int i = 0; i < n; ++i)
+            {
+                l[i] = -inL[0][(size_t) i];
+                r[i] = -inR[0][(size_t) i];
+            }
+        }
+        float control (int) override { return -inMod[0]; }
+    };
+
+    // Blends input A into input B
+    struct CrossfadeNode : public UtilityNode
+    {
+        using UtilityNode::UtilityNode;
+        float last = -1.0f;
+        void audio (float* l, float* r, int n) override
+        {
+            const float target = k (0);
+            if (last < 0.0f) last = target;
+            const float step = (target - last) / (float) n;
+            for (int i = 0; i < n; ++i)
+            {
+                last += step;
+                l[i] = inL[0][(size_t) i] * (1.0f - last) + inL[1][(size_t) i] * last;
+                r[i] = inR[0][(size_t) i] * (1.0f - last) + inR[1][(size_t) i] * last;
+            }
+        }
+        float control (int) override { const float m = k (0); return inMod[0] * (1.0f - m) + inMod[1] * m; }
+    };
+
+    // Lag: the output follows the input slowly. Smooths modulation; on sound it rounds off the top.
+    struct SlewNode : public UtilityNode
+    {
+        using UtilityNode::UtilityNode;
+        float yl = 0.0f, yr = 0.0f, ym = 0.0f;
+        double seconds() const { return 0.0005 * std::pow (4000.0, (double) k (0)); }      // 0.5 ms .. 2 s
+        void audio (float* l, float* r, int n) override
+        {
+            const float a = (float) (1.0 - std::exp (-1.0 / (seconds() * sr)));
+            for (int i = 0; i < n; ++i)
+            {
+                yl += (inL[0][(size_t) i] - yl) * a;
+                yr += (inR[0][(size_t) i] - yr) * a;
+                l[i] = yl;
+                r[i] = yr;
+            }
+        }
+        float control (int n) override
+        {
+            ym += (inMod[0] - ym) * (float) (1.0 - std::exp (-(double) n / (seconds() * sr)));
+            return ym;
+        }
+    };
+}
+
 std::unique_ptr<Node> createNode (const Module& m, double sr, const Graph::SampleResolver& resolve)
 {
     switch (m.type)
@@ -633,6 +773,11 @@ std::unique_ptr<Node> createNode (const Module& m, double sr, const Graph::Sampl
         case ModuleType::Compressor: return std::make_unique<CompressorNode> (m, sr);
         case ModuleType::LFO:        return std::make_unique<LFONode> (m, sr);
         case ModuleType::Plugin:     return std::make_unique<PluginNode> (m, sr);
+        case ModuleType::Attenuator: return std::make_unique<AttenuatorNode> (m, sr);
+        case ModuleType::Mixer:      return std::make_unique<MixerNode> (m, sr);
+        case ModuleType::Inverter:   return std::make_unique<InverterNode> (m, sr);
+        case ModuleType::Crossfade:  return std::make_unique<CrossfadeNode> (m, sr);
+        case ModuleType::Slew:       return std::make_unique<SlewNode> (m, sr);
         case ModuleType::Input:
         case ModuleType::Output:     break;
     }
@@ -690,15 +835,27 @@ Graph::Graph (const Patch& patch, double sampleRate, const SampleResolver& resol
     {
         if (n->type == ModuleType::Input) input = n.get();
         if (n->type == ModuleType::Output) output = n.get();
-        if (n->isInstrument()) instrument = true;
+        if (auto* u = n->asUtility())
+            u->modMode = patch.kindOf (u->id, Port::sigOut) == Signal::Mod;
     }
     for (auto& c : patch.cables)
     {
         auto* from = find (c.fromModule);
         auto* to = find (c.toModule);
-        if (from != nullptr && to != nullptr)
-            links.push_back ({ from, c.fromPort, to, c.toPort });
+        if (from == nullptr || to == nullptr)
+            continue;
+        const auto kind = patch.kindOf (c);
+        if (kind == Signal::Notes)
+        {
+            // Notes all come from the track input, so a notes cable just switches its instrument on
+            if (c.toPort == Port::notesIn)
+                to->takesNotes = true;
+            continue;
+        }
+        links.push_back ({ from, c.fromPort, to, c.toPort, kind == Signal::Mod });
     }
+    for (auto& n : nodes)
+        if (n->isInstrument() && n->takesNotes) instrument = true;
 }
 
 void Graph::capturePluginState (Patch& patch)
@@ -715,8 +872,8 @@ Node* Graph::find (int moduleId)
     return nullptr;
 }
 
-void Graph::noteOn (int pitch, float velocity, double gate) { for (auto& n : nodes) n->noteOn (pitch, velocity, gate); }
-void Graph::noteOff (int pitch)                             { for (auto& n : nodes) n->noteOff (pitch); }
+void Graph::noteOn (int pitch, float velocity, double gate) { for (auto& n : nodes) if (n->takesNotes) n->noteOn (pitch, velocity, gate); }
+void Graph::noteOff (int pitch)                             { for (auto& n : nodes) if (n->takesNotes) n->noteOff (pitch); }
 void Graph::allNotesOff()                                   { for (auto& n : nodes) n->allNotesOff(); }
 
 void Graph::process (const float* inL, const float* inR, float* outL, float* outR, int n, double bpm)
@@ -749,10 +906,25 @@ void Graph::processSubBlock (const float* inL, const float* inR, float* outL, fl
             node->bufL.fill (0.0f);
             node->bufR.fill (0.0f);
         }
+        auto* utility = node->asUtility();
+        if (utility != nullptr)
+            utility->clearInputs();
         for (auto& link : links)
         {
             if (link.to != node.get()) continue;
-            if (link.toPort == Port::audioIn)
+            if (Port::isSigIn (link.toPort) && utility != nullptr)
+            {
+                const auto in = (size_t) juce::jlimit (0, Port::maxSigIns - 1, link.toPort - Port::sigInBase);
+                if (link.mod)
+                    utility->inMod[in] += link.from->modValue();
+                else
+                    for (int i = 0; i < n; ++i)
+                    {
+                        utility->inL[in][(size_t) i] += link.from->bufL[(size_t) i];
+                        utility->inR[in][(size_t) i] += link.from->bufR[(size_t) i];
+                    }
+            }
+            else if (link.toPort == Port::audioIn)
             {
                 for (int i = 0; i < n; ++i)
                 {

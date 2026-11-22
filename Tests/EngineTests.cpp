@@ -101,6 +101,10 @@ int main()
         c.start = 0.0;
         c.length = 2.0;
         p.tracks[0]->clips.push_back (c);
+        // The demo track plays a drum rack, so its own sound is not patched in until audio arrives
+        // (the arranger does this when a file is dropped on the lane)
+        check (p.tracks[0]->patch.patchTrackSound(), "an audio clip on an instrument track patches the track's sound in");
+        check (! p.tracks[0]->patch.patchTrackSound(), "and only once");
         AudioEngine e (p);
         e.prepareToPlay (block, sr);
         e.play();
@@ -215,6 +219,236 @@ int main()
         check (Samples::bank().size() >= 16, "sample bank has at least sixteen sounds");
     }
 
+
+    std::cout << "Signal kinds: sound, notes and modulation\n";
+    {
+        auto resolve = [] (const juce::String& n) { return Samples::find (n); };
+        // Feed a steady tone into the track input and return the peak of what comes out
+        auto renderTone = [] (Graph& g, int blocks, float level = 0.5f)
+        {
+            std::vector<float> il (block), ir (block), ol (block), orr (block);
+            float peak = 0.0f;
+            int t = 0;
+            for (int b = 0; b < blocks; ++b)
+            {
+                for (int i = 0; i < block; ++i, ++t)
+                    il[(size_t) i] = ir[(size_t) i] = level * std::sin ((float) t * 0.05f);
+                g.process (il.data(), ir.data(), ol.data(), orr.data(), block, 120.0);
+                if (b > 0)
+                    for (float v : ol) peak = juce::jmax (peak, std::abs (v));
+            }
+            return peak;
+        };
+        auto cableFrom = [] (const Patch& p, int module, int port, int toModule, int toPort)
+        {
+            for (auto& c : p.cables)
+                if (c.fromModule == module && c.fromPort == port && c.toModule == toModule && c.toPort == toPort)
+                    return true;
+            return false;
+        };
+
+        Patch p;
+        const int synth = p.add (ModuleType::Synth);
+        check (cableFrom (p, Patch::inputId, Port::notesOut, synth, Port::notesIn), "a new instrument takes its notes from the track input");
+        check (cableFrom (p, synth, Port::audioOut, Patch::outputId, Port::audioIn), "and starts the audio chain");
+        check (! moduleInfo (ModuleType::Synth).hasPort (Port::audioIn), "an instrument has no audio input");
+        const int filter = p.add (ModuleType::Filter);
+        const int lfo = p.add (ModuleType::LFO);
+
+        check (! p.canConnect (Patch::inputId, Port::audioOut, synth, Port::notesIn), "sound can't go into an instrument's notes input");
+        check (! p.canConnect (lfo, Port::modOut, synth, Port::notesIn), "nor can modulation");
+        check (! p.canConnect (filter, Port::audioOut, synth, Port::audioIn), "an instrument takes no sound at all");
+        check (! p.canConnect (Patch::inputId, Port::notesOut, filter, Port::audioIn), "notes can't go into an effect");
+        check (! p.canConnect (Patch::inputId, Port::notesOut, Patch::outputId, Port::audioIn), "or into the output");
+        check (! p.canConnect (Patch::inputId, Port::notesOut, filter, Port::modIn (0)), "or into a knob");
+        check (! p.canConnect (synth, Port::audioOut, filter, Port::modIn (0)), "sound can't go into a knob");
+        check (! p.canConnect (lfo, Port::modOut, filter, Port::audioIn), "modulation can't go into a sound input");
+        check (! p.canConnect (filter, Port::audioIn, synth, Port::audioOut), "a cable runs from an output to an input");
+        check (! p.canConnect (synth, Port::modOut, filter, Port::modIn (0)), "a jack the module doesn't have can't be used");
+        check (p.canConnect (lfo, Port::modOut, synth, Port::modIn (3)) && p.canConnect (synth, Port::audioOut, filter, Port::audioIn),
+               "matching jacks connect");
+        const auto before = p.cables.size();
+        check (! p.connect (Patch::inputId, Port::notesOut, filter, Port::audioIn) && p.cables.size() == before, "a refused cable changes nothing");
+
+        // Notes only reach an instrument that is patched to the notes output
+        {
+            Graph g (p, sr, resolve);
+            g.noteOn (48, 0.9f, -1.0);
+            check (renderTone (g, 12, 0.0f) > 0.02f, "a patched instrument plays its notes");
+        }
+        {
+            Patch loose = p;
+            loose.disconnect ((size_t) loose.cableInto (synth, Port::notesIn));
+            Graph g (loose, sr, resolve);
+            check (! g.hasInstrument(), "with the notes cable pulled the track has no instrument");
+            g.noteOn (48, 0.9f, -1.0);
+            check (renderTone (g, 12, 0.0f) < 1e-6f, "and the instrument stays silent");
+        }
+
+        // A second instrument is layered with the first through a Mixer
+        Patch layered;
+        const int s1 = layered.add (ModuleType::Synth);
+        const int s2 = layered.add (ModuleType::Sampler);
+        int mixer = -1;
+        for (auto& m : layered.modules) if (m.type == ModuleType::Mixer) mixer = m.id;
+        check (mixer >= 0 && cableFrom (layered, s1, Port::audioOut, mixer, Port::sigIn (0)) && cableFrom (layered, s2, Port::audioOut, mixer, Port::sigIn (1))
+               && cableFrom (layered, mixer, Port::sigOut, Patch::outputId, Port::audioIn), "two instruments are mixed on the utility row");
+        check (layered.find (mixer)->position.y == Patch::utilityTop && layered.kindOf (mixer, Port::sigOut) == Signal::Audio,
+               "the mixer sits on the utility row and is working on sound");
+        const int s3 = layered.add (ModuleType::Drums);
+        check (cableFrom (layered, s3, Port::audioOut, mixer, Port::sigIn (2)), "a third instrument takes the mixer's next input");
+        layered.remove (mixer);
+        check (cableFrom (layered, s1, Port::audioOut, Patch::outputId, Port::audioIn), "removing a utility joins its first input to what it fed");
+
+        // The track's own sound beside an instrument
+        Patch both;
+        const int drum = both.add (ModuleType::Drums);
+        check (both.patchTrackSound(), "the track's own sound can be patched in beside an instrument");
+        {
+            Graph g (both, sr, resolve);
+            check (renderTone (g, 6) > 0.3f, "and is then heard");
+            juce::ignoreUnused (drum);
+        }
+    }
+
+    std::cout << "Utilities: attenuator, mixer, inverter, crossfade, slew\n";
+    {
+        auto resolve = [] (const juce::String& n) { return Samples::find (n); };
+        auto renderTone = [] (Graph& g, int blocks)
+        {
+            std::vector<float> il (block), ir (block), ol (block), orr (block);
+            float peak = 0.0f;
+            int t = 0;
+            for (int b = 0; b < blocks; ++b)
+            {
+                for (int i = 0; i < block; ++i, ++t)
+                    il[(size_t) i] = ir[(size_t) i] = 0.5f * std::sin ((float) t * 0.05f);
+                g.process (il.data(), ir.data(), ol.data(), orr.data(), block, 120.0);
+                if (b > 0)
+                    for (float v : ol) peak = juce::jmax (peak, std::abs (v));
+            }
+            return peak;
+        };
+        const int in = Patch::inputId, out = Patch::outputId;
+
+        Patch p;
+        const int att = p.add (ModuleType::Attenuator);
+        check (p.find (att)->position.y == Patch::utilityTop && p.cables.size() == 1, "a utility lands on the lower row, unpatched");
+        check (p.kindOf (att, Port::sigIn (0)) == Signal::Any, "a loose utility takes sound or modulation");
+        check (! p.canConnect (in, Port::notesOut, att, Port::sigIn (0)), "but never notes");
+        check (p.connect (in, Port::audioOut, att, Port::sigIn (0)) && p.connect (att, Port::sigOut, out, Port::audioIn), "it patches into the sound");
+        check (p.kindOf (att, Port::sigOut) == Signal::Audio, "and is then working on sound");
+        const int lfo = p.add (ModuleType::LFO);
+        check (! p.canConnect (att, Port::sigOut, lfo, Port::modIn (0)), "so its output can't go into a knob");
+        {
+            Graph g (p, sr, resolve);
+            const float full = renderTone (g, 6);
+            g.find (att)->knob[0] = 0.5f;
+            const float half = renderTone (g, 6);
+            check (full > 0.45f && full < 0.55f && half > 0.2f && half < 0.3f, "attenuator at half level halves the sound");
+        }
+
+        // Sound plus its inverse cancels in the mixer
+        Patch cancel;
+        const int inv = cancel.add (ModuleType::Inverter);
+        const int mix = cancel.add (ModuleType::Mixer);
+        cancel.connect (in, Port::audioOut, inv, Port::sigIn (0));
+        cancel.connect (in, Port::audioOut, mix, Port::sigIn (0));
+        cancel.connect (inv, Port::sigOut, mix, Port::sigIn (1));
+        cancel.connect (mix, Port::sigOut, out, Port::audioIn);
+        {
+            Graph g (cancel, sr, resolve);
+            check (renderTone (g, 6) < 1e-5f, "mixer: a sound and its inverse cancel");
+            g.find (mix)->knob[1] = 0.0f;
+            check (renderTone (g, 6) > 0.45f, "mixer: with the inverse turned down the sound is back");
+        }
+
+        // Crossfade between the sound and silence
+        Patch fade;
+        const int xf = fade.add (ModuleType::Crossfade);
+        fade.connect (in, Port::audioOut, xf, Port::sigIn (0));
+        fade.connect (xf, Port::sigOut, out, Port::audioIn);
+        {
+            Graph g (fade, sr, resolve);
+            g.find (xf)->knob[0] = 0.0f;
+            const float a = renderTone (g, 6);
+            g.find (xf)->knob[0] = 1.0f;
+            const float b = renderTone (g, 6);
+            check (a > 0.45f && b < 1e-4f, "crossfade moves from input A to input B");
+        }
+
+        // Modulation through utilities: an LFO, inverted, into a knob
+        Patch mod;
+        const int filter = mod.add (ModuleType::Filter);
+        const int l = mod.add (ModuleType::LFO);
+        const int flip = mod.add (ModuleType::Inverter);
+        const int lag = mod.add (ModuleType::Slew);
+        mod.disconnect ((size_t) mod.cableInto (filter, Port::modIn (0)));
+        check (mod.connect (l, Port::modOut, flip, Port::sigIn (0)) && mod.kindOf (flip, Port::sigOut) == Signal::Mod, "a utility fed by an LFO works on modulation");
+        check (! mod.canConnect (flip, Port::sigOut, out, Port::audioIn), "so it can't go to a sound input");
+        check (mod.connect (flip, Port::sigOut, lag, Port::sigIn (0)) && mod.kindOf (lag, Port::sigOut) == Signal::Mod, "a utility after it follows suit");
+        check (! mod.canConnect (in, Port::audioOut, lag, Port::sigIn (0)), "sound can't join a utility that is working on modulation");
+        check (mod.connect (flip, Port::sigOut, filter, Port::modIn (0)), "and reaches a knob");
+        {
+            Graph g (mod, sr, resolve);
+            renderTone (g, 8);
+            const float direct = g.find (l)->modValue(), flipped = g.find (flip)->modValue();
+            check (std::abs (direct) > 0.001f && std::abs (direct + flipped) < 1e-6f, "inverter turns the LFO over");
+            check (std::abs (g.find (lag)->modValue()) < std::abs (flipped) + 1e-6f, "slew trails behind its input");
+        }
+
+        // Saving keeps utilities and their cables
+        Patch loaded;
+        loaded.fromVar (juce::JSON::parse (juce::JSON::toString (cancel.toVar())));
+        check (loaded.modules.size() == cancel.modules.size() && loaded.cables.size() == cancel.cables.size() && ! loaded.upgraded,
+               "utilities survive saving and loading");
+    }
+
+    std::cout << "Older patches\n";
+    {
+        auto resolve = [] (const juce::String& n) { return Samples::find (n); };
+        // Before note cables an instrument sat in the audio chain: Track In -> Synth -> Filter -> Out
+        auto old = [] (const juce::String& cables, const juce::String& modules)
+        {
+            return juce::JSON::parse ("{ \"modules\": [ {\"id\":1,\"type\":0,\"x\":12,\"y\":14}, {\"id\":2,\"type\":1,\"x\":900,\"y\":14}, " + modules
+                                      + " ], \"cables\": [ " + cables + " ], \"nextId\": 9 }");
+        };
+        Patch p;
+        p.fromVar (old ("[1,1,3,0], [3,1,4,0], [4,1,2,0]", "{\"id\":3,\"type\":3,\"x\":120,\"y\":50}, {\"id\":4,\"type\":5,\"x\":480,\"y\":14}"));
+        check (p.upgraded && p.cableInto (3, Port::notesIn) >= 0 && p.cableInto (3, Port::audioIn) < 0, "an old instrument gets a notes cable in place of its audio input");
+        check (p.find (3)->position.y == Patch::top, "cards are put back on their row");
+        check (p.cableInto (4, Port::audioIn) >= 0 && p.cables[(size_t) p.cableInto (4, Port::audioIn)].fromModule == 3, "and still feeds its effects");
+        {
+            Graph g (p, sr, resolve);
+            g.noteOn (48, 0.9f, -1.0);
+            std::vector<float> z (block, 0.0f), ol (block), orr (block);
+            float peak = 0.0f;
+            for (int b = 0; b < 12; ++b)
+            {
+                g.process (z.data(), z.data(), ol.data(), orr.data(), block, 120.0);
+                for (float v : ol) peak = juce::jmax (peak, std::abs (v));
+            }
+            check (peak > 0.02f, "and still plays");
+        }
+
+        // Two instruments in a row were heard together: Track In -> Synth -> Sampler -> Out
+        Patch two;
+        two.fromVar (old ("[1,1,3,0], [3,1,5,0], [5,1,2,0]", "{\"id\":3,\"type\":3,\"x\":120,\"y\":14}, {\"id\":5,\"type\":2,\"x\":480,\"y\":14}"));
+        int mixer = -1;
+        for (auto& m : two.modules) if (m.type == ModuleType::Mixer) mixer = m.id;
+        check (mixer >= 0 && two.cableInto (mixer, Port::sigIn (0)) >= 0 && two.cableInto (mixer, Port::sigIn (1)) >= 0
+               && two.cableInto (Patch::outputId, Port::audioIn) >= 0 && two.cables[(size_t) two.cableInto (Patch::outputId, Port::audioIn)].fromModule == mixer,
+               "old layered instruments are mixed");
+        check (two.cableInto (3, Port::notesIn) >= 0 && two.cableInto (5, Port::notesIn) >= 0, "and both take notes");
+
+        // A file with a cable the rules don't allow: it is dropped
+        Patch bad;
+        auto v = p.toVar();
+        v["cables"].getArray()->add (juce::Array<juce::var> { 1, 4, 4, 0 });       // notes into the filter
+        const auto good = p.cables.size();
+        bad.fromVar (v);
+        check (bad.cables.size() == good, "a cable that breaks the rules is dropped on loading");
+    }
 
     std::cout << "Rolling sequencer rack\n";
     {

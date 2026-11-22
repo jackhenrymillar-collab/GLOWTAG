@@ -151,7 +151,7 @@ std::vector<ChannelStrip::Insert> ChannelStrip::inserts() const
 {
     std::vector<const Module*> byPosition;
     for (auto& m : track.patch.modules)
-        if (m.type != ModuleType::Input && m.type != ModuleType::Output)
+        if (m.type != ModuleType::Input && m.type != ModuleType::Output && ! moduleInfo (m.type).utility)
             byPosition.push_back (&m);
     std::sort (byPosition.begin(), byPosition.end(), [] (auto* a, auto* b) { return a->position.x < b->position.x; });
     std::vector<Insert> list;
