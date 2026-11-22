@@ -17,6 +17,30 @@ namespace Neon
     struct Look { int style = 0; float glow = 1.0f; };
     Look& look();
 
+    // Soft light. While a view paints, every lit piece of glass adds its shape here (in the view's
+    // coordinates). GlowLayer then blurs the lot into a halo and a wider bloom, the way the Tab wall
+    // does, instead of stacking wide strokes that show as bands.
+    struct Glow
+    {
+        struct Source { juce::Path path; juce::Colour colour; float width; };   // width 0: filled
+        std::vector<Source> sources;
+        juce::AffineTransform base, current;   // wall space to view; current adds the group's placement
+        float alpha = 1.0f;                     // a faded piece glows less
+        bool collecting = false;
+        void add (const juce::Path& p, juce::Colour c, float width, const juce::AffineTransform& t = {});
+    };
+    Glow& glow();
+
+    class GlowLayer
+    {
+    public:
+        // Turns what was collected into blurred light, ready for draw(). `unit` is view pixels per wall unit.
+        void build (int width, int height, float unit);
+        void draw (juce::Graphics&, juce::Rectangle<float> area) const;
+    private:
+        juce::Image halo, bloom;
+    };
+
     inline juce::Colour mix (juce::Colour a, juce::Colour b, float t) { return a.interpolatedWith (b, juce::jlimit (0.0f, 1.0f, t)); }
     inline juce::Colour rgba (juce::Colour c, float a) { return c.withAlpha (juce::jlimit (0.0f, 1.0f, a)); }
     inline float clamp01 (float v) { return juce::jlimit (0.0f, 1.0f, v); }

@@ -57,4 +57,5 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
     std::map<int, int> heldKeys;                // key code -> note
     juce::Image bricks;
+    Neon::GlowLayer glowLayer;
 };

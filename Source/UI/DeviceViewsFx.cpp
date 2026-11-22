@@ -70,7 +70,7 @@ namespace
     {
         const int N = 46, R = 13;
         const float dy = h * 0.76f / (float) R;
-        juce::Path off, on, glow;
+        juce::Path off, on, lit;
         for (int i = 0; i < N; ++i)
         {
             const float f = 25.0f * std::pow (720.0f, (float) i / (float) (N - 1)), x = P.X (f);
@@ -79,11 +79,11 @@ namespace
             {
                 const float y = y0 + h - 24 - (float) k * dy;
                 (k < n ? on : off).addEllipse (x - 2.8f, y - 2.8f, 5.6f, 5.6f);
-                if (k < n) glow.addEllipse (x - 8, y - 8, 16, 16);
+                if (k < n) lit.addEllipse (x - 4.5f, y - 4.5f, 9, 9);
             }
         }
         g.setColour (juce::Colours::white.withAlpha (0.055f)); g.fillPath (off);
-        g.setColour (rgba (col, 0.11f * look().glow)); g.fillPath (glow);
+        glow().add (lit, rgba (col, 0.5f), 0.0f);
         g.setColour (mix (col, C::white, 0.35f).withAlpha (0.8f)); g.fillPath (on);
     }
 
@@ -91,7 +91,10 @@ namespace
     template <typename Fn> void faded (juce::Graphics& g, float alpha, Fn&& fn)
     {
         g.beginTransparencyLayer (clampf (alpha));
+        const float was = glow().alpha;
+        glow().alpha = was * clampf (alpha);
         fn();
+        glow().alpha = was;
         g.endTransparencyLayer();
     }
 

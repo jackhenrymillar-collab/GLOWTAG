@@ -9,6 +9,61 @@ using juce::Point;
 
 Look& look() { static Look l; return l; }
 
+Glow& glow() { static Glow g; return g; }
+
+void Glow::add (const juce::Path& p, Colour c, float width, const juce::AffineTransform& t)
+{
+    if (! collecting || p.isEmpty() || alpha <= 0.01f || c.getAlpha() == 0) return;
+    Source s { p, c.withMultipliedAlpha (clamp01 (alpha)), width };
+    const auto tr = t.followedBy (current);
+    s.path.applyTransform (tr);
+    if (width > 0.0f) s.width = width * std::sqrt (std::abs (tr.getDeterminant()));
+    sources.push_back (std::move (s));
+}
+
+void GlowLayer::build (int width, int height, float unit)
+{
+    auto& gl = glow();
+    const int hw = juce::jmax (1, width / 2), hh = juce::jmax (1, height / 2);
+    const int bw = juce::jmax (1, width / 4), bh = juce::jmax (1, height / 4);
+    if (halo.getWidth() != hw || halo.getHeight() != hh) halo = juce::Image (juce::Image::ARGB, hw, hh, true);
+    else halo.clear (halo.getBounds());
+    if (bloom.getWidth() != bw || bloom.getHeight() != bh) bloom = juce::Image (juce::Image::ARGB, bw, bh, true);
+    else bloom.clear (bloom.getBounds());
+    if (gl.sources.empty()) return;
+
+    {
+        juce::Graphics g (halo);
+        const auto half = juce::AffineTransform::scale (0.5f);
+        for (auto& s : gl.sources)
+        {
+            g.setColour (s.colour);
+            if (s.width > 0.0f) g.strokePath (s.path, juce::PathStrokeType (s.width, juce::PathStrokeType::curved, juce::PathStrokeType::rounded), half);
+            else                g.fillPath (s.path, half);
+        }
+    }
+    {
+        juce::Graphics g (bloom);
+        g.setImageResamplingQuality (juce::Graphics::mediumResamplingQuality);
+        g.drawImage (halo, bloom.getBounds().toFloat());
+    }
+    gl.sources.clear();
+    WallArt::blur (halo, juce::jmax (1.2f, 3.0f * unit * 0.5f));
+    WallArt::blur (bloom, juce::jmax (1.5f, 11.0f * unit * 0.25f));
+}
+
+void GlowLayer::draw (juce::Graphics& g, juce::Rectangle<float> area) const
+{
+    if (! halo.isValid()) return;
+    const float G = look().glow;
+    juce::Graphics::ScopedSaveState s (g);
+    g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
+    g.setOpacity (clamp01 (0.55f * G));
+    g.drawImage (bloom, area);
+    g.setOpacity (clamp01 (0.95f * G));
+    g.drawImage (halo, area);
+}
+
 double now() { return juce::Time::getMillisecondCounterHiRes() * 0.001; }
 
 //==============================================================================
@@ -166,7 +221,7 @@ namespace
 
 void tube (juce::Graphics& g, const Lines& linesIn, Colour col, const TubeOptions& o)
 {
-    const float G = look().glow, lw = o.w;
+    const float lw = o.w;
     const int st = o.style >= 0 ? o.style : look().style;
     const bool isDashed = o.dashOn > 0.0f;
     const Lines& lines = linesIn;
@@ -198,8 +253,11 @@ void tube (juce::Graphics& g, const Lines& linesIn, Colour col, const TubeOption
             g.fillPath (d);
         };
         dots (r + 0.6f, 1.2f, 2.0f, juce::Colours::black.withAlpha (0.45f));
-        dots (r * 3.4f, 0, 0, rgba (col, 0.07f * G));
-        dots (r * 2.0f, 0, 0, rgba (col, 0.18f * G));
+        {
+            juce::Path d;
+            for (auto& p : pts) d.addEllipse (p.x - r * 1.5f, p.y - r * 1.5f, r * 3.0f, r * 3.0f);
+            glow().add (d, rgba (col, 0.8f), 0.0f);
+        }
         dots (r, 0, 0, mix (col, juce::Colours::white, 0.3f));
         dots (r * 0.45f, 0, 0, juce::Colours::white.withAlpha (0.85f));
         return;
@@ -223,12 +281,7 @@ void tube (juce::Graphics& g, const Lines& linesIn, Colour col, const TubeOption
     // Shadow on the wall, glow, glass, hot core, shine
     if (st == 2) stroke (g, path, 3.2f * lw, mix (col, juce::Colours::black, 0.55f), juce::AffineTransform::translation (2.6f, 2.6f));
     else         stroke (g, path, 3.6f * lw, juce::Colours::black.withAlpha (0.42f), juce::AffineTransform::translation (1.4f, 2.4f));
-    if (G > 0.02f)
-    {
-        const float k = 0.55f + 0.45f * G;
-        const float widths[3] = { 22.0f, 14.0f, 8.0f }, alphas[3] = { 0.035f, 0.06f, 0.15f };
-        for (int i = 0; i < 3; ++i) stroke (g, path, widths[i] * lw * k, rgba (col, alphas[i] * G));
-    }
+    glow().add (path, rgba (col, 0.85f), 5.0f * lw);
     stroke (g, path, (st == 2 ? 3.1f : 2.4f) * lw, mix (col, juce::Colours::white, 0.18f));
     stroke (g, path, 0.95f * lw, mix (col, juce::Colours::white, 0.8f));
     stroke (g, path, 0.4f, juce::Colours::white.withAlpha (0.4f), juce::AffineTransform::translation (-0.5f, -0.7f));
@@ -251,12 +304,9 @@ void bulb (juce::Graphics& g, float x, float y, Colour col, float lv, float r)
     lv = clamp01 (lv);
     if (lv > 0.03f)
     {
-        const float m[3] = { 4.0f, 2.6f, 1.7f }, a[3] = { 0.06f, 0.12f, 0.22f };
-        for (int i = 0; i < 3; ++i)
-        {
-            g.setColour (rgba (col, a[i] * lv * look().glow));
-            g.fillEllipse (x - r * m[i], y - r * m[i], r * m[i] * 2.0f, r * m[i] * 2.0f);
-        }
+        juce::Path d;
+        d.addEllipse (x - r * 1.7f, y - r * 1.7f, r * 3.4f, r * 3.4f);
+        glow().add (d, rgba (col, 0.9f * lv), 0.0f);
     }
     g.setColour (mix (Colour (0xff2a2b30), mix (col, juce::Colours::white, 0.4f), lv));
     g.fillEllipse (x - r, y - r, r * 2.0f, r * 2.0f);
@@ -318,16 +368,8 @@ float text (juce::Graphics& g, const juce::String& s, float x, float y, float si
     const auto t = juce::AffineTransform::scale (k).translated (placeX (x, w, al), y);
     if (lit > 0.0f)
     {
-        const float G = look().glow;
-        const float blur = (5.0f + size * 0.3f) * G * lit;
-        if (blur > 0.5f)
-        {
-            // A soft halo standing in for the glass's light on the bricks
-            g.setColour (rgba (col, 0.07f * lit));
-            g.strokePath (sh.path, juce::PathStrokeType (blur * 0.55f / k, juce::PathStrokeType::curved, juce::PathStrokeType::rounded), t);
-            g.setColour (rgba (col, 0.14f * lit));
-            g.strokePath (sh.path, juce::PathStrokeType (blur * 0.22f / k, juce::PathStrokeType::curved, juce::PathStrokeType::rounded), t);
-        }
+        // The letters light the bricks behind them
+        glow().add (sh.path, rgba (col, 0.6f * lit), 0.0f, t);
         g.setColour (mix (mix (Colour (0xff60626a), col, lit), juce::Colours::white, 0.5f * lit));
         g.fillPath (sh.path, t);
     }
@@ -360,8 +402,7 @@ void bigTag (juce::Graphics& g, const juce::String& s, float x, float y, Colour 
         const auto& sh = shaped (1, s.toUpperCase());
         const float k = 0.7f;
         const auto t = juce::AffineTransform::scale (k).translated (0.0f, -6.0f).followedBy (base);
-        g.setColour (rgba (c, 0.12f * G)); g.strokePath (sh.path, round (30.0f), t);
-        g.setColour (rgba (c, 0.2f * G));  g.strokePath (sh.path, round (12.0f), t);
+        glow().add (sh.path, rgba (c, 0.9f), 0.0f, t);
         g.setColour (mix (c, juce::Colours::white, 0.5f)); g.fillPath (sh.path, t);
     }
     else if (st == 2)
@@ -374,7 +415,8 @@ void bigTag (juce::Graphics& g, const juce::String& s, float x, float y, Colour 
         g.setColour (Colour (0xff17181b)); g.fillPath (sh.path, juce::AffineTransform::scale (k).followedBy (shear).translated (0.0f, -6.0f).followedBy (base));
         const auto t2 = juce::AffineTransform::scale (k).followedBy (shear).translated (0.0f, -6.0f).followedBy (base);
         g.setColour (rgba (c, 0.2f)); g.fillPath (sh.path, t2);
-        g.setColour (rgba (c, 0.18f * G)); g.strokePath (sh.path, round (12.0f / k), t2);
+        glow().add (sh.path, rgba (c, 0.6f), 0.0f, t2);
+        glow().add (sh.path, rgba (c, 0.9f), 6.0f / k, t2);
         g.setColour (mix (c, juce::Colours::white, 0.25f)); g.strokePath (sh.path, round (2.2f / k), t2);
     }
     else
@@ -383,8 +425,7 @@ void bigTag (juce::Graphics& g, const juce::String& s, float x, float y, Colour 
         const float k = 1.04f;
         const auto t = juce::AffineTransform::scale (k).followedBy (base);
         g.setColour (juce::Colours::black.withAlpha (0.45f)); g.strokePath (sh.path, round (4.0f / k), juce::AffineTransform::scale (k).translated (2.5f, 4.0f).followedBy (base));
-        g.setColour (rgba (c, 0.07f * G)); g.strokePath (sh.path, round (40.0f / k), t);
-        g.setColour (rgba (c, 0.12f * G)); g.strokePath (sh.path, round (20.0f / k), t);
+        glow().add (sh.path, rgba (c, 0.9f), 9.0f / k, t);
         g.setColour (rgba (c, juce::jmin (1.0f, 0.6f * G + 0.1f))); g.strokePath (sh.path, round (6.0f / k), t);
         g.setColour (mix (c, juce::Colours::white, 0.18f)); g.strokePath (sh.path, round (3.2f / k), t);
         g.setColour (mix (c, juce::Colours::white, 0.82f)); g.strokePath (sh.path, round (1.1f / k), t);
@@ -502,16 +543,21 @@ void Wall::paintPools (juce::Graphics& g)
 
 void Wall::paint (juce::Graphics& g, double t, float dt)
 {
+    auto& gl = glow();
     for (auto& gr : groups)
     {
         juce::Graphics::ScopedSaveState s (g);
         g.addTransform (gr->toWall());
+        gl.current = gr->toWall().followedBy (gl.base);
+        gl.alpha = 1.0f;
         const auto* c = colours (gr->mod);
         if (gr->draw) gr->draw (g, t, dt, c);
         for (auto& it : gr->items)
             if (! it->visible || it->visible())
                 drawItem (g, *it, c);
     }
+    gl.current = gl.base;
+    gl.alpha = 1.0f;
 }
 
 void Wall::drawItem (juce::Graphics& g, Item& it, const Colour* c)
