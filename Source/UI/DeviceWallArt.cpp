@@ -525,11 +525,13 @@ namespace
                 for (int c = 0; c < 4; ++c)
                     sum[c] += line[(size_t) i * 4 + (size_t) c];
 
+            // Dividing by the window is the slow part: a multiply and a shift does the same
+            const juce::uint64 inverse = (juce::uint64) ((1u << 24) / (juce::uint32) window) + 1u;
             for (int i = 0; i < length; ++i)
             {
                 juce::uint8* out = first + (size_t) i * (size_t) step;
                 for (int c = 0; c < 4; ++c)
-                    out[c] = (juce::uint8) (sum[c] / window);
+                    out[c] = (juce::uint8) (((juce::uint64) sum[c] * inverse) >> 24);
                 const int add = i + radius + 1, drop = i - radius;
                 if (add < length)  for (int c = 0; c < 4; ++c) sum[c] += line[(size_t) add * 4 + (size_t) c];
                 if (drop >= 0)     for (int c = 0; c < 4; ++c) sum[c] -= line[(size_t) drop * 4 + (size_t) c];

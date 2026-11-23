@@ -4,7 +4,7 @@
 
 // The expanded view: a device's neon wall over the whole window. Double-click empty space on a
 // device in the rack to open it; Esc closes it, [ and ] step through the track's devices.
-class ExpandedDevice : public juce::Component, private juce::Timer
+class ExpandedDevice : public juce::Component
 {
 public:
     explicit ExpandedDevice (AppContext&);
@@ -13,6 +13,7 @@ public:
     void open (int track, int moduleId);
     void close();
     bool isOpen() const { return built != nullptr; }
+    void tick();                    // once per screen refresh while open
     int openTrack() const { return device != nullptr ? device->track : -1; }
 
     std::function<void()> onClose;              // the rack refreshes its knobs
@@ -36,7 +37,6 @@ public:
     bool keyStateChanged (bool isKeyDown) override;
 
 private:
-    void timerCallback() override;
     void rebuild();
     void step (int direction);                  // the previous or next device on the track
     void buildChrome();
@@ -56,6 +56,7 @@ private:
     Neon::Wall* dragging = nullptr;
     std::unique_ptr<juce::FileChooser> chooser;
     std::map<int, int> heldKeys;                // key code -> note
-    juce::Image bricks;
+    juce::Image bricks;             // bricks and the steady pools of light, at screen resolution
+    juce::int64 backdropKey = 0;
     Neon::GlowLayer glowLayer;
 };

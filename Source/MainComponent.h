@@ -54,7 +54,8 @@ public:
     void setMode (Mode);
 
 private:
-    void timerCallback() override;
+    void timerCallback() override;              // housekeeping, 30 times a second: recording, MIDI, the status line
+    void frame (double timestampSeconds, bool fromDisplay);   // drawing, once per screen refresh (at most 60 a second)
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void togglePlay();
     void showCommandPalette();
@@ -107,6 +108,11 @@ private:
     int statusCounter = 0;
     bool offlineClock = false;                  // no audio device: run the engine from the UI timer (for screenshots)
     juce::AudioBuffer<float> offlineBuffer;
+
+    // Animation follows the display's own refresh, so moving things land on every frame evenly.
+    // Declared last: it calls into every view above.
+    double lastFrameTime = 0.0, lastRefresh = 0.0;   // our clock; the display's own clock
+    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t, true); } };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

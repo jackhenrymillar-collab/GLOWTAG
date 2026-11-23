@@ -57,13 +57,24 @@ void TopBar::tick()
     recButton.setToggleState (ctx.engine.recordArmed.load(), juce::dontSendNotification);
     loopButton.setToggleState (ctx.engine.looping.load(), juce::dontSendNotification);
     metroButton.setToggleState (ctx.engine.metronome.load(), juce::dontSendNotification);
-    recButton.glow = ctx.engine.recordArmed.load() && ctx.engine.isPlaying() ? 1.0f : 0.0f;
-    recButton.repaint();
-    playButton.glow = ctx.engine.getPulse();
     rainbowButton.setToggleState (Theme::get().isRainbow(), juce::dontSendNotification);
-    playButton.repaint();
-    repaint (lcdArea);
-    repaint (logoArea);
+
+    // Only what changed is drawn again
+    const float rec = ctx.engine.recordArmed.load() && ctx.engine.isPlaying() ? 1.0f : 0.0f;
+    if (! juce::approximatelyEqual (recButton.glow, rec)) { recButton.glow = rec; recButton.repaint(); }
+    const float pulse = ctx.engine.getPulse();
+    if (std::abs (playButton.glow - pulse) > 0.01f || (pulse == 0.0f && playButton.glow != 0.0f)) { playButton.glow = pulse; playButton.repaint(); }
+
+    // The readouts change when the shown bar, beat, time (to the hundredth) or tempo does
+    const double beats = ctx.playheadBeats();
+    const double secs = beats * 60.0 / ctx.project.bpm.load();
+    const auto shown = (juce::int64) std::floor (beats * 4.0) * 7919 + (juce::int64) std::floor (secs * 100.0) * 104729
+                     + (juce::int64) std::round (ctx.project.bpm.load() * 10.0);
+    if (shown != shownReadout)
+    {
+        shownReadout = shown;
+        repaint (lcdArea);
+    }
 }
 
 juce::Rectangle<float> TopBar::swatchBounds (int index) const

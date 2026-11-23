@@ -151,8 +151,17 @@ void EditorView::tick()
     if (! juce::exactlyEqual (ph, lastPlayhead))
     {
         lastPlayhead = ph;
-        repaint (grid.expanded (2));
-        repaint (velocityLane.expanded (2));
+        // Only the strips the playhead leaves and enters
+        int x = -1000;
+        if (auto* clip = ctx.selectedClipPtr(); clip != nullptr && ph >= clip->start && ph < clip->end())
+            x = juce::roundToInt (beatToX (std::fmod (ph - clip->start, loopLength())));
+        if (x != shownPlayheadX)
+        {
+            const int top = grid.getY() - 2, height = velocityLane.getBottom() + 2 - top;
+            if (shownPlayheadX > -1000) repaint (shownPlayheadX - 9, top, 19, height);
+            if (x > -1000)              repaint (x - 9, top, 19, height);
+            shownPlayheadX = x;
+        }
     }
 }
 

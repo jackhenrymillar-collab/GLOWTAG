@@ -18,7 +18,7 @@ ExpandedDevice::ExpandedDevice (AppContext& c) : ctx (c)
     chrome.colours = [this] (int) { return chromeColours; };
 }
 
-ExpandedDevice::~ExpandedDevice() { stopTimer(); }
+ExpandedDevice::~ExpandedDevice() = default;
 
 juce::var ExpandedDevice::lookToVar() const
 {
@@ -47,13 +47,11 @@ void ExpandedDevice::open (int track, int moduleId)
     toFront (true);
     grabKeyboardFocus();
     lastFrame = now();
-    startTimerHz (30);
 }
 
 void ExpandedDevice::close()
 {
     if (! isOpen()) return;
-    stopTimer();
     for (auto& [key, note] : heldKeys) device->note (note, false);
     heldKeys.clear();
     if (dragging != nullptr) dragging->mouseUp();
@@ -180,7 +178,7 @@ void ExpandedDevice::resized()
     buildChrome();
 }
 
-void ExpandedDevice::timerCallback()
+void ExpandedDevice::tick()
 {
     if (device == nullptr || device->module() == nullptr || ctx.generation != generation) { close(); return; }
     repaint();
@@ -199,12 +197,22 @@ void ExpandedDevice::paint (juce::Graphics& g)
         if (auto* d = juce::Desktop::getInstance().getDisplays().getDisplayForRect (top->getScreenBounds()))
             ds = juce::jlimit (1.0f, 3.0f, (float) d->scale);
     const int bw = juce::jmax (1, juce::roundToInt ((float) getWidth() * ds)), bh = juce::jmax (1, juce::roundToInt ((float) getHeight() * ds));
-    if (bricks.isNull() || bricks.getWidth() != bw || bricks.getHeight() != bh)
+    // The pools of light behind each part and the jumper wires stay steady too, so they are kept with
+    // the bricks and drawn again only when the colours, the glow or the device change
+    juce::int64 key = (juce::int64) (juce::pointer_sized_int) built.get() * 31 + juce::roundToInt (look().glow * 1000.0f)
+                    + (juce::int64) juce::roundToInt (scale * 4096.0f) * 7 + (juce::int64) wallArea.getX() * 131 + (juce::int64) wallArea.getY() * 137;
+    for (auto& gr : built->wall->groups)
+        key = key * 1000003 + (juce::int64) built->wall->colours (gr->mod)[0].getARGB();
+    if (bricks.isNull() || bricks.getWidth() != bw || bricks.getHeight() != bh || key != backdropKey)
     {
-        bricks = juce::Image (juce::Image::RGB, bw, bh, false);
+        backdropKey = key;
+        if (bricks.getWidth() != bw || bricks.getHeight() != bh)
+            bricks = juce::Image (juce::Image::RGB, bw, bh, false);
         juce::Graphics bg (bricks);
         bg.addTransform (juce::AffineTransform::scale (ds));
         paintBricks (bg, getLocalBounds().toFloat());
+        bg.addTransform (juce::AffineTransform::scale (scale).translated (wallArea.getX(), wallArea.getY()));
+        built->wall->paintPools (bg);
     }
     g.drawImage (bricks, getLocalBounds().toFloat());
 
@@ -224,7 +232,6 @@ void ExpandedDevice::paint (juce::Graphics& g)
     {
         juce::Graphics::ScopedSaveState s (g);
         g.addTransform (juce::AffineTransform::scale (scale).translated (wallArea.getX(), wallArea.getY()));
-        built->wall->paintPools (g);
         built->wall->paint (g, t, dt);
     }
     gl.base = gl.current = {};

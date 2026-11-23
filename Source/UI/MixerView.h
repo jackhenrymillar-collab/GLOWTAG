@@ -45,7 +45,7 @@ private:
     AppContext& ctx;
     const bool isMaster, isReturn, isBus;
     float shownLevel = 0.0f, shownReduction = 0.0f, shownHeat = 0.0f;
-    int clipHold = 0;
+    float clipHold = 0.0f;          // seconds an over stays lit
     int numInsertSlots = 8;
 
     juce::Slider trim  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };

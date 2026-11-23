@@ -190,10 +190,10 @@ void ChannelStrip::tick()
         }
 
     const float l = track.meter.load();
-    const bool wasHeld = clipHold > 0;
-    if (l >= 1.0f) clipHold = 45;                 // an over stays lit for a second and a half
-    else if (clipHold > 0) --clipHold;
-    if (std::abs (l - shownLevel) > 0.005f || std::abs (reduction - shownReduction) > 0.1f || wasHeld != (clipHold > 0))
+    const bool wasHeld = clipHold > 0.0f;
+    if (l >= 1.0f) clipHold = 1.5f;               // an over stays lit for a second and a half
+    else if (clipHold > 0.0f) clipHold -= Neon::frameTime();
+    if (std::abs (l - shownLevel) > 0.005f || std::abs (reduction - shownReduction) > 0.1f || wasHeld != (clipHold > 0.0f))
     {
         shownLevel = l;
         shownReduction = reduction;
@@ -357,7 +357,7 @@ void ChannelStrip::drawMeters (juce::Graphics& g, juce::Colour c) const
                 auto led = juce::Rectangle<float> (0.0f, 0.0f, 6.0f, 6.0f).withCentre ({ (float) area.getCentreX(), cy });
                 const int h = ledHash (slot, column, j);
                 const bool dead = h % 23 == 0, tired = h % 6 == 0;
-                const bool lit = ! dead && (fromTop ? (1.0f - frac) < value : frac < value || (j == count - 1 && clipHold > 0 && column == 0));
+                const bool lit = ! dead && (fromTop ? (1.0f - frac) < value : frac < value || (j == count - 1 && clipHold > 0.0f && column == 0));
                 auto colour = column == 1 ? amber : frac >= redFrom ? th.danger : frac >= yellowFrom ? th.warn : c;
 
                 g.setColour (juce::Colour (0xff080909));
@@ -403,7 +403,7 @@ void ChannelStrip::drawMeters (juce::Graphics& g, juce::Colour c) const
         if (top < yellowY) { g.setColour (th.warn);   g.fillRect (m.withTop (juce::jmax (top, redY)).withBottom (yellowY)); }
         if (top < redY)    { g.setColour (th.danger); g.fillRect (m.withTop (top).withBottom (redY)); }
     }
-    if (clipHold > 0)
+    if (clipHold > 0.0f)
     {
         g.setColour (th.danger);
         g.fillRoundedRectangle (m.withHeight (4.0f), 2.0f);

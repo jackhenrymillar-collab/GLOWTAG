@@ -35,6 +35,7 @@ private:
     juce::TextButton loopButton;
 
     juce::Rectangle<int> toolbar, keys, grid, velocityLane;
+    int shownPlayheadX = -1000;
     static constexpr int numRows = 36;
     static constexpr double gridStep = 0.25;   // a sixteenth note
     int lowNote = 48;

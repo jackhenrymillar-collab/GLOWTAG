@@ -38,7 +38,6 @@ public:
     std::function<void()> onRaise;                               // clicked: come forward, but stay under the cables
     std::function<void()> onOpenPlugin;                          // Plugin: double-click opens its editor
     std::function<void()> onOpenExpanded;                        // built-in device: double-click opens its expanded view
-    float pulse = 0.0f;
     float flash = 0.0f;      // lit up after the mixer jumped here
 
     void tick();
@@ -67,7 +66,7 @@ private:
     Neon::GlowLayer glowLayer;
     juce::Point<float> dragStart;
     bool dropHover = false, onControl = false, moving = false;
-    float shownDisplay = 0.0f;
+    float shownDisplay = 0.0f, shownLevel = -1.0f;
     double lastPaint = 0.0, lastReadout = -10.0;
 
     void showSampleMenu (std::function<void (const juce::String&)> choose);
@@ -88,6 +87,7 @@ public:
     CableLayer (AppContext&, std::function<ModuleCard* (int)> cardForModule);
 
     void setPatch (Patch* p) { patch = p; repaint(); }
+    void tick (bool flowing);   // while sound flows only the cables are redrawn, not the cards under them
     std::function<void()> onChanged;
     std::function<void (const juce::String&)> onHint;      // what the jack under the pointer is, or why a cable won't go there
     float rowOffset = 0.0f;                                // how far down the rows sit (they are centred in full screen)
@@ -112,6 +112,7 @@ private:
     bool dragging = false;
     juce::Point<float> dragEnd;
     int hoverCable = -1;
+    bool wasFlowing = false;
 
     juce::Point<float> jackPos (int module, int port) const;
     JackRef jackAt (juce::Point<float>, float radius = 9.0f) const;
@@ -160,6 +161,8 @@ private:
         std::function<void()> onDoubleClick;
         void paint (juce::Graphics&) override;
         void mouseDoubleClick (const juce::MouseEvent&) override { if (onDoubleClick) onDoubleClick(); }
+        juce::Image dots;                 // the grid, drawn once at the screen's resolution
+        juce::uint32 dotsColour = 0;
     };
 
     AppContext& ctx;

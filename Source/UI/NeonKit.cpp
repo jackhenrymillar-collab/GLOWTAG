@@ -32,7 +32,7 @@ void paintLit (juce::Graphics& g, int width, int height, GlowLayer& layer, float
     draw (g, true);
 }
 
-GlowLayer& scratchGlow() { static GlowLayer l; l.bloomAmount = 0.3f; return l; }
+GlowLayer& scratchGlow() { static GlowLayer l (64); l.bloomAmount = 0.3f; return l; }
 
 void wordButton (juce::Graphics& g, const juce::String& s, juce::Rectangle<float> box, float size, Colour col, bool on, bool over, juce::Justification just)
 {
@@ -54,9 +54,74 @@ void Glow::add (const juce::Path& p, Colour c, float width, const juce::AffineTr
     sources.push_back (std::move (s));
 }
 
+namespace
+{
+    // A cheap fingerprint of everything that was collected: if it matches, the blur would come out the same
+    juce::uint64 fingerprint (const std::vector<Glow::Source>& sources, int width, int height, float unit)
+    {
+        juce::uint64 h = 1469598103934665603ull;
+        auto mixBits = [&h] (juce::uint64 v) { h ^= v; h *= 1099511628211ull; };
+        auto mixFloat = [&] (float f) { juce::uint32 u; std::memcpy (&u, &f, 4); mixBits (u); };
+        mixBits ((juce::uint64) width);
+        mixBits ((juce::uint64) height);
+        mixFloat (unit);
+        for (auto& s : sources)
+        {
+            mixBits (s.colour.getARGB());
+            mixFloat (s.width);
+            for (juce::Path::Iterator it (s.path); it.next();)
+            {
+                mixBits ((juce::uint64) it.elementType);
+                mixFloat (it.x1); mixFloat (it.y1);
+                if (it.elementType == juce::Path::Iterator::quadraticTo || it.elementType == juce::Path::Iterator::cubicTo)
+                { mixFloat (it.x2); mixFloat (it.y2); }
+                if (it.elementType == juce::Path::Iterator::cubicTo)
+                { mixFloat (it.x3); mixFloat (it.y3); }
+            }
+        }
+        return h;
+    }
+}
+
 void GlowLayer::build (int width, int height, float unit)
 {
     auto& gl = glow();
+    const auto sig = fingerprint (gl.sources, width, height, unit);
+    ++useCounter;
+
+    for (int i = 0; i < (int) entries.size(); ++i)
+        if (entries[(size_t) i].signature == sig && entries[(size_t) i].halo.isValid())
+        {
+            // Same light as before: nothing to blur
+            auto& e = entries[(size_t) i];
+            e.frames = current == i ? e.frames + 1 : 1;
+            e.lastUse = useCounter;
+            current = i;
+            gl.sources.clear();
+            ++blursReused;
+            return;
+        }
+
+    // A new light: reuse the entry used longest ago (or add one while there is room)
+    int slot = (int) entries.size();
+    if (slot >= capacity)
+    {
+        slot = 0;
+        for (int i = 1; i < (int) entries.size(); ++i)
+            if (entries[(size_t) i].lastUse < entries[(size_t) slot].lastUse) slot = i;
+    }
+    else
+        entries.emplace_back();
+    auto& e = entries[(size_t) slot];
+    e.signature = sig;
+    e.frames = 0;
+    e.lastUse = useCounter;
+    e.compositeGlow = -1.0f;
+    current = slot;
+    ++blursMade;
+
+    auto& halo = e.halo;
+    auto& bloom = e.bloom;
     const int hw = juce::jmax (1, width / 2), hh = juce::jmax (1, height / 2);
     const int bw = juce::jmax (1, width / 4), bh = juce::jmax (1, height / 4);
     if (halo.getWidth() != hw || halo.getHeight() != hh) halo = juce::Image (juce::Image::ARGB, hw, hh, true);
@@ -85,19 +150,69 @@ void GlowLayer::build (int width, int height, float unit)
     WallArt::blur (bloom, juce::jmax (1.5f, 11.0f * unit * 0.25f));
 }
 
-void GlowLayer::draw (juce::Graphics& g, juce::Rectangle<float> area) const
+void GlowLayer::draw (juce::Graphics& g, juce::Rectangle<float> area)
 {
-    if (! halo.isValid()) return;
+    if (current < 0 || current >= (int) entries.size()) return;
+    auto& e = entries[(size_t) current];
+    if (! e.halo.isValid()) return;
     const float G = look().glow;
-    juce::Graphics::ScopedSaveState s (g);
-    g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
-    g.setOpacity (clamp01 (bloomAmount * G));
-    g.drawImage (bloom, area);
-    g.setOpacity (clamp01 (0.95f * G));
-    g.drawImage (halo, area);
+    const float bloomOpacity = clamp01 (bloomAmount * G), haloOpacity = clamp01 (0.95f * G);
+
+    auto layDown = [&] (juce::Graphics& dest, juce::Rectangle<float> into)
+    {
+        juce::Graphics::ScopedSaveState s (dest);
+        dest.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
+        dest.setOpacity (bloomOpacity);
+        dest.drawImage (e.bloom, into);
+        dest.setOpacity (haloOpacity);
+        dest.drawImage (e.halo, into);
+    };
+
+    // Light that changes every frame (a moving meter, a turning reel) is first laid together at the halo's
+    // own size, which is small, and then scaled up once rather than twice. Light that has held still is
+    // laid together once at the screen's own resolution and then only copied. The same picture either
+    // way, for far less work, since scaling the soft images up is most of the cost.
+    if (e.frames < 2)
+    {
+        if (! juce::approximatelyEqual (e.compositeGlow, G) || ! juce::exactlyEqual (e.compositeScale, 0.0f) || ! e.composite.isValid()
+            || e.composite.getWidth() != e.halo.getWidth() || e.composite.getHeight() != e.halo.getHeight())
+        {
+            if (e.composite.getWidth() != e.halo.getWidth() || e.composite.getHeight() != e.halo.getHeight())
+                e.composite = juce::Image (juce::Image::ARGB, e.halo.getWidth(), e.halo.getHeight(), true);
+            else
+                e.composite.clear (e.composite.getBounds());
+            juce::Graphics cg (e.composite);
+            layDown (cg, e.composite.getBounds().toFloat());
+            e.compositeGlow = G;
+            e.compositeScale = 0.0f;      // 0: the small one
+            e.compositeArea = {};
+        }
+        juce::Graphics::ScopedSaveState s (g);
+        g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
+        g.drawImage (e.composite, area);
+        return;
+    }
+    const float scale = juce::jlimit (1.0f, 3.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
+    if (! e.composite.isValid() || ! juce::approximatelyEqual (e.compositeGlow, G) || ! juce::approximatelyEqual (e.compositeScale, scale)
+        || e.compositeArea != area)
+    {
+        const int cw = juce::jmax (1, juce::roundToInt (area.getWidth() * scale)), ch = juce::jmax (1, juce::roundToInt (area.getHeight() * scale));
+        if (e.composite.getWidth() != cw || e.composite.getHeight() != ch) e.composite = juce::Image (juce::Image::ARGB, cw, ch, true);
+        else e.composite.clear (e.composite.getBounds());
+        juce::Graphics cg (e.composite);
+        layDown (cg, e.composite.getBounds().toFloat());
+        e.compositeGlow = G;
+        e.compositeScale = scale;
+        e.compositeArea = area;
+    }
+    g.drawImageTransformed (e.composite, juce::AffineTransform::scale (1.0f / scale).translated (area.getX(), area.getY()));
 }
 
 double now() { return juce::Time::getMillisecondCounterHiRes() * 0.001; }
+
+namespace { float frameSeconds = 1.0f / 60.0f; }
+void setFrameTime (double seconds) { frameSeconds = (float) juce::jlimit (0.001, 0.1, seconds); }
+float frameTime() { return frameSeconds; }
 
 //==============================================================================
 // Polylines

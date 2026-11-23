@@ -86,7 +86,30 @@ void TrackList::tick()
         soloButtons[i]->setToggleState (t.soloed.load(), juce::dontSendNotification);
         seqButtons[i]->setToggleState (t.rolling.load(), juce::dontSendNotification);
     }
-    repaint();
+    if (const auto s = stateNow(); s != shownState)
+    {
+        shownState = s;
+        repaint();
+    }
+}
+
+// Everything the rows show that can change without telling us: lit meter bulbs, audible, rack, names
+juce::int64 TrackList::stateNow() const
+{
+    juce::int64 h = (juce::int64) ctx.selectedTrack * 1000003 + (juce::int64) ctx.project.tracks.size();
+    for (size_t i = 0; i < ctx.project.tracks.size(); ++i)
+    {
+        auto& t = *ctx.project.tracks[i];
+        const auto r = rowBounds ((int) i).toFloat();
+        const int n = juce::jmax (3, (int) ((r.getHeight() - 16.0f) / 7.0f));
+        const float lv = juce::jlimit (0.0f, 1.0f, t.meter.load());
+        int lit = 0;
+        while (lit < n && (float) lit / (float) n < lv) ++lit;
+        const juce::int64 row = lit + 64 * (ctx.project.isAudible ((int) i) ? 1 : 0) + 128 * (t.rolling.load() ? 1 : 0)
+                              + 256 * (juce::int64) t.colourIndex + 65536 * (juce::int64) t.name.hashCode();
+        h = h * 31 + row;
+    }
+    return h;
 }
 
 void TrackList::mouseDown (const juce::MouseEvent& e)

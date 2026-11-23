@@ -35,6 +35,7 @@ private:
     juce::TextButton commandButton { "Cmd K" };
 
     juce::Rectangle<int> logoArea, lcdArea, tempoArea, swatchArea;
+    juce::int64 shownReadout = -1;
     double dragStartBpm = 0.0;
 
     juce::Rectangle<float> swatchBounds (int index) const;

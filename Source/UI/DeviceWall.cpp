@@ -1,5 +1,6 @@
 #include "DeviceWall.h"
 #include "Icons.h"
+#include "NeonKit.h"
 
 namespace
 {
@@ -1341,7 +1342,7 @@ void DeviceWall::tick (float newPulse)
     const auto now = juce::Time::getMillisecondCounter();
     const bool beatMoved = std::abs (newPulse - pulse) > 0.002f;
     pulse = newPulse;
-    spin += juce::MathConstants<double>::twoPi / (8.0 * 30.0);
+    spin += juce::MathConstants<double>::twoPi / 8.0 * (double) Neon::frameTime();     // one turn in eight seconds
 
     for (int i = 0; i < Wall::numDevices; ++i)
     {
@@ -1350,7 +1351,7 @@ void DeviceWall::tick (float newPulse)
         if (! juce::approximatelyEqual (gr, target))
         {
             add (pieceBounds (i, gr));
-            if (std::abs (target - gr) > 0.004f) gr += (target - gr) * 0.38f;
+            if (std::abs (target - gr) > 0.004f) gr += (target - gr) * (1.0f - Neon::perFrame (0.62f));
             else gr = target;
             add (pieceBounds (i, gr));
         }

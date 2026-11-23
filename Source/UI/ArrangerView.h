@@ -36,6 +36,8 @@ private:
     double viewStart = 0.0;          // beats at the left edge
     double pixelsPerBeat = 0.0;      // set on first layout to fit 16 bars
     double lastPlayhead = -1.0;
+    int shownPlayheadX = 0;
+    float shownPulse = 0.0f;
 
     DragMode drag = DragMode::None;
     int dragTrack = -1, dragClip = -1;

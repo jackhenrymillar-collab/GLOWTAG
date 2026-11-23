@@ -34,12 +34,32 @@ namespace Neon
     class GlowLayer
     {
     public:
+        // `remember` is how many different lights the layer keeps. A component's own layer keeps one;
+        // a layer shared by many small things (the buttons) keeps several, so each finds its own again.
+        explicit GlowLayer (int remember = 1) : capacity (juce::jmax (1, remember)) {}
+
         // Turns what was collected into blurred light, ready for draw(). `unit` is view pixels per wall unit.
+        // When the lit shapes are the same as last time nothing is blurred again: the light is reused.
         void build (int width, int height, float unit);
-        void draw (juce::Graphics&, juce::Rectangle<float> area) const;
+        void draw (juce::Graphics&, juce::Rectangle<float> area);
         float bloomAmount = 0.55f;          // small things (a button) keep the wide bloom faint
+
+        int blursMade = 0, blursReused = 0; // for the frame-cost check in the tests
     private:
-        juce::Image halo, bloom;
+        struct Entry
+        {
+            juce::uint64 signature = 0;
+            juce::Image halo, bloom;
+            juce::Image composite;          // halo and bloom laid together at screen resolution
+            float compositeGlow = -1.0f, compositeScale = 0.0f;
+            juce::Rectangle<float> compositeArea;
+            int frames = 0;                 // how many paints in a row have used this light
+            juce::uint32 lastUse = 0;
+        };
+        std::vector<Entry> entries;
+        int capacity = 1;
+        int current = -1;
+        juce::uint32 useCounter = 0;
     };
 
     // Paints `draw` with its glow, all at once: a first pass only collects the lit shapes (nothing is
@@ -221,4 +241,10 @@ namespace Neon
     };
 
     double now();      // seconds, for readouts and animation
+
+    // How long the last frame took, in seconds (the app sets it once per screen refresh). Things that
+    // ease or fade use it, so they move at the same speed however often the screen is drawn.
+    void setFrameTime (double seconds);
+    float frameTime();
+    inline float perFrame (float factorAt30Hz) { return std::pow (factorAt30Hz, frameTime() * 30.0f); }   // a decay that was tuned at 30 frames a second
 }
