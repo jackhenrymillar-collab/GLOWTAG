@@ -39,6 +39,7 @@ public:
     std::function<void()> onOpenPlugin;                          // Plugin: double-click opens its editor
     std::function<void()> onOpenExpanded;                        // built-in device: double-click opens its expanded view
     float flash = 0.0f;      // lit up after the mixer jumped here
+    float pulse = 0.0f;      // the track level the card last showed
 
     void tick();
     void paint (juce::Graphics&) override;
@@ -87,7 +88,7 @@ public:
     CableLayer (AppContext&, std::function<ModuleCard* (int)> cardForModule);
 
     void setPatch (Patch* p) { patch = p; repaint(); }
-    void tick (bool flowing);   // while sound flows only the cables are redrawn, not the cards under them
+    juce::RectangleList<int> tick (bool flowing);   // while sound flows: redraws each cable's box and returns them
     std::function<void()> onChanged;
     std::function<void (const juce::String&)> onHint;      // what the jack under the pointer is, or why a cable won't go there
     float rowOffset = 0.0f;                                // how far down the rows sit (they are centred in full screen)
