@@ -158,54 +158,28 @@ void GlowLayer::draw (juce::Graphics& g, juce::Rectangle<float> area)
     const float G = look().glow;
     const float bloomOpacity = clamp01 (bloomAmount * G), haloOpacity = clamp01 (0.95f * G);
 
-    auto layDown = [&] (juce::Graphics& dest, juce::Rectangle<float> into)
+    // The halo and the bloom are laid together at the halo's own size (small), whenever the light or the
+    // glow amount changes, and that one picture is scaled up onto the view. One soft scale-up instead of
+    // two, and nothing more while the light holds still. Plain smooth (bilinear) scaling throughout: the
+    // sharper filters ring around bright spots and can leave dark specks in soft light.
+    if (! juce::approximatelyEqual (e.compositeGlow, G) || ! e.composite.isValid()
+        || e.composite.getWidth() != e.halo.getWidth() || e.composite.getHeight() != e.halo.getHeight())
     {
-        juce::Graphics::ScopedSaveState s (dest);
-        dest.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
-        dest.setOpacity (bloomOpacity);
-        dest.drawImage (e.bloom, into);
-        dest.setOpacity (haloOpacity);
-        dest.drawImage (e.halo, into);
-    };
-
-    // Light that changes every frame (a moving meter, a turning reel) is first laid together at the halo's
-    // own size, which is small, and then scaled up once rather than twice. Light that has held still is
-    // laid together once at the screen's own resolution and then only copied. The same picture either
-    // way, for far less work, since scaling the soft images up is most of the cost.
-    if (e.frames < 2)
-    {
-        if (! juce::approximatelyEqual (e.compositeGlow, G) || ! juce::exactlyEqual (e.compositeScale, 0.0f) || ! e.composite.isValid()
-            || e.composite.getWidth() != e.halo.getWidth() || e.composite.getHeight() != e.halo.getHeight())
-        {
-            if (e.composite.getWidth() != e.halo.getWidth() || e.composite.getHeight() != e.halo.getHeight())
-                e.composite = juce::Image (juce::Image::ARGB, e.halo.getWidth(), e.halo.getHeight(), true);
-            else
-                e.composite.clear (e.composite.getBounds());
-            juce::Graphics cg (e.composite);
-            layDown (cg, e.composite.getBounds().toFloat());
-            e.compositeGlow = G;
-            e.compositeScale = 0.0f;      // 0: the small one
-            e.compositeArea = {};
-        }
-        juce::Graphics::ScopedSaveState s (g);
-        g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
-        g.drawImage (e.composite, area);
-        return;
-    }
-    const float scale = juce::jlimit (1.0f, 3.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
-    if (! e.composite.isValid() || ! juce::approximatelyEqual (e.compositeGlow, G) || ! juce::approximatelyEqual (e.compositeScale, scale)
-        || e.compositeArea != area)
-    {
-        const int cw = juce::jmax (1, juce::roundToInt (area.getWidth() * scale)), ch = juce::jmax (1, juce::roundToInt (area.getHeight() * scale));
-        if (e.composite.getWidth() != cw || e.composite.getHeight() != ch) e.composite = juce::Image (juce::Image::ARGB, cw, ch, true);
-        else e.composite.clear (e.composite.getBounds());
+        if (e.composite.getWidth() != e.halo.getWidth() || e.composite.getHeight() != e.halo.getHeight())
+            e.composite = juce::Image (juce::Image::ARGB, e.halo.getWidth(), e.halo.getHeight(), true);
+        else
+            e.composite.clear (e.composite.getBounds());
         juce::Graphics cg (e.composite);
-        layDown (cg, e.composite.getBounds().toFloat());
+        cg.setImageResamplingQuality (juce::Graphics::mediumResamplingQuality);
+        cg.setOpacity (bloomOpacity);
+        cg.drawImage (e.bloom, e.composite.getBounds().toFloat());
+        cg.setOpacity (haloOpacity);
+        cg.drawImageAt (e.halo, 0, 0);
         e.compositeGlow = G;
-        e.compositeScale = scale;
-        e.compositeArea = area;
     }
-    g.drawImageTransformed (e.composite, juce::AffineTransform::scale (1.0f / scale).translated (area.getX(), area.getY()));
+    juce::Graphics::ScopedSaveState s (g);
+    g.setImageResamplingQuality (juce::Graphics::mediumResamplingQuality);
+    g.drawImage (e.composite, area);
 }
 
 double now() { return juce::Time::getMillisecondCounterHiRes() * 0.001; }

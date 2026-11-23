@@ -50,9 +50,8 @@ namespace Neon
         {
             juce::uint64 signature = 0;
             juce::Image halo, bloom;
-            juce::Image composite;          // halo and bloom laid together at screen resolution
-            float compositeGlow = -1.0f, compositeScale = 0.0f;
-            juce::Rectangle<float> compositeArea;
+            juce::Image composite;          // halo and bloom laid together, at the halo's size
+            float compositeGlow = -1.0f;
             int frames = 0;                 // how many paints in a row have used this light
             juce::uint32 lastUse = 0;
         };
