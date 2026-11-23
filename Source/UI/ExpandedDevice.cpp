@@ -206,8 +206,7 @@ void ExpandedDevice::paint (juce::Graphics& g)
     if (bricks.isNull() || bricks.getWidth() != bw || bricks.getHeight() != bh || key != backdropKey)
     {
         backdropKey = key;
-        if (bricks.getWidth() != bw || bricks.getHeight() != bh)
-            bricks = juce::Image (juce::Image::RGB, bw, bh, false);
+        bricks = juce::Image (juce::Image::RGB, bw, bh, false);    // fresh, never redrawn in place (see GlowLayer::draw)
         juce::Graphics bg (bricks);
         bg.addTransform (juce::AffineTransform::scale (ds));
         paintBricks (bg, getLocalBounds().toFloat());

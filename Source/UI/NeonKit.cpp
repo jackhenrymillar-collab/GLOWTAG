@@ -165,10 +165,10 @@ void GlowLayer::draw (juce::Graphics& g, juce::Rectangle<float> area)
     if (! juce::approximatelyEqual (e.compositeGlow, G) || ! e.composite.isValid()
         || e.composite.getWidth() != e.halo.getWidth() || e.composite.getHeight() != e.halo.getHeight())
     {
-        if (e.composite.getWidth() != e.halo.getWidth() || e.composite.getHeight() != e.halo.getHeight())
-            e.composite = juce::Image (juce::Image::ARGB, e.halo.getWidth(), e.halo.getHeight(), true);
-        else
-            e.composite.clear (e.composite.getBounds());
+        // Always a fresh picture, never the old one wiped and redrawn: on the Mac the window draws in the
+        // background, a moment later, straight from the picture's memory. Changing a picture it has not
+        // finished drawing shows as the whole glow blinking off, or dark blocks in it.
+        e.composite = juce::Image (juce::Image::ARGB, e.halo.getWidth(), e.halo.getHeight(), true);
         juce::Graphics cg (e.composite);
         cg.setImageResamplingQuality (juce::Graphics::mediumResamplingQuality);
         cg.setOpacity (bloomOpacity);
