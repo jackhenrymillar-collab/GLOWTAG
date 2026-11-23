@@ -41,6 +41,11 @@ TopBar::TopBar (AppContext& c) : ctx (c)
     rainbowButton.onClick = [this] { Theme::get().setRainbow (rainbowButton.getToggleState()); };
     addAndMakeVisible (rainbowButton);
 
+    visualButton.getProperties().set ("wordSize", 18.0f);
+    visualButton.setTooltip ("Visualiser: a picture that follows the song, full window or behind the app");
+    visualButton.onClick = [this] { if (onVisual) onVisual(); };
+    addAndMakeVisible (visualButton);
+
     commandButton.setTooltip ("Command palette");
     commandButton.onClick = [this] { if (onCommandPalette) onCommandPalette(); };
     addAndMakeVisible (commandButton);
@@ -96,6 +101,8 @@ void TopBar::resized()
     r.removeFromRight (6);
     rainbowButton.setBounds (r.removeFromRight (84));
     r.removeFromRight (6);
+    visualButton.setBounds (r.removeFromRight (64));
+    r.removeFromRight (6);
     swatchArea = r.removeFromRight (Theme::get().choices().size() * 22);
 
     // Transport words and the readouts sit together in the middle
@@ -141,8 +148,10 @@ void TopBar::paint (juce::Graphics& g)
         // The readouts: numbers in neon, a small word under each
         float x = (float) lcdArea.getX();
         const float base = (float) lcdArea.getCentreY() + 4.0f;
+        const bool tight = lcdArea.getWidth() < 372;        // a narrow window drops the time signature
         for (auto& cell : cells)
         {
+            if (tight && &cell == &cells[1]) continue;
             Neon::text (gg, cell.value, x, base, 21.0f, c, 0.8f);
             Neon::label (gg, cell.caption, x + 1.0f, base + 13.0f, Neon::Align::left, juce::Colour (0xff6d7077), 11.0f);
             x += cell.width;

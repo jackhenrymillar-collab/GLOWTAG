@@ -34,10 +34,14 @@ public:
     juce::Colour pal (int index) const { return pal ((Pal) (index % 8)); }
 
     // Neutral dark-grey surfaces
-    const juce::Colour bg      { 0xff141416 };
-    const juce::Colour panel   { 0xff1c1d20 };
-    const juce::Colour panel2  { 0xff222326 };
-    const juce::Colour display { 0xff121214 };
+    // (not const: with the visualiser behind the app they turn to dark glass, see setGlass)
+    juce::Colour bg      { 0xff141416 };
+    juce::Colour panel   { 0xff1c1d20 };
+    juce::Colour panel2  { 0xff222326 };
+    juce::Colour display { 0xff121214 };
+    // 0: solid surfaces as usual. Otherwise how solid they are while the visualiser shows through them.
+    void setGlass (float opacity);
+    bool isGlass() const { return glass > 0.0f; }
     const juce::Colour line    { 0xff36383d };
     const juce::Colour line2   { 0xff26272b };
     const juce::Colour text    { 0xffe9e9ec };
@@ -55,4 +59,5 @@ private:
     int themeIndex = 0;
     bool rainbow = false;
     bool vintage = false;
+    float glass = 0.0f;
 };

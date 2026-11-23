@@ -4,7 +4,7 @@
 namespace
 {
     enum MenuIds { menuNew = 1, menuOpen, menuSave, menuSaveAs, menuClearRecent, menuArrange, menuMix, menuEdit, menuPlay, menuRecord,
-                   menuMetronome, menuPalette, menuWall, menuRecentBase = 100 };
+                   menuMetronome, menuPalette, menuWall, menuVisFull, menuVisBehind, menuVisOff, menuRecentBase = 100 };
 }
 
 MainComponent::MainComponent()
@@ -31,7 +31,14 @@ MainComponent::MainComponent()
                                                               &sequencer, &wall, &expanded })
         c->setOpaque (true);
 
-    topBar.onModeChange = [this] (int m) { setMode ((Mode) m); };
+    topBar.onModeChange = [this] (int m)
+    {
+        if (visualiser.getView() == Vis::full) visualiser.setView (Vis::off);    // picking a view leaves the full-window picture
+        setMode ((Mode) m);
+    };
+    topBar.onVisual = [this] { showVisualMenu(); };
+    addChildComponent (visualiser);
+    visualiser.onViewChanged = [this] { visualiserViewChanged(); };
     topBar.onPlayStop = [this] { togglePlay(); };
     topBar.onCommandPalette = [this] { showCommandPalette(); };
     arranger.onOpenEditor = [this] { setMode (Mode::Edit); };
@@ -133,8 +140,58 @@ void MainComponent::setMode (Mode m)
     editor.setVisible (m == Mode::Edit);
     devices.setVisible (true);
     sequencer.setVisible (rackShown && m != Mode::Mix);
+    if (visualiser.getView() == Vis::full)
+        for (auto* c : std::initializer_list<juce::Component*> { &browser, &trackList, &arranger, &devices, &mixer, &editor, &sequencer, &status })
+            c->setVisible (false);
+    else
+    {
+        browser.setVisible (true);
+        status.setVisible (true);
+    }
     resized();
     repaint();
+}
+
+void MainComponent::visualiserViewChanged()
+{
+    setMode (mode);
+    topBar.setVisualOn (visualiser.getView() != Vis::off);
+    for (auto* c : getChildren()) c->repaint();
+    grabKeyboardFocus();
+}
+
+// The top bar's "visual" word: where the picture shows, and which sound it follows
+void MainComponent::showVisualMenu()
+{
+    juce::PopupMenu m;
+    const auto v = visualiser.getView();
+    m.addSectionHeader ("Visualiser");
+    m.addItem (1, "Full window", true, v == Vis::full);
+    m.addItem (2, "Behind the app", true, v == Vis::behind);
+    m.addItem (3, "Off", true, v == Vis::off);
+    m.addSectionHeader ("Follows");
+    const int feed = visualiser.getFeed();
+    m.addItem (10, "Master", true, feed < 0);
+    for (int b = 0; b < (int) project.buses.size(); ++b)
+        m.addItem (100 + project.busSlot (b), project.buses[(size_t) b]->name, true, feed == project.busSlot (b));
+    for (int r = 0; r < Project::numReturns; ++r)
+        m.addItem (100 + project.returnSlot (r), project.returns[(size_t) r]->name, true, feed == project.returnSlot (r));
+    if (v == Vis::behind)
+    {
+        m.addSectionHeader ("Backdrop");
+        const float b = visualiser.backdrop();
+        m.addItem (20, "Bright picture", true, b < 0.3f);
+        m.addItem (21, "Balanced", true, b >= 0.3f && b < 0.7f);
+        m.addItem (22, "Dim picture", true, b >= 0.7f);
+    }
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&topBar.visualAnchor()).withMinimumWidth (200),
+                     [this] (int result)
+                     {
+                         if (result >= 1 && result <= 3) visualiser.setView (result == 1 ? Vis::full : result == 2 ? Vis::behind : Vis::off);
+                         else if (result == 10) visualiser.setFeed (-1);
+                         else if (result >= 20 && result <= 22) visualiser.setBackdrop (result == 20 ? 0.15f : result == 21 ? 0.55f : 0.9f);
+                         else if (result >= 100) visualiser.setFeed (result - 100);
+                     });
 }
 
 void MainComponent::addSequencerModule (SeqType t)
@@ -226,6 +283,13 @@ void MainComponent::sendLiveNote (int pitch, bool on)
 bool MainComponent::keyPressed (const juce::KeyPress& key)
 {
     const auto mods = key.getModifiers();
+
+    // Esc leaves the full-window visualiser
+    if (key.isKeyCode (juce::KeyPress::escapeKey) && visualiser.getView() == Vis::full && ! expanded.isOpen() && ! wall.isOpen())
+    {
+        visualiser.setView (Vis::off);
+        return true;
+    }
 
     // Tab shows the device wall for as long as it is held (a quick tap leaves it up)
     if (key.isKeyCode (juce::KeyPress::tabKey) && ! mods.isCommandDown() && ! mods.isCtrlDown() && ! mods.isAltDown())
@@ -429,6 +493,12 @@ void MainComponent::timerCallback()
         // GLOWTAG_MODE=1 or 2 shows the mixer or the editor
         if (const auto modeVar = juce::SystemStats::getEnvironmentVariable ("GLOWTAG_MODE", {}); modeVar.isNotEmpty())
             setMode ((Mode) juce::jlimit (0, 2, modeVar.getIntValue()));
+        // GLOWTAG_VISUALISER="full liquid" (or "behind ink routing") opens the visualiser that way and starts the song
+        if (const auto vis = juce::SystemStats::getEnvironmentVariable ("GLOWTAG_VISUALISER", {}); vis.isNotEmpty())
+        {
+            visualiser.setup (vis);
+            engine.play();
+        }
         // GLOWTAG_CARDS="Gas Tube,Crowd" swaps the selected track's devices for those, to check the cards
         const auto cards = juce::StringArray::fromTokens (juce::SystemStats::getEnvironmentVariable ("GLOWTAG_CARDS", {}), ",", {});
         if (! cards.isEmpty())
@@ -468,6 +538,9 @@ void MainComponent::timerCallback()
 
     if (statusCounter % 60 == 0)
     {
+        // What is played now is heard one buffer and the sound card's own delay later: the visualiser waits that long
+        if (auto* d = deviceManager.getCurrentAudioDevice())
+            visualiser.setLatency ((double) (d->getOutputLatencyInSamples() + d->getCurrentBufferSizeSamples()) / juce::jmax (1.0, d->getCurrentSampleRate()));
         enableMidiInputs();
         stopKeyboardFocus (*this);   // views add controls as you work
         if (! hasKeyboardFocus (true) && isShowing())
@@ -526,6 +599,8 @@ void MainComponent::frame (double timestampSeconds, bool fromDisplay)
     if (wall.isOpen()) { wall.tick (engine.getPulse()); return; }
 
     topBar.tick();
+    visualiser.tick();
+    if (visualiser.getView() == Vis::full) return;       // only the picture and its panel are showing
     if (arranger.isVisible()) arranger.tick();
     if (trackList.isVisible()) trackList.tick();
     if (devices.isVisible()) devices.tick();
@@ -564,7 +639,9 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void MainComponent::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::get().bg);
+    // In the full-window visualiser nothing is painted here: the picture is drawn underneath by the graphics card
+    if (visualiser.getView() != Vis::full)
+        g.fillAll (Theme::get().bg);
 }
 
 void MainComponent::resized()
@@ -573,6 +650,7 @@ void MainComponent::resized()
     wall.setBounds (r);
     expanded.setBounds (r);
     topBar.setBounds (r.removeFromTop (56));
+    visualiser.setBounds (r);
     status.setBounds (r.removeFromBottom (26));
     browser.setBounds (r.removeFromLeft (260));
 
@@ -810,6 +888,10 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
         m.addSeparator();
         m.addItem (item (menuPalette, "Command Palette", "Cmd+K"));
         m.addItem (item (menuWall, "Device Wall", "Tab", wall.isOpen()));
+        m.addSeparator();
+        m.addItem (item (menuVisFull, "Visualiser: Full Window", "", visualiser.getView() == Vis::full));
+        m.addItem (item (menuVisBehind, "Visualiser: Behind the App", "", visualiser.getView() == Vis::behind));
+        m.addItem (item (menuVisOff, "Visualiser: Off", "", visualiser.getView() == Vis::off));
     }
     else
     {
@@ -837,6 +919,9 @@ void MainComponent::menuItemSelected (int id, int)
         case menuMetronome: engine.metronome = ! engine.metronome.load(); break;
         case menuPalette:   showCommandPalette(); break;
         case menuWall:      if (wall.isOpen()) wall.close(); else wall.open (true); break;
+        case menuVisFull:   visualiser.setView (Vis::full); break;
+        case menuVisBehind: visualiser.setView (Vis::behind); break;
+        case menuVisOff:    visualiser.setView (Vis::off); break;
         default:
             if (id >= menuRecentBase)
             {

@@ -98,3 +98,16 @@ juce::Font Theme::label (float size) const
     return juce::Font (juce::FontOptions (juce::Font::getDefaultSansSerifFontName(), size, juce::Font::bold));
    #endif
 }
+
+void Theme::setGlass (float opacity)
+{
+    opacity = juce::jlimit (0.0f, 1.0f, opacity);
+    if (juce::approximatelyEqual (opacity, glass)) return;
+    glass = opacity;
+    const float a = glass > 0.0f ? glass : 1.0f;
+    bg = bg.withAlpha (a);
+    panel = panel.withAlpha (a);
+    panel2 = panel2.withAlpha (a);
+    display = display.withAlpha (a);
+    sendChangeMessage();
+}

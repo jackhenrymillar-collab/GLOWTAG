@@ -527,6 +527,7 @@ juce::var Project::toVar() const
     o->setProperty ("buses", bs);
     o->setProperty ("returns", rs);
     o->setProperty ("master", master->toVar());
+    if (! visualiser.isVoid()) o->setProperty ("visualiser", visualiser);
     return juce::var (o);
 }
 
@@ -543,6 +544,7 @@ bool Project::fromVar (const juce::var& v)
     }
     if (newTracks.empty())
         return false;
+    visualiser = v["visualiser"];
 
     const juce::SpinLock::ScopedLockType sl (lock);
     tracks = std::move (newTracks);

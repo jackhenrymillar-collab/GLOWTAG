@@ -40,6 +40,9 @@ target_sources(Glowtag PRIVATE
     Source/Engine/Samples.cpp
     Source/Engine/Sequencer.cpp
     Source/Engine/PluginHost.cpp
+    Source/Engine/VisListener.cpp
+    Source/UI/Visualiser.cpp
+    Source/UI/VisualiserRender.cpp
     Source/UI/GlowLookAndFeel.cpp
     Source/UI/Icons.cpp
     Source/UI/TopBar.cpp
@@ -85,6 +88,7 @@ target_link_libraries(Glowtag
         juce::juce_audio_processors
         juce::juce_dsp
         juce::juce_gui_extra
+        juce::juce_opengl
         GlowtagFonts
     PUBLIC
         juce::juce_recommended_config_flags
@@ -106,6 +110,7 @@ if(GLOWTAG_TESTS)
         Source/Engine/Samples.cpp
         Source/Engine/Sequencer.cpp
         Source/Engine/PluginHost.cpp
+        Source/Engine/VisListener.cpp
         Source/UI/DeviceWallModel.cpp)
     target_include_directories(GlowtagTests PRIVATE Source)
     target_compile_definitions(GlowtagTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_PLUGINHOST_VST3=1 JUCE_PLUGINHOST_AU=1)

@@ -13,6 +13,9 @@ public:
     std::function<void (int)> onModeChange;   // 0 Arrange, 1 Mix, 2 Edit
     std::function<void()> onCommandPalette;
     std::function<void()> onPlayStop;
+    std::function<void()> onVisual;           // the visualiser's menu
+    void setVisualOn (bool on) { visualButton.setToggleState (on, juce::dontSendNotification); }
+    juce::Component& visualAnchor() { return visualButton; }
 
     void setMode (int mode);
     void tick();                               // called ~30 times a second
@@ -33,6 +36,7 @@ private:
     Neon::GlowLayer glowLayer;
     juce::TextButton rainbowButton { "Rainbow" };
     juce::TextButton commandButton { "Cmd K" };
+    juce::TextButton visualButton { "Visual" };
 
     juce::Rectangle<int> logoArea, lcdArea, tempoArea, swatchArea;
     juce::int64 shownReadout = -1;

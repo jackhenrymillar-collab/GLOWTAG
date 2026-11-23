@@ -134,6 +134,9 @@ public:
     void makeDemo();
     void makeEmpty();
 
+    // The visualiser's settings for this song (its look and its wiring), kept as the visualiser wrote them
+    juce::var visualiser;
+
     // Save and load (JSON). Loading replaces every track; tell the engine and the views afterwards.
     juce::var toVar() const;
     bool fromVar (const juce::var&);
