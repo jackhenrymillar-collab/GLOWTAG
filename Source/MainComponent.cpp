@@ -493,6 +493,8 @@ void MainComponent::frame (double timestampSeconds, bool fromDisplay)
 {
     // A 120 Hz screen is followed every other refresh: 60 even frames a second look smooth and cost half.
     // The display's own refresh time is used, so a late or early callback never drops a frame.
+    static int refreshes = 0, fallbacks = 0;     // for GLOWTAG_FRAME_STATS
+    if (fromDisplay) ++refreshes; else ++fallbacks;
     if (fromDisplay)
     {
         if (timestampSeconds - lastRefresh < 0.75 / 60.0 && timestampSeconds >= lastRefresh)
@@ -512,8 +514,9 @@ void MainComponent::frame (double timestampSeconds, bool fromDisplay)
         ++frames;
         if (t - since >= 2.0)
         {
-            std::fprintf (stderr, "frames per second: %.1f\n", frames / (t - since));
-            frames = 0;
+            std::fprintf (stderr, "frames per second: %.1f  (screen refreshes %d, timer fallbacks %d, last refresh time %.4f)\n",
+                          frames / (t - since), refreshes, fallbacks, timestampSeconds);
+            frames = 0; refreshes = 0; fallbacks = 0;
             since = t;
         }
     }

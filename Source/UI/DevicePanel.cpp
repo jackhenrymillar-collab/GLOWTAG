@@ -675,14 +675,20 @@ void CableLayer::mouseDoubleClick (const juce::MouseEvent& e)
     }
 }
 
-void CableLayer::tick (bool flowing)
+juce::RectangleList<int> CableLayer::tick (bool flowing)
 {
+    juce::RectangleList<int> boxes;
     if (patch == nullptr || (! flowing && ! wasFlowing))
-        return;
+        return boxes;
     wasFlowing = flowing;
-    // Each cable's own box: the cards between them stay as they are
+    // Each cable's own box, rather than the whole layer
     for (const auto& c : patch->cables)
-        repaint (cablePath (c).getBounds().getSmallestIntegerContainer().expanded (8));
+    {
+        const auto box = cablePath (c).getBounds().getSmallestIntegerContainer().expanded (8);
+        boxes.add (box);
+        repaint (box);
+    }
+    return boxes;
 }
 
 void CableLayer::paint (juce::Graphics& g)
@@ -1168,8 +1174,19 @@ void DevicePanel::tick()
             card->flash = juce::jmax (0.45f, card->flash - 0.04f * Neon::frameTime() * 30.0f);
             card->repaint();
         }
+        // Sound coming through (played live too, not only from the song) lights the cards up
+        if (std::abs (card->pulse - m) > 0.02f)
+        {
+            card->pulse = m;
+            card->repaint();
+        }
     }
-    cables->tick (ctx.engine.isPlaying() && m > 0.02f);
+    // A card a cable crosses is drawn whole along with the cable: half a card a frame behind flickers
+    const auto boxes = cables->tick (ctx.engine.isPlaying() || m > 0.0f);
+    if (! boxes.isEmpty())
+        for (auto* card : cards)
+            if (boxes.intersects (card->getBoundsInParent()))
+                card->repaint();
 }
 
 void DevicePanel::paint (juce::Graphics& g)
