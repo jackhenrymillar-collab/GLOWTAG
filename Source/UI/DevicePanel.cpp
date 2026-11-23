@@ -206,8 +206,16 @@ void ModuleCard::tick()
     const auto& wall = *card->built.wall;
     const bool telling = t - wall.readoutTime < 2.3;
     lastReadout = wall.readoutTime;
-    const bool animate = (card->animated && ctx.engine.isPlaying()) || telling || (isEndpoint() && ctx.engine.isPlaying());
-    if ((animate || changed) && t - lastPaint > 0.045)
+    const bool animate = (card->animated && ctx.engine.isPlaying()) || telling;
+    // Track in / out only show the level: repainted when their lit bulbs change
+    bool levelMoved = false;
+    if (isEndpoint())
+    {
+        const float level = track.meter.load();
+        levelMoved = std::abs (level - shownLevel) > 0.01f;
+        if (levelMoved) shownLevel = level;
+    }
+    if (animate || changed || levelMoved)
         repaint();
     else if (! telling && lastReadout > 0.0 && t - lastReadout < 2.6 && t - lastPaint > 0.2)
         repaint();
@@ -667,6 +675,16 @@ void CableLayer::mouseDoubleClick (const juce::MouseEvent& e)
     }
 }
 
+void CableLayer::tick (bool flowing)
+{
+    if (patch == nullptr || (! flowing && ! wasFlowing))
+        return;
+    wasFlowing = flowing;
+    // Each cable's own box: the cards between them stay as they are
+    for (const auto& c : patch->cables)
+        repaint (cablePath (c).getBounds().getSmallestIntegerContainer().expanded (8));
+}
+
 void CableLayer::paint (juce::Graphics& g)
 {
     if (patch == nullptr)
@@ -788,12 +806,24 @@ void CableLayer::paint (juce::Graphics& g)
 void DevicePanel::Canvas::paint (juce::Graphics& g)
 {
     // Faint dot grid, like marquee bulbs on a dark wall
+    // It sits under every card and cable, so it is kept as a picture rather than drawn dot by dot
     auto& th = Theme::get();
-    g.fillAll (th.panel);
-    g.setColour (th.line.withAlpha (0.55f));
-    for (int y = 10; y < getHeight(); y += 18)
-        for (int x = 10; x < getWidth(); x += 18)
-            g.fillEllipse ((float) x - 0.9f, (float) y - 0.9f, 1.8f, 1.8f);
+    const float ds = juce::jlimit (1.0f, 4.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
+    const int w = juce::jmax (1, juce::roundToInt ((float) getWidth() * ds)), h = juce::jmax (1, juce::roundToInt ((float) getHeight() * ds));
+    const auto key = th.panel.getARGB() ^ (th.line.getARGB() * 31u);
+    if (dots.getWidth() != w || dots.getHeight() != h || dotsColour != key)
+    {
+        dotsColour = key;
+        dots = juce::Image (juce::Image::RGB, w, h, false);
+        juce::Graphics dg (dots);
+        dg.addTransform (juce::AffineTransform::scale ((float) w / (float) juce::jmax (1, getWidth()), (float) h / (float) juce::jmax (1, getHeight())));
+        dg.fillAll (th.panel);
+        dg.setColour (th.line.withAlpha (0.55f));
+        for (int y = 10; y < getHeight(); y += 18)
+            for (int x = 10; x < getWidth(); x += 18)
+                dg.fillEllipse ((float) x - 0.9f, (float) y - 0.9f, 1.8f, 1.8f);
+    }
+    g.drawImageTransformed (dots, juce::AffineTransform::scale ((float) getWidth() / (float) w, (float) getHeight() / (float) h));
 }
 
 DevicePanel::DevicePanel (AppContext& c) : ctx (c)
@@ -1135,17 +1165,11 @@ void DevicePanel::tick()
         card->tick();
         if (card->flash > 0.46f)
         {
-            card->flash = juce::jmax (0.45f, card->flash - 0.04f);
-            card->repaint();
-        }
-        if (std::abs (card->pulse - m) > 0.02f)
-        {
-            card->pulse = m;
+            card->flash = juce::jmax (0.45f, card->flash - 0.04f * Neon::frameTime() * 30.0f);
             card->repaint();
         }
     }
-    if (ctx.engine.isPlaying() || m > 0.0f)
-        cables->repaint();
+    cables->tick (ctx.engine.isPlaying() && m > 0.02f);
 }
 
 void DevicePanel::paint (juce::Graphics& g)

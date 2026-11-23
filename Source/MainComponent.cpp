@@ -25,6 +25,12 @@ MainComponent::MainComponent()
         addAndMakeVisible (c);
     addChildComponent (sequencer);
 
+    // Every view paints all of its own area, so nothing behind it needs painting first
+    setOpaque (true);
+    for (auto* c : std::initializer_list<juce::Component*> { &topBar, &browser, &trackList, &arranger, &devices, &mixer, &editor, &status,
+                                                              &sequencer, &wall, &expanded })
+        c->setOpaque (true);
+
     topBar.onModeChange = [this] (int m) { setMode ((Mode) m); };
     topBar.onPlayStop = [this] { togglePlay(); };
     topBar.onCommandPalette = [this] { showCommandPalette(); };
@@ -454,15 +460,9 @@ void MainComponent::timerCallback()
             juce::JUCEApplication::quit();
         }
 
-    topBar.tick();
-    if (arranger.isVisible()) arranger.tick();
-    if (trackList.isVisible()) trackList.tick();
-    if (devices.isVisible()) devices.tick();
-    if (sequencer.isVisible()) sequencer.tick();
-    if (mixer.isVisible()) mixer.tick();
-    if (editor.isVisible()) editor.tick();
-    if (wall.isOpen()) wall.tick (engine.getPulse());
-    else wall.warm();
+    // Without a screen refresh to follow (a hidden window, or no display), the views still keep up
+    if (const auto now = juce::Time::getMillisecondCounterHiRes() * 0.001; now - lastFrameTime > 0.25)
+        frame (now, false);
 
     drainRecording();
 
@@ -487,6 +487,49 @@ void MainComponent::timerCallback()
         info << "   MIDI IN " << midiInputCount << "   KEYS OCTAVE " << (keyboardOctave - 1);
         status.setInfo (info.toUpperCase());
     }
+}
+
+void MainComponent::frame (double timestampSeconds, bool fromDisplay)
+{
+    // A 120 Hz screen is followed every other refresh: 60 even frames a second look smooth and cost half.
+    // The display's own refresh time is used, so a late or early callback never drops a frame.
+    if (fromDisplay)
+    {
+        if (timestampSeconds - lastRefresh < 0.75 / 60.0 && timestampSeconds >= lastRefresh)
+            return;
+        lastRefresh = timestampSeconds;
+    }
+    const double t = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    Neon::setFrameTime (t - lastFrameTime);
+    lastFrameTime = t;
+
+    // GLOWTAG_FRAME_STATS=1 prints how many frames a second the views really get, for checking smoothness
+    static const bool stats = juce::SystemStats::getEnvironmentVariable ("GLOWTAG_FRAME_STATS", {}).isNotEmpty();
+    if (stats)
+    {
+        static int frames = 0;
+        static double since = t;
+        ++frames;
+        if (t - since >= 2.0)
+        {
+            std::fprintf (stderr, "frames per second: %.1f\n", frames / (t - since));
+            frames = 0;
+            since = t;
+        }
+    }
+
+    // A full-window view hides everything else, so only it moves
+    if (expanded.isOpen()) { expanded.tick(); return; }
+    if (wall.isOpen()) { wall.tick (engine.getPulse()); return; }
+
+    topBar.tick();
+    if (arranger.isVisible()) arranger.tick();
+    if (trackList.isVisible()) trackList.tick();
+    if (devices.isVisible()) devices.tick();
+    if (sequencer.isVisible()) sequencer.tick();
+    if (mixer.isVisible()) mixer.tick();
+    if (editor.isVisible()) editor.tick();
+    wall.warm();
 }
 
 void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)

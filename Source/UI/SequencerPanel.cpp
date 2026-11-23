@@ -1,4 +1,5 @@
 #include "SequencerPanel.h"
+#include "NeonKit.h"
 
 namespace
 {
@@ -226,15 +227,24 @@ void SeqModuleView::tick()
     auto* node = ctx.engine.liveSeqNode (trackIndex, moduleId);
     if (node == nullptr)
         return;
+    const auto before = shown;
+    const float ledsBefore = clockLed + gateLed;
     for (size_t i = 0; i < shown.size(); ++i)
         shown[i] = node->display[i].load();
     // Pulses the engine raises are cleared here and left to fade
     const bool pulsed = (module().type == SeqType::Clock || module().type == SeqType::Steps || module().type == SeqType::Burst
                          || module().type == SeqType::Chance) && shown[1] >= 0.99f;
     if (pulsed) { node->display[1] = 0.0f; clockLed = 1.0f; }
-    clockLed *= 0.82f;
-    gateLed = juce::jmax (gateLed * 0.8f, module().type == SeqType::Steps ? shown[2] : (module().type == SeqType::Out ? shown[0] : 0.0f));
-    repaint();
+    clockLed *= Neon::perFrame (0.82f);
+    gateLed = juce::jmax (gateLed * Neon::perFrame (0.8f), module().type == SeqType::Steps ? shown[2] : (module().type == SeqType::Out ? shown[0] : 0.0f));
+    if (clockLed < 0.01f) clockLed = 0.0f;
+    if (gateLed < 0.01f) gateLed = 0.0f;
+    // Drawn again only while something on the front plate moves
+    bool moved = std::abs (clockLed + gateLed - ledsBefore) > 0.003f;
+    for (size_t i = 0; i < shown.size(); ++i)
+        moved = moved || std::abs (shown[i] - before[i]) > 0.0005f;
+    if (moved)
+        repaint();
 }
 
 void SeqModuleView::paint (juce::Graphics& g)
@@ -942,8 +952,7 @@ void SequencerPanel::resized()
 void SequencerPanel::tick()
 {
     for (auto* v : views)
-        v->tick();
-    cables->repaint();
+        v->tick();        // the cables on top are drawn along with any module that changes under them
 }
 
 void SequencerPanel::paint (juce::Graphics& g)

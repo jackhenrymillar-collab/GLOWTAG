@@ -51,10 +51,34 @@ void ArrangerView::tick()
 
         // Page along with the playhead while playing
         const double visible = getWidth() / pixelsPerBeat;
+        const double startBefore = viewStart;
         if (ctx.engine.isPlaying() && drag == DragMode::None && (ph > viewStart + visible * 0.96 || ph < viewStart))
             viewStart = juce::jmax (0.0, ph - visible * 0.04);
-        repaint();
+        if (! juce::exactlyEqual (startBefore, viewStart))
+            repaint();
+        else
+        {
+            // Only the thin strips the playhead leaves and enters are drawn again, not every clip
+            const int x = juce::roundToInt (beatToX (ph));
+            if (std::abs (x - shownPlayheadX) <= 40)
+                repaint (juce::jmin (x, shownPlayheadX) - 9, 0, std::abs (x - shownPlayheadX) + 19, getHeight());
+            else
+            {
+                repaint (shownPlayheadX - 9, 0, 19, getHeight());
+                repaint (x - 9, 0, 19, getHeight());
+            }
+        }
+        shownPlayheadX = juce::roundToInt (beatToX (ph));
     }
+    else if (ctx.engine.isPlaying() && ! juce::approximatelyEqual (shownPulse, ctx.engine.getPulse()))
+        repaint (shownPlayheadX - 9, 0, 19, getHeight());
+    shownPulse = ctx.engine.getPulse();
+
+    // A rolling rack's lane shows its running step lights
+    if (ctx.engine.isPlaying())
+        for (int i = 0; i < (int) ctx.project.tracks.size(); ++i)
+            if (ctx.project.tracks[(size_t) i]->rolling.load())
+                repaint (0, Layout::rulerHeight + i * Layout::rowHeight, getWidth(), Layout::rowHeight);
 }
 
 void ArrangerView::mouseMove (const juce::MouseEvent& e)

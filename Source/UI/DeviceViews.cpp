@@ -958,7 +958,7 @@ void samplerWall (Builder& b)
             gs.up = [dev, played] { if (*played >= 0) dev->note (*played, false); };
             return gs;
         };
-        g.draw = [=] (juce::Graphics& gr, double, float, const Colour* c)
+        g.draw = [=] (juce::Graphics& gr, double, float dt, const Colour* c)
         {
             const auto sl = slices();
             const bool sm = dev->choice (Mode) == Slice;
@@ -968,7 +968,7 @@ void samplerWall (Builder& b)
             for (int i = 0; i < 16; ++i)
             {
                 auto& lv = (*padLevel)[(size_t) i];
-                lv *= 0.9f;
+                lv *= std::pow (0.9f, dt * 30.0f);      // tuned at 30 frames a second
                 const float x = (float) (i % 4) * (PW + GP), y = (float) (i / 4) * (PH + GP);
                 const bool has = sm ? i < (int) sl.size() : true;
                 (has ? on : off).push_back (roundRect (x, y, PW, PH, 9));
