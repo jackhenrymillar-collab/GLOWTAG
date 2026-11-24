@@ -294,6 +294,14 @@ void ExpandedDevice::mouseDown (const juce::MouseEvent& e)
         for (auto& gr : chrome.groups)
             for (auto& it : gr->items)
                 if (it->ci >= 100 && juce::Point<float> (it->x, it->y).getDistanceFrom (at) < 11.0f) { it->setChoice (0); repaint(); return; }
+    // Alt-click a control: the view closes and its lane comes up in the arrangement
+    if (e.mods.isAltDown() && w != &chrome && device != nullptr)
+        if (const int param = w->paramAt (at); param >= 0)
+        {
+            const int t = device->track, id = device->moduleId;
+            ctx.showLane (t, { AutoTarget::knob, id, param });
+            return;
+        }
     if (w->mouseDown (at)) dragging = w;
     repaint();
 }

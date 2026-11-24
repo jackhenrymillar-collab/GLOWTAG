@@ -14,6 +14,8 @@ public:
     std::function<void()> onCommandPalette;
     std::function<void()> onPlayStop;
     std::function<void()> onVisual;           // the visualiser's menu
+    std::function<void()> onAutoLanes;        // "auto": show or hide the automation lanes
+    std::function<void()> onSettings;
     void setVisualOn (bool on) { visualButton.setToggleState (on, juce::dontSendNotification); }
     juce::Component& visualAnchor() { return visualButton; }
 
@@ -37,6 +39,9 @@ private:
     juce::TextButton rainbowButton { "Rainbow" };
     juce::TextButton commandButton { "Cmd K" };
     juce::TextButton visualButton { "Visual" };
+    juce::TextButton autoButton { "Auto" };
+    juce::TextButton settingsButton { "Settings" };
+    juce::TextButton backButton { "Back to auto" };     // shows while lanes rest because a control was moved by hand
 
     juce::Rectangle<int> logoArea, lcdArea, tempoArea, swatchArea;
     juce::int64 shownReadout = -1;

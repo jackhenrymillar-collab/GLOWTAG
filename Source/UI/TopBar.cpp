@@ -46,6 +46,20 @@ TopBar::TopBar (AppContext& c) : ctx (c)
     visualButton.onClick = [this] { if (onVisual) onVisual(); };
     addAndMakeVisible (visualButton);
 
+    autoButton.getProperties().set ("wordSize", 18.0f);
+    autoButton.setTooltip ("Automation lanes over the clips (Cmd+Shift+A)");
+    autoButton.onClick = [this] { if (onAutoLanes) onAutoLanes(); };
+    addAndMakeVisible (autoButton);
+    settingsButton.getProperties().set ("wordSize", 18.0f);
+    settingsButton.setTooltip ("Settings (Cmd+,)");
+    settingsButton.onClick = [this] { if (onSettings) onSettings(); };
+    addAndMakeVisible (settingsButton);
+    backButton.getProperties().set ("wordSize", 17.0f);
+    backButton.getProperties().set ("pal", (int) Pal::Amber);
+    backButton.setTooltip ("Lanes you moved by hand rest until you come back to automation");
+    backButton.onClick = [this] { ctx.backToAutomation(); };
+    addChildComponent (backButton);
+
     commandButton.setTooltip ("Command palette");
     commandButton.onClick = [this] { if (onCommandPalette) onCommandPalette(); };
     addAndMakeVisible (commandButton);
@@ -63,6 +77,10 @@ void TopBar::tick()
     loopButton.setToggleState (ctx.engine.looping.load(), juce::dontSendNotification);
     metroButton.setToggleState (ctx.engine.metronome.load(), juce::dontSendNotification);
     rainbowButton.setToggleState (Theme::get().isRainbow(), juce::dontSendNotification);
+    autoButton.setToggleState (ctx.lanesShown, juce::dontSendNotification);
+    const bool resting = ctx.restingLanes() > 0;
+    if (backButton.isVisible() != resting) backButton.setVisible (resting);
+    backButton.setToggleState (resting, juce::dontSendNotification);
 
     // Only what changed is drawn again
     const float rec = ctx.engine.recordArmed.load() && ctx.engine.isPlaying() ? 1.0f : 0.0f;
@@ -96,8 +114,14 @@ void TopBar::resized()
     const int modeW[] = { 92, 52, 54 };
     for (int i = 0; i < 3; ++i)
         modeButtons[i].setBounds (r.removeFromLeft (modeW[i]));
+    r.removeFromLeft (8);
+    backButton.setBounds (r.removeFromLeft (112));
 
     commandButton.setBounds (r.removeFromRight (66));
+    r.removeFromRight (6);
+    settingsButton.setBounds (r.removeFromRight (80));
+    r.removeFromRight (6);
+    autoButton.setBounds (r.removeFromRight (48));
     r.removeFromRight (6);
     rainbowButton.setBounds (r.removeFromRight (84));
     r.removeFromRight (6);

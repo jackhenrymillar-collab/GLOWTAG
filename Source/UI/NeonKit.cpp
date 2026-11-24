@@ -869,6 +869,12 @@ void Wall::mouseUp()
     activeGroup = nullptr;
 }
 
+int Wall::paramAt (Point<float> p)
+{
+    const auto h = pick (p);
+    return h.it != nullptr ? h.it->param : -1;
+}
+
 bool Wall::doubleClick (Point<float> p)
 {
     const auto h = pick (p);

@@ -43,6 +43,7 @@ target_sources(Glowtag PRIVATE
     Source/Engine/Sequencer.cpp
     Source/Engine/PluginHost.cpp
     Source/Engine/VisListener.cpp
+    Source/Engine/Automation.cpp
     Source/UI/Visualiser.cpp
     Source/UI/VisualiserRender.cpp
     Source/UI/GlowLookAndFeel.cpp
@@ -51,6 +52,8 @@ target_sources(Glowtag PRIVATE
     Source/UI/BrowserPanel.cpp
     Source/UI/TrackList.cpp
     Source/UI/ArrangerView.cpp
+    Source/UI/AutomationHub.cpp
+    Source/UI/AutomationPanels.cpp
     Source/UI/DevicePanel.cpp
     Source/UI/DeviceCards.cpp
     Source/UI/SequencerPanel.cpp
@@ -119,6 +122,7 @@ if(GLOWTAG_TESTS)
         Source/Engine/Sequencer.cpp
         Source/Engine/PluginHost.cpp
         Source/Engine/VisListener.cpp
+    Source/Engine/Automation.cpp
         Source/UI/DeviceWallModel.cpp)
     target_include_directories(GlowtagTests PRIVATE Source)
     target_compile_definitions(GlowtagTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_PLUGINHOST_VST3=1 JUCE_PLUGINHOST_AU=1)

@@ -80,6 +80,53 @@ struct AppContext : public juce::ChangeBroadcaster
         return selectedClip >= 0 && selectedClip < (int) clips.size() ? &clips[(size_t) selectedClip] : nullptr;
     }
 
+    //==========================================================================
+    // Automation (AutomationHub.cpp)
+
+    static constexpr int visSlot = -2;            // the visualiser's own track, under the song's tracks
+    bool lanesShown = false;                      // lanes drawn over the clips (top bar "auto")
+    bool stickToClips = true;                     // Settings: moving or copying a clip takes its automation with it
+    float autoBrightness = 0.8f;                  // Settings: how bright the lanes glow
+    int autoGeneration = 0;                       // bumped when lanes change, so views repaint
+    int laneRequests = 0;                         // bumped by showLane: the window brings the arrangement forward
+
+    struct ParamInfo { juce::String group, name; float lo = 0.0f, hi = 1.0f; bool stepped = false; AutoTarget target; };
+
+    int rowHeight() const;                        // track rows are taller while lanes show, to fit the chooser
+    int arrangeHeight = 0;                        // the arrangement's height (rows grow only as far as it has room)
+    int numRows() const { return (int) project.tracks.size() + (project.visTrack ? 1 : 0); }
+    int trackOfRow (int row) const { return row < (int) project.tracks.size() ? row : visSlot; }
+    int rowOfTrack (int track) const { return track == visSlot ? (int) project.tracks.size() : track; }
+    float currentValue (int track, const AutoTarget&, const ParamInfo&);   // the control as it stands, 0..1
+    std::function<bool (const AutoTarget&, float&)> visValue;              // the visualiser's setting, raw
+    bool visRow() const { return project.visTrack; }
+    std::vector<AutoLane>* lanesOf (int track);   // a song track, or visSlot
+    AutoTarget shownTarget (int track);           // the lane the header shows (mixer volume if none chosen)
+    void setShown (int track, const AutoTarget&);
+
+    // Every control a track can automate, grouped by device (mixer first), and one control's details
+    std::vector<ParamInfo> paramsOf (int track);
+    ParamInfo describe (int track, const AutoTarget&);
+    std::function<std::vector<ParamInfo>()> visParams;   // the visualiser fills this in
+
+    // Alt-click on any control: its lane comes up on its track in the arrangement
+    void showLane (int track, const AutoTarget&);
+    // A control was moved by hand. While recording it writes its lane (only the ones moved);
+    // otherwise a lane that was playing it rests until "back to automation".
+    void paramTouched (int track, const AutoTarget&, float raw);
+    // Once a frame: ends touches that have let go, and copies lane values into the stored knobs so walls show them
+    void tickAutomation();
+    int restingLanes() const;                     // lanes moved by hand and resting
+    void backToAutomation();
+    void automationChanged() { ++autoGeneration; project.dirty = true; sendChangeMessage(); }
+
+    // The arrangement asks for the chooser (MainComponent shows it)
+    std::function<void (int track, juce::Rectangle<int> screenAnchor)> openChooser;
+    std::function<void()> openSettings;
+
+    // A clip and its automation on the clipboard
+    struct ClipBoard { bool full = false; Clip clip; int fromTrack = -1; std::vector<AutoLane> lanes; } clipBoard;
+
     // Playhead in beats (shown even while stopped)
     double playheadBeats() const { return engine.getPosition(); }
 

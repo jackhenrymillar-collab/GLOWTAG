@@ -35,6 +35,9 @@ Visualiser::Visualiser (AppContext& c, juce::Component& w) : ctx (c), window (w)
     setWantsKeyboardFocus (false);
     renderer = std::make_unique<Renderer>();
     shared = settings;
+    seen = settings;
+    ctx.visParams = [this] { return automatableParams(); };
+    ctx.visValue = [this] (const AutoTarget& t, float& out) { return readSetting (settings, t, out); };
 }
 
 Visualiser::~Visualiser()
@@ -210,12 +213,15 @@ void Visualiser::projectReplaced()
         tab = 0;
     }
     ctx.engine.visFeed = -1;
+    seen = settings;
     const juce::SpinLock::ScopedLockType lock (sharedLock);
     shared = settings;
 }
 
 void Visualiser::changed()
 {
+    if (probing) return;
+    reportTouches();
     {
         const juce::SpinLock::ScopedLockType lock (sharedLock);
         shared = settings;
@@ -236,6 +242,7 @@ void Visualiser::tick()
         seenGeneration = ctx.generation;
         if (! first || ctx.project.visualiser.isObject()) projectReplaced();
     }
+    applyAutomation();
     if (view == off) return;
     if (picture != nullptr && ! resizing && picture->getBounds() != window.getScreenBounds())
         picture->setBounds (window.getScreenBounds());     // the picture's window follows the app's
@@ -1120,7 +1127,9 @@ void Visualiser::mouseDown (const juce::MouseEvent& e)
 {
     if (auto* h = hitAt (e.position))
     {
-        const auto hitCopy = *h;            // the list is rebuilt by the repaint a click can cause
+        const auto hitCopy = *h;
+        if (e.mods.isAltDown() && probeLane (hitCopy, e.position))
+            return;            // the list is rebuilt by the repaint a click can cause
         if (hitCopy.click != nullptr) hitCopy.click();
         activeDrag = hitCopy.drag;
         activeUp = hitCopy.up;
@@ -1178,4 +1187,152 @@ void Visualiser::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheel
 void Visualiser::resized()
 {
     changed();
+}
+
+//==============================================================================
+// Automation
+
+bool Visualiser::readSetting (const Settings& s, const AutoTarget& t, float& out)
+{
+    if (t.kind != AutoTarget::vis) return false;
+    switch (t.module)
+    {
+        case 0: if (t.param < 0 || t.param >= F::count) return false; out = s.v[(size_t) t.param]; return true;
+        case 1: if (t.param < 0 || t.param >= C::count) return false; out = (float) s.w[(size_t) t.param]; return true;
+        case 2: if (t.param < 0 || t.param >= numSources * numDests) return false; out = s.route[(size_t) (t.param / numDests)][(size_t) (t.param % numDests)]; return true;
+        case 3: out = (float) s.style; return true;
+        default: return false;
+    }
+}
+
+void Visualiser::writeSetting (Settings& s, const AutoTarget& t, float raw)
+{
+    if (t.kind != AutoTarget::vis) return;
+    switch (t.module)
+    {
+        case 0: if (t.param >= 0 && t.param < F::count) s.v[(size_t) t.param] = juce::jlimit (0.0f, 1.0f, raw); break;
+        case 1: if (t.param >= 0 && t.param < C::count) s.w[(size_t) t.param] = juce::jmax (0, juce::roundToInt (raw)); break;
+        case 2: if (t.param >= 0 && t.param < numSources * numDests) s.route[(size_t) (t.param / numDests)][(size_t) (t.param % numDests)] = juce::jlimit (0.0f, 1.0f, raw); break;
+        case 3: s.style = juce::jlimit (0, numStyles - 1, juce::roundToInt (raw)); break;
+        default: break;
+    }
+}
+
+std::vector<AppContext::ParamInfo> Visualiser::automatableParams() const
+{
+    using P = AppContext::ParamInfo;
+    std::vector<P> out;
+    auto fader = [&] (const char* group, int key)
+    {
+        P p; p.group = group; p.name = juce::String (faderLabel (key)).toLowerCase(); p.target = { AutoTarget::vis, 0, key };
+        out.push_back (p);
+    };
+    auto choice = [&] (const char* group, const char* name, int key, int count)
+    {
+        P p; p.group = group; p.name = name; p.hi = (float) (count - 1); p.stepped = true; p.target = { AutoTarget::vis, 1, key };
+        out.push_back (p);
+    };
+    {
+        P p; p.group = "visualiser"; p.name = "mode"; p.hi = (float) (numStyles - 1); p.stepped = true; p.target = { AutoTarget::vis, 3, 0 };
+        out.push_back (p);
+    }
+    for (int k : { F::react, F::pulse, F::stir, F::flash, F::speed, F::back, F::gate, F::nudge }) fader ("visualiser", k);
+    for (int k : { F::hue, F::tint, F::psy, F::trip, F::seg, F::depth, F::spin, F::idle, F::scale, F::swirl, F::idetail, F::chaos, F::vort, F::trails, F::drops, F::fade })
+        fader ("ink", k);
+    choice ("ink", "look", C::surface, 3); choice ("ink", "form", C::form, 4); choice ("ink", "mirror", C::mirror, 3);
+    choice ("ink", "tones", C::tones, 4); choice ("ink", "trail kind", C::trails, 2);
+    for (int k : { F::lhue, F::ltint, F::lpsy, F::lcount, F::lsize, F::lwob, F::ldrops, F::ldepth, F::lspin, F::lidle, F::lflow, F::lswell, F::ltrails })
+        fader ("liquid", k);
+    choice ("liquid", "look", C::lsurface, 3); choice ("liquid", "form", C::lform, 4);
+    choice ("liquid", "tones", C::ltones, 4); choice ("liquid", "trail kind", C::ltrails, 2);
+    for (int k : { F::shue, F::stint, F::spsy, F::sgrain, F::scomp, F::ssharp, F::sscatter, F::schange, F::sspin, F::sidle, F::strails })
+        fader ("sand", k);
+    choice ("sand", "look", C::ssurface, 3); choice ("sand", "plate", C::sform, 3);
+    choice ("sand", "tones", C::stones, 4); choice ("sand", "trail kind", C::strails, 2);
+    for (int k : { F::bhue, F::btint, F::bpsy, F::bspeed, F::bcover, F::bseeds, F::bfresh, F::bspin, F::bidle, F::btrails })
+        fader ("bloom", k);
+    choice ("bloom", "look", C::bsurface, 3); choice ("bloom", "kind", C::btype, 3); choice ("bloom", "mirror", C::bmirror, 3);
+    choice ("bloom", "tones", C::btones, 4); choice ("bloom", "trail kind", C::btrails, 2);
+    for (int s = 0; s < numSources; ++s)
+        for (int d = 0; d < numDests; ++d)
+        {
+            P p; p.group = "routing"; p.name = sourceNames[s] + " to " + destNames[d];
+            p.target = { AutoTarget::vis, 2, s * numDests + d };
+            out.push_back (p);
+        }
+    return out;
+}
+
+void Visualiser::applyAutomation()
+{
+    if (! ctx.project.visTrack || ctx.project.visLanes.empty()) return;
+    const double beat = ctx.engine.getPosition();
+    bool moved = false;
+    for (auto& lane : ctx.project.visLanes)
+    {
+        if (! lane.plays()) continue;
+        const float raw = lane.raw (Auto::valueAt (lane.points, beat));
+        float was = 0.0f;
+        if (! readSetting (settings, lane.target, was) || std::abs (was - raw) < 1.0e-5f) continue;
+        writeSetting (settings, lane.target, raw);
+        writeSetting (seen, lane.target, raw);       // the lane moved it, not a hand
+        moved = true;
+    }
+    if (! moved) return;
+    {
+        const juce::SpinLock::ScopedLockType lock (sharedLock);
+        shared = settings;
+    }
+    artDirty = true;
+    if (view == full) repaint();
+}
+
+void Visualiser::reportTouches()
+{
+    if (! ctx.project.visTrack) { seen = settings; return; }
+    std::vector<std::pair<AutoTarget, float>> moved;
+    for (int i = 0; i < F::count; ++i)
+        if (! juce::approximatelyEqual (settings.v[(size_t) i], seen.v[(size_t) i])) moved.push_back ({ { AutoTarget::vis, 0, i }, settings.v[(size_t) i] });
+    for (int i = 0; i < C::count; ++i)
+        if (settings.w[(size_t) i] != seen.w[(size_t) i]) moved.push_back ({ { AutoTarget::vis, 1, i }, (float) settings.w[(size_t) i] });
+    for (int s = 0; s < numSources; ++s)
+        for (int d = 0; d < numDests; ++d)
+            if (! juce::approximatelyEqual (settings.route[(size_t) s][(size_t) d], seen.route[(size_t) s][(size_t) d]))
+                moved.push_back ({ { AutoTarget::vis, 2, s * numDests + d }, settings.route[(size_t) s][(size_t) d] });
+    if (settings.style != seen.style) moved.push_back ({ { AutoTarget::vis, 3, 0 }, (float) settings.style });
+    seen = settings;
+    for (auto& [t, raw] : moved) ctx.paramTouched (AppContext::visSlot, t, raw);
+}
+
+bool Visualiser::probeLane (const Hit& h, juce::Point<float> at)
+{
+    if (h.drag == nullptr && h.click == nullptr) return false;
+    // Run the control on marked values, see which one it wrote, then put everything back
+    const auto before = settings;
+    const auto lastBefore = last;
+    constexpr float mark = -7.0f;
+    for (auto& x : settings.v) x = mark;
+    for (auto& x : settings.w) x = (int) mark;
+    for (auto& row : settings.route) for (auto& x : row) x = mark;
+    probing = true;
+    if (h.click != nullptr) h.click();
+    if (h.drag != nullptr) h.drag (at.x, at.y);
+    probing = false;
+    AutoTarget found;
+    for (int i = 0; i < F::count && ! found.valid(); ++i) if (! juce::approximatelyEqual (settings.v[(size_t) i], mark)) found = { AutoTarget::vis, 0, i };
+    for (int i = 0; i < C::count && ! found.valid(); ++i) if (settings.w[(size_t) i] != (int) mark) found = { AutoTarget::vis, 1, i };
+    for (int s = 0; s < numSources && ! found.valid(); ++s)
+        for (int d = 0; d < numDests && ! found.valid(); ++d)
+            if (! juce::approximatelyEqual (settings.route[(size_t) s][(size_t) d], mark)) found = { AutoTarget::vis, 2, s * numDests + d };
+    if (! found.valid() && settings.style != before.style) found = { AutoTarget::vis, 3, 0 };
+    settings = before;
+    last = lastBefore;
+    {
+        const juce::SpinLock::ScopedLockType lock (sharedLock);
+        shared = settings;
+    }
+    repaint();
+    if (! found.valid()) return false;
+    ctx.showLane (AppContext::visSlot, found);
+    return true;
 }

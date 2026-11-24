@@ -104,6 +104,15 @@ private:
     void openGLContextClosing() override;
 
     void changed();                             // a setting moved: hand it to the drawing thread, mark the song edited
+
+    // Automation: every setting can have a lane on the visualiser's own track
+    std::vector<AppContext::ParamInfo> automatableParams() const;
+    void applyAutomation();                     // lanes that play set the settings (once a frame)
+    void reportTouches();                       // settings the hand changed since last time: record or rest their lanes
+    static bool readSetting (const Vis::Settings&, const AutoTarget&, float& out);
+    static void writeSetting (Vis::Settings&, const AutoTarget&, float raw);
+    Vis::Settings seen;                         // the settings as last reported
+    bool probing = false;
     void attach (bool ownWindow);               // start drawing: over the app's window, or in a window of its own behind it
     void release();
     void windowChanging (int what);             // 0 the window starts changing size, 1 it has finished, 2 it has a new size
@@ -122,6 +131,7 @@ private:
     struct Layout { float K = 1.0f; int strip = 0; juce::Rectangle<float> panel, stripBox; juce::AffineTransform column; };
     Layout layout() const;
     const Hit* hitAt (juce::Point<float>) const;
+    bool probeLane (const Hit&, juce::Point<float>);   // Alt-click: which setting the control moves; shows its lane
 
     AppContext& ctx;
     juce::Component& window;

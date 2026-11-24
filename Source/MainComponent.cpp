@@ -4,7 +4,7 @@
 namespace
 {
     enum MenuIds { menuNew = 1, menuOpen, menuSave, menuSaveAs, menuClearRecent, menuArrange, menuMix, menuEdit, menuPlay, menuRecord,
-                   menuMetronome, menuPalette, menuWall, menuVisFull, menuVisBehind, menuVisOff, menuRecentBase = 100 };
+                   menuMetronome, menuPalette, menuWall, menuVisFull, menuVisBehind, menuVisOff, menuLanes, menuSettings, menuVisTrack, menuRecentBase = 100 };
 }
 
 MainComponent::MainComponent()
@@ -65,6 +65,18 @@ MainComponent::MainComponent()
     Neon::look().changed = [this] { if (expanded.onLookChanged) expanded.onLookChanged(); };
     expanded.onPatchChanged = [this] (int track) { engine.rebuildTrack (track); };
 
+    // Automation: the lane chooser and the settings sit over everything
+    addChildComponent (laneChooser);
+    addChildComponent (settingsPanel);
+    ctx.openChooser = [this] (int track, juce::Rectangle<int> anchor) { laneChooser.open (track, anchor); };
+    ctx.openSettings = [this] { settingsPanel.open(); };
+    topBar.onAutoLanes = [this] { toggleLanes(); };
+    topBar.onSettings = [this] { settingsPanel.open(); };
+    settingsPanel.onChanged = [this] { rememberAutomationSettings(); };
+    ctx.stickToClips = settings->getBoolValue ("automationSticksToClips", true);
+    ctx.autoBrightness = (float) settings->getDoubleValue ("automationBrightness", 0.8);
+    ctx.lanesShown = settings->getBoolValue ("automationLanes", false);
+
     // Look: theme colour, Rainbow and the vintage console come back as they were left
     Theme::get().setThemeIndex (settings->getIntValue ("theme", 0));
     Theme::get().setRainbow (settings->getBoolValue ("rainbow", false));
@@ -107,7 +119,7 @@ MainComponent::~MainComponent()
     settings->setValue ("vintageConsole", Theme::get().isVintage());
     settings->setValue ("recent", recent.toString());
     settings->setValue ("deviceWall", wall.state());
-    settings->saveIfNeeded();
+    rememberAutomationSettings();
     deviceManager.removeMidiInputDeviceCallback ({}, &engine.midiInput);
     shutdownAudio();
     Theme::get().removeChangeListener (this);
@@ -170,6 +182,7 @@ void MainComponent::showVisualMenu()
     m.addItem (1, "Full window", true, v == Vis::full);
     m.addItem (2, "Behind the app", true, v == Vis::behind);
     m.addItem (3, "Off", true, v == Vis::off);
+    m.addItem (30, "Automation track", true, project.visTrack);
     m.addSectionHeader ("Follows");
     const int feed = visualiser.getFeed();
     m.addItem (10, "Master", true, feed < 0);
@@ -190,9 +203,35 @@ void MainComponent::showVisualMenu()
                      {
                          if (result >= 1 && result <= 3) visualiser.setView (result == 1 ? Vis::full : result == 2 ? Vis::behind : Vis::off);
                          else if (result == 10) visualiser.setFeed (-1);
+                         else if (result == 30)
+                         {
+                             project.visTrack = ! project.visTrack;
+                             if (project.visTrack) { ctx.lanesShown = true; setMode (Mode::Arrange); rememberAutomationSettings(); }
+                             ctx.automationChanged();
+                         }
                          else if (result >= 20 && result <= 22) visualiser.setBackdrop (result == 20 ? 0.15f : result == 21 ? 0.55f : 0.9f);
                          else if (result >= 100) visualiser.setFeed (result - 100);
                      });
+}
+
+void MainComponent::toggleLanes()
+{
+    ctx.lanesShown = ! ctx.lanesShown;
+    if (ctx.lanesShown && mode != Mode::Arrange) setMode (Mode::Arrange);
+    if (! ctx.lanesShown) arranger.clearPointSelection();
+    ++ctx.autoGeneration;
+    rememberAutomationSettings();
+    ctx.sendChangeMessage();
+}
+
+void MainComponent::rememberAutomationSettings()
+{
+    settings->setValue ("automationSticksToClips", ctx.stickToClips);
+    settings->setValue ("automationBrightness", (double) ctx.autoBrightness);
+    settings->setValue ("automationLanes", ctx.lanesShown);
+    settings->saveIfNeeded();
+    arranger.repaint();
+    trackList.repaint();
 }
 
 void MainComponent::addSequencerModule (SeqType t)
@@ -234,6 +273,12 @@ void MainComponent::showCommandPalette()
     menu.addItem (2, "Arrange", true, mode == Mode::Arrange);
     menu.addItem (3, "Mix", true, mode == Mode::Mix);
     menu.addItem (4, "Edit", true, mode == Mode::Edit);
+    menu.addSectionHeader ("Automation");
+    menu.addItem (40, "Automation lanes", true, ctx.lanesShown);
+    menu.addItem (41, "Automation sticks to clips", true, ctx.stickToClips);
+    menu.addItem (42, "Back to automation", ctx.restingLanes() > 0);
+    menu.addItem (43, "Visualiser automation track", true, project.visTrack);
+    menu.addItem (44, "Settings...");
     menu.addSectionHeader ("Theme");
     const auto& choices = Theme::get().choices();
     for (int i = 0; i < choices.size(); ++i)
@@ -250,6 +295,11 @@ void MainComponent::showCommandPalette()
                             else if (result == 12) saveProject (false);
                             else if (result == 13) saveProject (true);
                             else if (result >= 2 && result <= 4) setMode ((Mode) (result - 2));
+                            else if (result == 40) toggleLanes();
+                            else if (result == 41) { ctx.stickToClips = ! ctx.stickToClips; rememberAutomationSettings(); }
+                            else if (result == 42) ctx.backToAutomation();
+                            else if (result == 43) { project.visTrack = ! project.visTrack; ctx.automationChanged(); }
+                            else if (result == 44) settingsPanel.open();
                             else if (result == 99) Theme::get().setRainbow (! Theme::get().isRainbow());
                             else if (result >= 100) Theme::get().setThemeIndex (result - 100);
                         });
@@ -285,6 +335,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
 {
     const auto mods = key.getModifiers();
 
+    // The lane chooser and the settings have the keys while they are open
+    if (settingsPanel.keyUsed (key) || laneChooser.keyUsed (key))
+        return true;
+
     // Esc leaves the full-window visualiser
     if (key.isKeyCode (juce::KeyPress::escapeKey) && visualiser.getView() == Vis::full && ! expanded.isOpen() && ! wall.isOpen())
     {
@@ -316,10 +370,20 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (key == juce::KeyPress ('s', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0)) { saveProject (true); return true; }
     if (key == juce::KeyPress ('S', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0)) { saveProject (true); return true; }
     if (key == juce::KeyPress ('d', juce::ModifierKeys::commandModifier, 0)) { arranger.duplicateSelectedClip(); return true; }
+    const auto cmdShift = juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier;
+    if (key == juce::KeyPress ('a', cmdShift, 0) || key == juce::KeyPress ('A', cmdShift, 0)) { toggleLanes(); return true; }
+    if (key == juce::KeyPress (',', juce::ModifierKeys::commandModifier, 0)) { settingsPanel.open(); return true; }
+    if (mode == Mode::Arrange)
+    {
+        if (key == juce::KeyPress ('c', juce::ModifierKeys::commandModifier, 0)) { arranger.copySelectedClip(); return true; }
+        if (key == juce::KeyPress ('x', juce::ModifierKeys::commandModifier, 0)) { arranger.cutSelectedClip(); return true; }
+        if (key == juce::KeyPress ('v', juce::ModifierKeys::commandModifier, 0)) { arranger.pasteClip(); return true; }
+    }
+    if (key == juce::KeyPress::escapeKey && mode == Mode::Arrange) { arranger.clearPointSelection(); return true; }
     if (key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey)
     {
         if (mode == Mode::Edit) editor.deleteSelectedNote();
-        else arranger.deleteSelectedClip();
+        else if (! arranger.deleteSelectedPoints()) arranger.deleteSelectedClip();
         return true;
     }
     if (key == juce::KeyPress::upKey)                            { ctx.selectTrack (ctx.selectedTrack - 1); return true; }
@@ -500,6 +564,31 @@ void MainComponent::timerCallback()
                 engine.rebuildTrack (track);
                 expanded.open (track, id);
             }
+        // GLOWTAG_AUTOMATION=1 shows the lanes with a sweep on the first track and the visualiser's track
+        if (juce::SystemStats::getEnvironmentVariable ("GLOWTAG_AUTOMATION", {}).isNotEmpty() && ! project.tracks.empty())
+        {
+            {
+                const juce::SpinLock::ScopedLockType sl (project.lock);
+                auto& vol = Auto::get (project.tracks[0]->lanes, { AutoTarget::mixer, 0, MixParam::volume });
+                vol.name = "mixer  volume"; vol.lo = 0.0f; vol.hi = 1.25f;
+                vol.points = { { 0.0, 0.3f, 0.0f }, { 8.0, 0.85f, 0.5f }, { 16.0, 0.5f, -0.4f }, { 24.0, 0.7f, 0.0f } };
+                vol.ghost = { { 0.0, 0.5f, 0.0f }, { 24.0, 0.5f, 0.0f } };
+                if (project.tracks.size() > 1)
+                {
+                    auto& pan = Auto::get (project.tracks[1]->lanes, { AutoTarget::mixer, 0, MixParam::pan });
+                    pan.name = "mixer  pan"; pan.lo = -1.0f; pan.hi = 1.0f;
+                    pan.points = { { 0.0, 0.5f, 0.0f }, { 4.0, 0.1f, 0.0f }, { 8.0, 0.9f, 0.0f }, { 12.0, 0.1f, 0.0f }, { 16.0, 0.9f, 0.0f } };
+                    pan.overridden = true;
+                }
+            }
+            project.visTrack = true;
+            ctx.lanesShown = true;
+            ctx.automationChanged();
+            if (juce::SystemStats::getEnvironmentVariable ("GLOWTAG_AUTOMATION", {}) == "chooser")
+                laneChooser.open (0, trackList.localAreaToGlobal (juce::Rectangle<int> (18, Layout::rulerHeight + ctx.rowHeight() - 22, 130, 18)));
+            if (juce::SystemStats::getEnvironmentVariable ("GLOWTAG_AUTOMATION", {}) == "settings")
+                settingsPanel.open();
+        }
         // GLOWTAG_MODE=1 or 2 shows the mixer or the editor
         if (const auto modeVar = juce::SystemStats::getEnvironmentVariable ("GLOWTAG_MODE", {}); modeVar.isNotEmpty())
             setMode ((Mode) juce::jlimit (0, 2, modeVar.getIntValue()));
@@ -539,6 +628,7 @@ void MainComponent::timerCallback()
         frame (now, false);
 
     drainRecording();
+    ctx.tickAutomation();
 
     if (statusCounter % 60 == 0)
     {
@@ -623,6 +713,18 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
         trackList.rebuild();
         mixer.rebuild();
     }
+    // Alt-click on a control: its lane comes up in the arrangement
+    if (seenLaneRequests != ctx.laneRequests)
+    {
+        seenLaneRequests = ctx.laneRequests;
+        if (expanded.isOpen()) expanded.close();
+        if (wall.isOpen()) wall.close();
+        if (devices.isFullScreen()) devices.setFullScreen (false);
+        if (visualiser.getView() == Vis::full) visualiser.setView (Vis::behind);
+        if (mode != Mode::Arrange) setMode (Mode::Arrange);
+        rememberAutomationSettings();
+    }
+
     // The sequencer rack appears under the arrangement when the selected track is rolling
     const bool wantRack = ctx.selected().rolling.load();
     if (wantRack != rackShown)
@@ -653,6 +755,8 @@ void MainComponent::resized()
     auto r = getLocalBounds();
     wall.setBounds (r);
     expanded.setBounds (r);
+    laneChooser.setBounds (r);
+    settingsPanel.setBounds (r);
     topBar.setBounds (r.removeFromTop (56));
     visualiser.setBounds (r);
     status.setBounds (r.removeFromBottom (26));
@@ -892,6 +996,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
         m.addSeparator();
         m.addItem (item (menuPalette, "Command Palette", "Cmd+K"));
         m.addItem (item (menuWall, "Device Wall", "Tab", wall.isOpen()));
+        m.addItem (item (menuLanes, "Automation Lanes", "Shift+Cmd+A", ctx.lanesShown));
+        m.addItem (item (menuVisTrack, "Visualiser Automation Track", "", project.visTrack));
+        m.addItem (item (menuSettings, "Settings...", "Cmd+,"));
         m.addSeparator();
         m.addItem (item (menuVisFull, "Visualiser: Full Window", "", visualiser.getView() == Vis::full));
         m.addItem (item (menuVisBehind, "Visualiser: Behind the App", "", visualiser.getView() == Vis::behind));
@@ -926,6 +1033,9 @@ void MainComponent::menuItemSelected (int id, int)
         case menuVisFull:   visualiser.setView (Vis::full); break;
         case menuVisBehind: visualiser.setView (Vis::behind); break;
         case menuVisOff:    visualiser.setView (Vis::off); break;
+        case menuLanes:     toggleLanes(); break;
+        case menuSettings:  settingsPanel.open(); break;
+        case menuVisTrack:  project.visTrack = ! project.visTrack; ctx.automationChanged(); break;
         default:
             if (id >= menuRecentBase)
             {
