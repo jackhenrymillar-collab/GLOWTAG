@@ -8,6 +8,7 @@
 #include "Engine/Sequencer.h"
 #include "Engine/VisListener.h"
 #include "Engine/DeviceParams.h"
+#include "Engine/DrumKit.h"
 #include "UI/DeviceWallModel.h"
 #include <iostream>
 
@@ -1003,6 +1004,11 @@ int main()
             check (into >= 0 && q.cables[(size_t) into].fromModule == sq && seqIn >= 0 && q.cables[(size_t) seqIn].fromModule == Patch::inputId,
                    "a new sequencer goes in front of the rack: track notes in, its notes out to the rack");
             check (q.find (sq)->position.x < q.find (dr)->position.x, "and its card sits left of the rack's");
+            {
+                Patch r; const int rs = r.add (ModuleType::DrumSeq); const int rr = r.add (ModuleType::Drums);
+                const int rin = r.cableInto (rr, Port::notesIn);
+                check (rin >= 0 && r.cables[(size_t) rin].fromModule == rs, "a rack added after a loose sequencer is played by it");
+            }
             DrumSeq::Step on; on.on = true; on.velocity = 120;
             q.find (sq)->knobValues[(size_t) DrumSeq::stepParam (0, 0, 0)] = DrumSeq::encode (on);
             q.find (sq)->knobValues[(size_t) DrumSeq::stepParam (0, 0, 4)] = DrumSeq::encode (on);
@@ -1088,6 +1094,38 @@ int main()
             bool none = true;
             for (auto& mm : pl.modules) none = none && mm.type != ModuleType::DrumSeq;
             check (none, "an old rack with no steps gets no sequencer");
+        }
+
+        // Kits: pad ranges, a kit as data and back, filling the pads from a folder
+        {
+            using namespace Param::Drums;
+            check (DrumKit::rangeOfName ("Kick 808") == DrumKit::Range::Low && DrumKit::rangeOfName ("Hat Open") == DrumKit::Range::High
+                       && DrumKit::rangeOfName ("Snare Crack") == DrumKit::Range::Mid && DrumKit::rangeOfName ("Tom Low") == DrumKit::Range::Low,
+                   "pads are sorted into low, mid and high by their names");
+            Patch q; const int dr = q.add (ModuleType::Drums);
+            auto& m = *q.find (dr);
+            m.knobValues[(size_t) Voice0 + 6] = (float) Kick;
+            check (DrumKit::rangeOf (m, 6) == DrumKit::Range::Low, "an analogue voice decides a pad's range");
+            m.knobValues[(size_t) PDecay0 + 2] = 0.3f; m.knobValues[(size_t) Gain] = 0.5f; m.padNames[3] = "Rim";
+            const auto kit = DrumKit::toVar (m);
+            Patch q2; const int d2 = q2.add (ModuleType::Drums);
+            auto& m2 = *q2.find (d2);
+            m2.knobValues[(size_t) Selected] = 9.0f;
+            DrumKit::apply (m2, juce::JSON::parse (juce::JSON::toString (kit)));
+            check (std::abs (m2.knobValues[(size_t) PDecay0 + 2] - 0.3f) < 1e-6f && std::abs (m2.knobValues[(size_t) Gain] - 0.5f) < 1e-6f
+                       && m2.padNames[3] == "Rim" && juce::roundToInt (m2.knobValues[(size_t) Voice0 + 6]) == Kick && juce::roundToInt (m2.knobValues[(size_t) Selected]) == 9,
+                   "a kit carries every pad's sound and leaves the chosen pad alone");
+            const auto kits = DrumKit::list();
+            check (kits.size() >= 2 && DrumKit::load (m2, kits[1]) && juce::roundToInt (m2.knobValues[(size_t) Voice0]) == Kick,
+                   "the built-in analogue kit sets every pad to an analogue voice");
+            auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("glowtag-kit-test");
+            dir.deleteRecursively(); dir.createDirectory();
+            for (auto* n : { "hat closed.wav", "big kick.wav", "snare.wav", "notes.txt" }) dir.getChildFile (n).replaceWithText ("x");
+            const int filled = DrumKit::fillFromFolder (m2, dir);
+            check (filled == 3 && m2.padNames[0].endsWith ("big kick.wav") && m2.padNames[1].endsWith ("snare.wav") && m2.padNames[2].endsWith ("hat closed.wav")
+                       && juce::roundToInt (m2.knobValues[(size_t) Voice0]) == Sample,
+                   "fill from folder puts low sounds on the first pads, then mid, then high");
+            dir.deleteRecursively();
         }
 
         // The pads' own shaping, analogue voices, mute, solo and the own output

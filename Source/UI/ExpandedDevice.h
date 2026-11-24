@@ -4,7 +4,7 @@
 
 // The expanded view: a device's neon wall over the whole window. Double-click empty space on a
 // device in the rack to open it; Esc closes it, [ and ] step through the track's devices.
-class ExpandedDevice : public juce::Component
+class ExpandedDevice : public juce::Component, public juce::FileDragAndDropTarget
 {
 public:
     explicit ExpandedDevice (AppContext&);
@@ -35,6 +35,12 @@ public:
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     bool keyPressed (const juce::KeyPress&) override;
     bool keyStateChanged (bool isKeyDown) override;
+
+    // Files dropped on the wall (the Drum Rack's pads)
+    bool isInterestedInFileDrag (const juce::StringArray&) override;
+    void fileDragMove (const juce::StringArray&, int x, int y) override;
+    void fileDragExit (const juce::StringArray&) override;
+    void filesDropped (const juce::StringArray&, int x, int y) override;
 
 private:
     void rebuild();

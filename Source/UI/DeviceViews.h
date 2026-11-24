@@ -41,6 +41,10 @@ namespace DeviceViews
         // Three colours for a part: Rainbow gives each part its own, otherwise shades of the theme colour
         const juce::Colour* colours (int mod);
         juce::Colour cache[16][3];
+
+        // A wall that takes files dropped on it (the Drum Rack's pads): where, in wall space
+        std::function<bool (juce::Point<float>, const juce::StringArray&)> dropFiles;
+        std::function<void (std::optional<juce::Point<float>>)> dropHover;
     };
 
     std::unique_ptr<Built> build (Device&);

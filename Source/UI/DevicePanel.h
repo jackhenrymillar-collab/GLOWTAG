@@ -23,7 +23,7 @@ private:
 // One module on the patch canvas: a neon card with its small art piece, its name in lit lettering,
 // and sign words and tube faders (each fader's modulation jack sits at its left end). Drag empty
 // space to move it; right-click it to remove it; double-click empty space for the expanded view.
-class ModuleCard : public juce::Component, public juce::FileDragAndDropTarget
+class ModuleCard : public juce::Component, public juce::FileDragAndDropTarget, public juce::DragAndDropTarget
 {
 public:
     ModuleCard (AppContext&, Patch&, Track&, int trackIndex, int moduleId, int numeral);
@@ -55,6 +55,11 @@ public:
     void filesDropped (const juce::StringArray&, int, int) override;
     void fileDragEnter (const juce::StringArray&, int, int) override { dropHover = true; repaint(); }
     void fileDragExit (const juce::StringArray&) override { dropHover = false; repaint(); }
+    // A sample dragged in from the browser
+    bool isInterestedInDragSource (const SourceDetails&) override;
+    void itemDragEnter (const SourceDetails&) override { dropHover = true; repaint(); }
+    void itemDragExit (const SourceDetails&) override { dropHover = false; repaint(); }
+    void itemDropped (const SourceDetails&) override;
 
 private:
     AppContext& ctx;

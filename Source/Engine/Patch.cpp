@@ -449,6 +449,15 @@ int Patch::addAt (ModuleType type, juce::Point<float> position, bool asInstrumen
     if (info.isInstrument() || (type == ModuleType::Plugin && asInstrument))
     {
         wireInstrument (id);
+        // A Drum Rack added after its sequencer: take the notes of a sequencer that plays nothing yet
+        if (type == ModuleType::Drums)
+            for (auto& other : modules)
+                if (other.type == ModuleType::DrumSeq
+                    && std::none_of (cables.begin(), cables.end(), [&] (const Cable& c) { return c.fromModule == other.id && c.fromPort == Port::notesOut; }))
+                {
+                    connect (other.id, Port::notesOut, id, Port::notesIn);
+                    break;
+                }
     }
     else if (info.isEffect())
     {

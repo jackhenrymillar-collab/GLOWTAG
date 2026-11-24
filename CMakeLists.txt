@@ -37,6 +37,7 @@ target_sources(Glowtag PRIVATE
     Source/Engine/Graph.cpp
     Source/Engine/DeviceNodes.cpp
     Source/Engine/DrumNodes.cpp
+    Source/Engine/DrumKit.cpp
     Source/Engine/NewDeviceNodes.cpp
     Source/Engine/Samples.cpp
     Source/Engine/Sequencer.cpp
@@ -62,6 +63,7 @@ target_sources(Glowtag PRIVATE
     Source/UI/NeonKit.cpp
     Source/UI/DeviceViews.cpp
     Source/UI/DeviceViewsFx.cpp
+    Source/UI/DeviceViewsDrums.cpp
     Source/UI/DeviceViewsNew.cpp
     Source/UI/ExpandedDevice.cpp)
 if(APPLE)
@@ -111,6 +113,7 @@ if(GLOWTAG_TESTS)
         Source/Engine/Graph.cpp
         Source/Engine/DeviceNodes.cpp
         Source/Engine/DrumNodes.cpp
+        Source/Engine/DrumKit.cpp
         Source/Engine/NewDeviceNodes.cpp
         Source/Engine/Samples.cpp
         Source/Engine/Sequencer.cpp

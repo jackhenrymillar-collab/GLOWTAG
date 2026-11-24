@@ -60,6 +60,11 @@ public:
     SeqNode* liveSeqNode (int track, int moduleId);    // for UI readouts; may be null
     std::shared_ptr<const AudioData> resolveSample (const juce::String& nameOrPath);
 
+    // The browser's preview: plays a sample once, straight to the speakers, over whatever is playing.
+    // A new preview replaces the one before. Message thread.
+    void preview (std::shared_ptr<const AudioData>);
+    void stopPreview()                                  { preview (nullptr); }
+
     // Loudness of the last kick-ish hit, for the music-reactive glow (0..1)
     float getPulse() const { return pulse.load(); }
 
@@ -119,6 +124,11 @@ private:
     void runSequencers (int numSamples, double beatsPerSample, bool isPlaying, bool jumped);
     std::array<Click, 4> clicks;
     juce::MidiBuffer liveMidi;
+
+    juce::SpinLock previewLock;
+    std::shared_ptr<const AudioData> previewPending, previewPlaying, previewRetired;
+    bool previewChanged = false;
+    double previewPos = 0.0;
 
     juce::AbstractFifo recordFifo { 1024 };
     std::array<RecordedEvent, 1024> recordBuffer {};
