@@ -474,6 +474,15 @@ void MainComponent::timerCallback()
             engine.getNextAudioBlock (info);
         }
 
+    // GLOWTAG_VISUALISER="full liquid" (or "behind ink routing") opens the visualiser that way and starts
+    // the song, with or without a sound card: for checking it on a machine with no one at it
+    if (statusCounter == 20)
+        if (const auto vis = juce::SystemStats::getEnvironmentVariable ("GLOWTAG_VISUALISER", {}); vis.isNotEmpty())
+        {
+            visualiser.setup (vis);
+            engine.play();
+        }
+
     // GLOWTAG_SHOW_DEVICE=Synth (with the offline clock) opens that device's expanded view on start,
     // and GLOWTAG_SNAPSHOT=file.png saves the window a moment later: for checking the walls headless.
     if (offlineClock && statusCounter == 20)
@@ -493,12 +502,6 @@ void MainComponent::timerCallback()
         // GLOWTAG_MODE=1 or 2 shows the mixer or the editor
         if (const auto modeVar = juce::SystemStats::getEnvironmentVariable ("GLOWTAG_MODE", {}); modeVar.isNotEmpty())
             setMode ((Mode) juce::jlimit (0, 2, modeVar.getIntValue()));
-        // GLOWTAG_VISUALISER="full liquid" (or "behind ink routing") opens the visualiser that way and starts the song
-        if (const auto vis = juce::SystemStats::getEnvironmentVariable ("GLOWTAG_VISUALISER", {}); vis.isNotEmpty())
-        {
-            visualiser.setup (vis);
-            engine.play();
-        }
         // GLOWTAG_CARDS="Gas Tube,Crowd" swaps the selected track's devices for those, to check the cards
         const auto cards = juce::StringArray::fromTokens (juce::SystemStats::getEnvironmentVariable ("GLOWTAG_CARDS", {}), ",", {});
         if (! cards.isEmpty())
