@@ -36,6 +36,7 @@ target_sources(Glowtag PRIVATE
     Source/Engine/Patch.cpp
     Source/Engine/Graph.cpp
     Source/Engine/DeviceNodes.cpp
+    Source/Engine/DrumNodes.cpp
     Source/Engine/NewDeviceNodes.cpp
     Source/Engine/Samples.cpp
     Source/Engine/Sequencer.cpp
@@ -109,6 +110,7 @@ if(GLOWTAG_TESTS)
         Source/Engine/Patch.cpp
         Source/Engine/Graph.cpp
         Source/Engine/DeviceNodes.cpp
+        Source/Engine/DrumNodes.cpp
         Source/Engine/NewDeviceNodes.cpp
         Source/Engine/Samples.cpp
         Source/Engine/Sequencer.cpp

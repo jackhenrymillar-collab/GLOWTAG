@@ -568,134 +568,6 @@ namespace
     };
 
     //--------------------------------------------------------------------------
-    // Sixteen pads on MIDI 36..51, one sample each: global tune, decay, snap; per pad level, pitch,
-    // pan and choke group; a sixteen-step row per pad that plays with the transport; swing; dirt.
-    struct DrumsNode : public Node
-    {
-        std::array<std::shared_ptr<const AudioData>, 16> pads;
-        struct Voice { double pos = 0.0; float vel = 0.0f, t = 0.0f, fade = 1.0f, level = 0.0f; bool active = false, fading = false; };
-        std::array<Voice, 16> voices;
-        long long lastStep = -1000000;
-        double lastBeat = -1.0;
-        int holdCount = 0;
-        float heldL = 0.0f, heldR = 0.0f;
-
-        DrumsNode (const Module& m, double sampleRate, const Graph::SampleResolver& resolve) : Node (m, sampleRate)
-        {
-            for (size_t i = 0; i < 16; ++i)
-                pads[i] = resolve (m.padNames[i].isNotEmpty() ? m.padNames[i] : Samples::defaultPads()[i]);
-            meter[0] = -1.0f;
-        }
-
-        bool isInstrument() const override { return true; }
-
-        void trigger (int pad, float velocity)
-        {
-            using namespace Param::Drums;
-            if (pad < 0 || pad >= 16 || pads[(size_t) pad] == nullptr) return;
-            auto& v = voices[(size_t) pad];
-            v.active = true;
-            v.fading = false;
-            v.fade = 1.0f;
-            v.pos = 0.0;
-            v.t = 0.0f;
-            v.vel = velocity;
-            // A pad in a choke group cuts off the others in it (the closed hat stops the open hat)
-            if (const int group = choice (Choke0 + pad); group > 0)
-                for (int o = 0; o < 16; ++o)
-                    if (o != pad && voices[(size_t) o].active && choice (Choke0 + o) == group)
-                        voices[(size_t) o].fading = true;
-            display = 1.0f;
-        }
-
-        void noteOn (int pitch, float velocity, double) override { trigger (pitch - 36, velocity); }
-
-        // The step row: sixteenths through the bar, the off-beats pushed late by the swing
-        void runSteps (int n)
-        {
-            using namespace Param::Drums;
-            if (host == nullptr || ! host->playing || host->beatsPerSample <= 0.0)
-            {
-                meter[0] = -1.0f;
-                lastBeat = -1.0;
-                return;
-            }
-            const double stepLen = 0.25, b0 = host->beat, b1 = b0 + n * host->beatsPerSample;
-            if (b0 < lastBeat - 1e-6 || lastBeat < 0.0)
-                lastStep = (long long) std::floor (b0 / stepLen) - 2;      // started, or the loop jumped back
-            lastBeat = b0;
-            const double swing = raw (Swing) * 0.5 * stepLen;
-            for (long long s = (long long) std::floor (b0 / stepLen) - 1; s <= (long long) std::floor (b1 / stepLen); ++s)
-            {
-                const double at = (double) s * stepLen + ((s & 1) ? swing : 0.0);
-                if (s <= lastStep || at < b0 - 1e-9 || at >= b1) continue;
-                lastStep = s;
-                const int idx = (int) (((s % 16) + 16) % 16);
-                for (int p = 0; p < 16; ++p)
-                    if ((juce::roundToInt (raw (Steps0 + p)) >> idx) & 1)
-                        trigger (p, idx % 4 == 0 ? 0.95f : 0.75f);
-            }
-            meter[0] = (float) (((long long) std::floor (b0 / stepLen) % 16 + 16) % 16);
-        }
-
-        void process (float* l, float* r, int n, double) override
-        {
-            using namespace Param::Drums;
-            runSteps (n);
-            const float tune = (k (Tune) - 0.5f) * 24.0f;
-            const float decay = k (Decay), snap = k (Snap), gain = k (Gain);
-            const float decayRate = decay >= 0.99f ? 0.0f : (1.0f - decay) * 30.0f;
-            const float chokeFall = std::exp (-1.0f / (0.008f * (float) sr));
-            for (size_t p = 0; p < 16; ++p)
-            {
-                auto& v = voices[p];
-                auto& view = views[p];
-                if (! v.active) { view.pitch = -1; view.level = 0.0f; continue; }
-                const auto& s = *pads[p];
-                const int len = s.buffer.getNumSamples() - 1;
-                const float* sl = s.buffer.getReadPointer (0);
-                const float* srr = s.buffer.getReadPointer (juce::jmin (1, s.buffer.getNumChannels() - 1));
-                const double rate = semis (tune + (raw (Pitch0 + (int) p) - 0.5f) * 24.0f) * s.sampleRate / sr;
-                const float level = raw (Level0 + (int) p) / 0.8f;
-                float gl, gr;
-                balance (raw (Pan0 + (int) p), gl, gr);
-                for (int i = 0; i < n; ++i)
-                {
-                    const int idx = (int) v.pos;
-                    if (idx >= len) { v.active = false; break; }
-                    if (v.fading && (v.fade *= chokeFall) < 0.0005f) { v.active = false; break; }
-                    const float frac = (float) (v.pos - idx);
-                    const float env = std::exp (-v.t * decayRate);
-                    const float transient = 1.0f + snap * 2.0f * std::exp (-v.t * 120.0f);
-                    const float g = v.vel * gain * env * transient * level * v.fade;
-                    v.level = env * v.fade;
-                    l[i] += (sl[idx] + frac * (sl[idx + 1] - sl[idx])) * g * gl;
-                    r[i] += (srr[idx] + frac * (srr[idx + 1] - srr[idx])) * g * gr;
-                    v.pos += rate;
-                    v.t += 1.0f / (float) sr;
-                }
-                view.pitch = v.active ? 36 + (int) p : -1;
-                view.level = v.active ? v.level : 0.0f;
-                view.velocity = v.vel;
-            }
-
-            // Dirt: a coarser sample clock, fewer bits and a push into saturation
-            const float dirt = raw (Dirt);
-            if (dirt > 0.01f)
-            {
-                const int hold = 1 + (int) (dirt * 7.0f);
-                const float levels = std::pow (2.0f, 15.0f - dirt * 10.0f), push = 1.0f + dirt * 3.0f, norm = 1.0f / fastTanh (push);
-                for (int i = 0; i < n; ++i)
-                {
-                    if (holdCount++ % hold == 0) { heldL = l[i]; heldR = r[i]; }
-                    l[i] = fastTanh (std::round (heldL * levels) / levels * push) * norm;
-                    r[i] = fastTanh (std::round (heldR * levels) / levels * push) * norm;
-                }
-            }
-        }
-    };
-
-    //--------------------------------------------------------------------------
     // Ladder filter morphing low pass to high pass, 24 or 12 dB, with drive, a vowel colour, a wobble
     // LFO (free or in time), an envelope follower that opens it with the music, and a dry / wet mix.
     struct FilterNode : public Node
@@ -1208,7 +1080,8 @@ std::unique_ptr<Node> createDeviceNode (const Module& m, double sr, const Graph:
     {
         case ModuleType::Sampler:    return std::make_unique<SamplerNode> (m, sr, resolve);
         case ModuleType::Synth:      return std::make_unique<SynthNode> (m, sr);
-        case ModuleType::Drums:      return std::make_unique<DrumsNode> (m, sr, resolve);
+        case ModuleType::Drums:
+        case ModuleType::DrumSeq:    return createDrumNode (m, sr, resolve);
         case ModuleType::Filter:     return std::make_unique<FilterNode> (m, sr);
         case ModuleType::Drive:      return std::make_unique<DriveNode> (m, sr);
         case ModuleType::Delay:      return std::make_unique<DelayNode> (m, sr);
