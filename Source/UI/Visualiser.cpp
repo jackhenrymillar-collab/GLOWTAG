@@ -18,6 +18,14 @@ namespace
     float beadAt (float amount) { return 0.15f + 0.7f * amount; }
 }
 
+#if JUCE_MAC
+namespace VisNative
+{
+    void placeBehind (juce::Component& picture, juce::Component& appWindow);   // VisualiserMac.mm
+    void letGo (juce::Component& picture);
+}
+#endif
+
 Visualiser::Visualiser (AppContext& c, juce::Component& w) : ctx (c), window (w)
 {
     setInterceptsMouseClicks (true, false);
@@ -64,14 +72,6 @@ namespace
        #endif
     }
 }
-
-#if JUCE_MAC
-namespace VisNative
-{
-    void placeBehind (juce::Component& picture, juce::Component& appWindow);   // VisualiserMac.mm
-    void letGo (juce::Component& picture);
-}
-#endif
 
 void Visualiser::release()
 {
@@ -679,13 +679,13 @@ struct Visualiser::Draw
 
     void tabContent (float x, float y, float w)
     {
-        const int style = S().style, tab = v.tab;
+        const int style = S().style, section = v.tab;
         const float hw = (w - 28.0f) / 2.0f, rx = x + 172.0f, rw = w - 172.0f;
         const juce::StringArray mirrors { "off", "2-way", "4-way" };
-        if (tab == 1) { colourTab (x, y, w); return; }
+        if (section == 1) { colourTab (x, y, w); return; }
         if (style == ink)
         {
-            if (tab == 0)
+            if (section == 0)
             {
                 wrow ("mirror", C::mirror, mirrors, x, y, nc());
                 bulbCount (F::seg, 10, x, y + 46.0f, w, nc(), false);
@@ -694,7 +694,7 @@ struct Visualiser::Draw
                 layersPic (x, y + 142.0f, cd, F::depth);
                 sfader (F::depth, x + 86.0f, y + 158.0f, w - 86.0f, cd, plain);
             }
-            else if (tab == 2)
+            else if (section == 2)
             {
                 idleWheel (x, y);
                 sfader (F::spin, x, y + 166.0f, 132.0f, nc(), plain);
@@ -713,7 +713,7 @@ struct Visualiser::Draw
         }
         else if (style == liquid)
         {
-            if (tab == 0)
+            if (section == 0)
             {
                 bulbCount (F::lcount, 9, x, y + 22.0f, w, nc(), false);
                 sfader (F::lsize, x, y + 84.0f, hw, nc(), plain);
@@ -723,7 +723,7 @@ struct Visualiser::Draw
                 layersPic (x, y + 184.0f, cd, F::ldepth);
                 sfader (F::ldepth, x + 86.0f, y + 200.0f, w - 86.0f, cd, plain);
             }
-            else if (tab == 2)
+            else if (section == 2)
             {
                 idleWheel (x, y);
                 sfader (F::lspin, rx, y + 24.0f, rw, nc(), plain);
@@ -734,7 +734,7 @@ struct Visualiser::Draw
         }
         else if (style == sand)
         {
-            if (tab == 0)
+            if (section == 0)
             {
                 sfader (F::sgrain, x, y + 22.0f, hw, nc(), jag);
                 sfader (F::scomp, x + hw + 28.0f, y + 22.0f, hw, nc(), wave);
@@ -742,12 +742,12 @@ struct Visualiser::Draw
                 sfader (F::sscatter, x + hw + 28.0f, y + 80.0f, hw, nc(), jag);
                 sfader (F::schange, x, y + 138.0f, w, nc(), comet);
             }
-            else if (tab == 2) { idleWheel (x, y); sfader (F::sspin, rx, y + 40.0f, rw, nc(), plain); }
+            else if (section == 2) { idleWheel (x, y); sfader (F::sspin, rx, y + 40.0f, rw, nc(), plain); }
             else { trailsRow (x, y); sfader (F::strails, x, y + 52.0f, w, nc(), comet); }
         }
         else
         {
-            if (tab == 0)
+            if (section == 0)
             {
                 wrow ("mirror", C::bmirror, mirrors, x, y, nc());
                 sfader (F::bspeed, x, y + 56.0f, hw, nc(), comet);
@@ -755,7 +755,7 @@ struct Visualiser::Draw
                 sfader (F::bseeds, x, y + 114.0f, hw, nc(), jag);
                 sfader (F::bfresh, x + hw + 28.0f, y + 114.0f, hw, nc(), plain);
             }
-            else if (tab == 2) { idleWheel (x, y); sfader (F::bspin, rx, y + 40.0f, rw, nc(), plain); }
+            else if (section == 2) { idleWheel (x, y); sfader (F::bspin, rx, y + 40.0f, rw, nc(), plain); }
             else { trailsRow (x, y); sfader (F::btrails, x, y + 52.0f, w, nc(), comet); }
         }
     }

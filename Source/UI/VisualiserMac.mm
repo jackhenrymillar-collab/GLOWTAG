@@ -6,6 +6,9 @@
 // full screen with it), and let the pointer pass straight through it.
 namespace VisNative
 {
+    void placeBehind (juce::Component& picture, juce::Component& appWindow);
+    void letGo (juce::Component& picture);
+
     static NSWindow* windowOf (juce::Component& c)
     {
         auto* view = (NSView*) c.getWindowHandle();
