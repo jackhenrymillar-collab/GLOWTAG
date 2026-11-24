@@ -156,7 +156,6 @@ private:
     int seenGeneration = -1;
     int cableFrom = -1;                         // a cable being pulled out of a sound's jack
     juce::Point<float> cableEnd;
-    double lastPaint = 0.0;
     bool saveDue = false, edited = false;
     int frameCount = 0;
     std::unique_ptr<juce::Component> picture;   // the picture's own window, when it sits behind the app's

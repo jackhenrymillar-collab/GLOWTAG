@@ -966,7 +966,7 @@ void Visualiser::paint (juce::Graphics& g)
     const auto l = layout();
     const float scale = (float) g.getInternalContext().getPhysicalPixelScaleFactor();
     const auto look = Theme::get().themeColour().getARGB() ^ (Theme::get().isRainbow() ? 0x5a5a5a5au : 0u);
-    if (artDirty || arts.empty() || scale != artScale || getLocalBounds() != artBounds || look != artLook)
+    if (artDirty || arts.empty() || std::abs (scale - artScale) > 0.001f || getLocalBounds() != artBounds || look != artLook)
     {
         artDirty = false;
         artLook = look;
