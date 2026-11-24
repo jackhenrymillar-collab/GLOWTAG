@@ -168,9 +168,9 @@ bool Renderer::Program::build (const char* fragment, juce::String& error)
         const GLuint sh = glCreateShader (type);
         glShaderSource (sh, 1, &source, nullptr);
         glCompileShader (sh);
-        GLint ok = 0;
-        glGetShaderiv (sh, GL_COMPILE_STATUS, &ok);
-        if (! ok)
+        GLint built = 0;
+        glGetShaderiv (sh, GL_COMPILE_STATUS, &built);
+        if (! built)
         {
             char log[1024] = {};
             glGetShaderInfoLog (sh, sizeof (log) - 1, nullptr, log);
@@ -184,12 +184,12 @@ bool Renderer::Program::build (const char* fragment, juce::String& error)
     glAttachShader (id, fs);
     glBindAttribLocation (id, 0, "p");
     glLinkProgram (id);
-    GLint ok = 0;
-    glGetProgramiv (id, GL_LINK_STATUS, &ok);
+    GLint linked = 0;
+    glGetProgramiv (id, GL_LINK_STATUS, &linked);
     glDeleteShader (vs);
     glDeleteShader (fs);
     locations.clear();
-    return ok != 0;
+    return linked != 0;
 }
 
 GLint Renderer::Program::u (const char* name)
@@ -420,6 +420,8 @@ void Renderer::analyse (float dt, const Settings& S, VisListener& ear, double la
     for (int i = 0; i < numDests; ++i) readout.reaction[(size_t) i].store (reaction[(size_t) i]);
     for (int i = 0; i < 3; ++i) readout.band[(size_t) i].store (band[i]);
     readout.clock.store (T);
+    readout.turn.store (theta);
+    readout.flow.store (ph);
 }
 
 //==============================================================================

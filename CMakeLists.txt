@@ -63,6 +63,9 @@ target_sources(Glowtag PRIVATE
     Source/UI/DeviceViewsFx.cpp
     Source/UI/DeviceViewsNew.cpp
     Source/UI/ExpandedDevice.cpp)
+if(APPLE)
+    target_sources(Glowtag PRIVATE Source/UI/VisualiserMac.mm)   # keeps the picture's window under the app's
+endif()
 
 # Lettering for the device wall (SIL Open Font License, see Source/Fonts)
 juce_add_binary_data(GlowtagFonts SOURCES

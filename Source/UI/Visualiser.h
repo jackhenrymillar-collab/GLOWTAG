@@ -61,6 +61,7 @@ namespace Vis
         std::array<Kick, 32> kicks {};
         int numKicks = 0;
         std::atomic<double> clock { 0.0 };
+        std::atomic<float> turn { 0.0f }, flow { 0.0f };      // how far the picture has turned and flowed, for the dials
         juce::String error;                    // a shader that would not build (guarded by lock)
     };
 
@@ -103,14 +104,23 @@ private:
     void openGLContextClosing() override;
 
     void changed();                             // a setting moved: hand it to the drawing thread, mark the song edited
-    void rebuildPanel();
-    void buildControls (Neon::Group&, float& y);
-    void buildRouting (Neon::Group&, float& y);
-    Neon::Item& fader (Neon::Group&, int key, float x, float y, float w);
-    void paintRouting (juce::Graphics&, const juce::Colour*);
-    Neon::Item& choice (Neon::Group&, const juce::String& title, int key, juce::StringArray options, float x, float y);
-    juce::Point<float> toPanel (juce::Point<float>) const;
-    juce::Rectangle<float> panelBounds() const;
+    void attach (bool ownWindow);               // start drawing: over the app's window, or in a window of its own behind it
+    void release();
+
+    // The control panel is drawn afresh each time, the way the mockup did it: every control leaves
+    // behind the box it answers to (hits) and the part of it that moves with the music (live).
+    struct Hit
+    {
+        juce::Rectangle<float> box;
+        std::function<void (float x, float y)> drag;
+        std::function<void()> click, reset, up;
+    };
+    struct Live { juce::AffineTransform place; std::function<void (juce::Graphics&)> draw; };
+    struct Draw;
+    friend struct Draw;
+    struct Layout { float K = 1.0f; int strip = 0; juce::Rectangle<float> panel, stripBox; juce::AffineTransform column; };
+    Layout layout() const;
+    const Hit* hitAt (juce::Point<float>) const;
 
     AppContext& ctx;
     juce::Component& window;
@@ -120,23 +130,32 @@ private:
     juce::SpinLock sharedLock;
     Vis::Settings shared;                       // what the drawing thread reads
     juce::Rectangle<int> sharedArea;            // where the picture goes, in window points
+    bool sharedOwnWindow = false;
+    double statSince = 0.0, statLast = 0.0, statWorst = 0.0, statWork = 0.0;    // drawing thread: the frame-rate readout
+    int statFrames = 0;
     std::atomic<double> latency { 0.02 };
     std::atomic<float> dragX { -1.0f }, dragY { -1.0f };
     Vis::Readout readout;
     std::unique_ptr<Vis::Renderer> renderer;
 
-    Neon::Wall panel;
     Neon::GlowLayer glowLayer;
+    std::vector<Hit> hits;
+    std::vector<Live> live;
+    std::vector<juce::Rectangle<int>> liveAreas;
+    std::function<void (float, float)> activeDrag;
+    std::function<void()> activeUp;
+    juce::String last;                          // what was last touched, and its value
     bool panelShown = true;
     int page = 0, tab = 0;                      // controls / routing; shape / colour / motion / trails
-    float panelScale = 1.0f, panelHeight = 640.0f;
     bool draggingPicture = false;
     int seenGeneration = -1;
     int cableFrom = -1;                         // a cable being pulled out of a sound's jack
     juce::Point<float> cableEnd;
     double lastPaint = 0.0;
-    bool saveDue = false, edited = false, pendingRebuild = false;
+    bool saveDue = false, edited = false;
     int frameCount = 0;
+    std::unique_ptr<juce::Component> picture;   // the picture's own window, when it sits behind the app's
+    juce::Colour windowColour;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Visualiser)
 };
