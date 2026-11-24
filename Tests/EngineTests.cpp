@@ -1234,6 +1234,112 @@ int main()
         check (l.readBands (b, 1024) > 500, "Visualiser listener: reports levels about every 5 ms");
     }
 
+    std::cout << "Automation\n";
+    {
+        std::vector<AutoPoint> pts;
+        Auto::add (pts, 4.0, 1.0f);
+        Auto::add (pts, 0.0, 0.0f);
+        check (pts.size() == 2 && pts[0].beat == 0.0, "Automation: points stay in beat order");
+        check (std::abs (Auto::valueAt (pts, 2.0) - 0.5f) < 1.0e-4f, "Automation: a straight stretch is linear");
+        check (Auto::valueAt (pts, -1.0) == 0.0f && Auto::valueAt (pts, 9.0) == 1.0f, "Automation: holds its first and last value");
+        check (Auto::valueAt ({}, 1.0) < 0.0f, "Automation: an empty lane has no value");
+        pts[0].curve = 0.6f;
+        check (Auto::valueAt (pts, 2.0) < 0.3f, "Automation: bending a stretch up keeps the middle low");
+        pts[0].curve = -0.6f;
+        check (Auto::valueAt (pts, 2.0) > 0.7f, "Automation: bending it down lifts the middle");
+        const float c = Auto::curveFor (0.25f);
+        check (std::abs (Auto::shape (0.5f, c) - 0.25f) < 0.01f, "Automation: the curve handle lands where it is dragged");
+
+        // A clip's stretch copies and pastes with its shape, and holds the lane around it
+        std::vector<AutoPoint> lane;
+        Auto::add (lane, 0.0, 0.2f);
+        Auto::add (lane, 4.0, 0.2f);
+        Auto::add (lane, 6.0, 0.9f);
+        Auto::add (lane, 8.0, 0.2f);
+        Auto::add (lane, 16.0, 0.2f);
+        const auto part = Auto::slice (lane, 4.0, 8.0);
+        check (! part.empty() && part.front().beat == 0.0 && std::abs (part[1].value - 0.9f) < 1.0e-5f, "Automation: a slice starts at the clip and keeps its peak");
+        Auto::paste (lane, part, 12.0, 4.0);
+        check (std::abs (Auto::valueAt (lane, 14.0) - 0.9f) < 1.0e-4f, "Automation: pasting puts the peak in the new place");
+        check (std::abs (Auto::valueAt (lane, 11.0) - 0.2f) < 1.0e-4f && std::abs (Auto::valueAt (lane, 16.0) - 0.2f) < 1.0e-3f,
+               "Automation: the lane either side of a paste is held");
+        check (std::abs (Auto::valueAt (lane, 6.0) - 0.9f) < 1.0e-4f, "Automation: pasting leaves the original alone");
+
+        std::vector<AutoLane> lanes (1);
+        lanes[0].target = { AutoTarget::knob, 3, 1 };
+        lanes[0].points = { { 0.0, 0.1f, 0.0f }, { 4.0, 0.1f, 0.0f }, { 6.0, 0.8f, 0.0f }, { 8.0, 0.1f, 0.0f }, { 20.0, 0.1f, 0.0f } };
+        Auto::clipMoved (lanes, 4.0, 8.0, 12.0);
+        check (std::abs (Auto::valueAt (lanes[0].points, 14.0) - 0.8f) < 1.0e-4f, "Automation: moving a clip carries its automation");
+        check (std::abs (Auto::valueAt (lanes[0].points, 6.0) - 0.1f) < 1.0e-3f, "Automation: and leaves the lane flat where it was");
+        Auto::clipCopied (lanes, 12.0, 16.0, 0.0);
+        check (std::abs (Auto::valueAt (lanes[0].points, 2.0) - 0.8f) < 1.0e-4f && std::abs (Auto::valueAt (lanes[0].points, 14.0) - 0.8f) < 1.0e-4f,
+               "Automation: copying a clip copies its automation and keeps the original");
+
+        // Tidy: a recorded ramp with many points thins to a few, same shape
+        std::vector<AutoPoint> ramp;
+        for (int i = 0; i <= 100; ++i) Auto::add (ramp, i * 0.04, (float) i / 100.0f);
+        Auto::thin (ramp, 0.0, 4.0);
+        check (ramp.size() <= 3 && std::abs (Auto::valueAt (ramp, 2.0) - 0.5f) < 0.01f, "Automation: tidying a recorded ramp keeps its shape with few points");
+
+        // Choices are whole numbers
+        AutoLane choice;
+        choice.lo = 0.0f; choice.hi = 4.0f; choice.stepped = true;
+        check (choice.raw (0.6f) == 2.0f, "Automation: a choice lane plays whole numbers");
+
+        // Morph: between snapshots, choices switch half way
+        AutoLane m;
+        m.target = { AutoTarget::morph, 3, 0 };
+        m.snaps.resize (2);
+        m.snaps[0].values = { { 0, 0.0f }, { 1, 0.0f } };
+        m.snaps[1].values = { { 0, 1.0f }, { 1, 3.0f } };
+        m.morphStepped = { 1 };
+        float out = 0.0f;
+        check (Auto::morphValue (m, 0, 0.25f, out) && std::abs (out - 0.25f) < 1.0e-5f, "Automation: morph blends between snapshots");
+        check (Auto::morphValue (m, 1, 0.4f, out) && out == 0.0f && Auto::morphValue (m, 1, 0.6f, out) && out == 3.0f, "Automation: morph switches choices half way");
+        m.snaps.resize (3);
+        m.snaps[2].values = { { 0, 0.5f }, { 1, 1.0f } };
+        check (Auto::morphValue (m, 0, 1.0f, out) && std::abs (out - 0.5f) < 1.0e-5f, "Automation: the end of the lane is the last snapshot");
+
+        // The engine plays a mixer lane, and stops while the lane rests
+        Project p;
+        AudioEngine e (p);
+        e.prepareToPlay (block, sr);
+        e.looping = false;
+        auto& t = *p.tracks[0];
+        {
+            const juce::SpinLock::ScopedLockType sl (p.lock);
+            auto& vol = Auto::get (t.lanes, { AutoTarget::mixer, 0, MixParam::volume });
+            vol.lo = 0.0f; vol.hi = 1.0f;
+            vol.points = { { 0.0, 0.0f, 0.0f }, { 8.0, 1.0f, 0.0f } };
+        }
+        e.play();
+        render (e, 4.0, p.bpm);
+        check (std::abs (t.volume.load() - 0.5f) < 0.05f, "Automation: the engine plays a volume lane");
+        {
+            const juce::SpinLock::ScopedLockType sl (p.lock);
+            t.lanes[0].overridden = true;
+        }
+        t.volume = 0.9f;
+        render (e, 2.0, p.bpm);
+        check (std::abs (t.volume.load() - 0.9f) < 1.0e-6f, "Automation: a resting lane leaves the hand's value");
+        e.stop();
+
+        // Lanes save and load, the visualiser's track too
+        t.lanes[0].overridden = false;
+        t.shown = { AutoTarget::mixer, 0, MixParam::volume };
+        p.visTrack = true;
+        p.visLanes.resize (1);
+        p.visLanes[0].target = { AutoTarget::vis, 0, 2 };
+        p.visLanes[0].points = { { 1.0, 0.3f, 0.5f } };
+        const auto saved = p.toVar();
+        Project q;
+        q.fromVar (saved);
+        check (! q.tracks.empty() && q.tracks[0]->lanes.size() == 1 && q.tracks[0]->lanes[0].points.size() == 2
+               && q.tracks[0]->lanes[0].target == AutoTarget { AutoTarget::mixer, 0, MixParam::volume }, "Automation: lanes save and load");
+        check (q.tracks[0]->shown == t.shown, "Automation: the shown lane is remembered");
+        check (q.visTrack && q.visLanes.size() == 1 && std::abs (q.visLanes[0].points[0].curve - 0.5f) < 1.0e-6f, "Automation: the visualiser's lanes save and load");
+    }
+
     std::cout << (failures == 0 ? "\nAll passed\n" : "\nSome checks failed\n");
     return failures == 0 ? 0 : 1;
 }

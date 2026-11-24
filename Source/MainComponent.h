@@ -18,6 +18,7 @@
 #include "UI/DeviceWall.h"
 #include "UI/ExpandedDevice.h"
 #include "UI/Visualiser.h"
+#include "UI/AutomationPanels.h"
 
 // The whole window: owns the project, the audio engine and every view.
 // Also the application's menu bar model (File / View / Transport) on the Mac.
@@ -62,6 +63,9 @@ private:
     void showCommandPalette();
     void showVisualMenu();                      // the visualiser's views and what it listens to
     void visualiserViewChanged();
+    void toggleLanes();                         // automation lanes over the clips, on or off
+    void rememberAutomationSettings();
+    int seenLaneRequests = 0;
     void addSequencerModule (SeqType);          // onto the selected track's rack, which it opens
     void loadFromWall (int deviceIndex);
     void enableMidiInputs();
@@ -105,6 +109,8 @@ private:
     DeviceWall wall;                            // hold Tab: every device as neon on a brick wall
     ExpandedDevice expanded { ctx };            // double-click a device: its controls as a neon wall
     Visualiser visualiser { ctx, *this };       // the picture that follows the song: full window, or behind everything
+    AutomationChooser laneChooser { ctx };      // a track header's "device > control": what its lane moves
+    SettingsPanel settingsPanel { ctx };
 
     Mode mode = Mode::Arrange;
     bool rackShown = false;

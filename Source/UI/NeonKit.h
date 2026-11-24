@@ -126,6 +126,7 @@ namespace Neon
         enum Kind { fader, words, handle, area, count } kind = area;
         int ci = 0;                                     // which of the group's three colours
         bool isNew = false;                             // ring mark: new to this device
+        int param = -1;                                 // the stored control it moves, when it moves just one (for automation)
         std::function<bool()> visible;
         std::function<juce::String()> tip;
 
@@ -217,6 +218,7 @@ namespace Neon
         void mouseDrag (juce::Point<float>, bool fine);
         void mouseUp();
         bool doubleClick (juce::Point<float>);
+        int paramAt (juce::Point<float>);                  // the stored control under the pointer, or -1 (Alt-click picks its lane)
         bool wheel (juce::Point<float>, float delta);
         juce::MouseCursor::StandardCursorType mouseMove (juce::Point<float>);
         void mouseExit() { if (active == nullptr) hot = nullptr; }

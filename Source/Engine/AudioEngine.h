@@ -90,6 +90,7 @@ private:
     struct Event { int offset; int track; int pitch; float velocity; double lengthBeats; bool click; bool accent; };
     struct Click { bool active = false; double phase = 0.0; float t = 0.0f; bool accent = false; };
 
+    void applyAutomation (double beat);     // every lane that plays sets its control for this block (under project.lock)
     void renderAudioClips (TrackSlot&, Track&, int offset, int numSamples, double startBeat, double beatsPerSample);
     void pushRecorded (const RecordedEvent&);
 

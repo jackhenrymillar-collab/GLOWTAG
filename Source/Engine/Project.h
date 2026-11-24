@@ -6,6 +6,7 @@
 #include <vector>
 #include "Patch.h"
 #include "Sequencer.h"
+#include "Automation.h"
 
 enum class TrackKind { Audio, Sampler, Midi, Automation, Return, Master, Bus };
 
@@ -61,6 +62,8 @@ struct Track
     std::vector<Clip> clips;
     Patch patch;                   // modular device patch; the engine builds a Graph from it
     SeqRack seq;                   // Eurorack-style rolling sequencer (message thread only)
+    std::vector<AutoLane> lanes;   // arrangement automation (guarded by Project::lock, like the clips)
+    AutoTarget shown;              // the lane the track header has chosen to show
     std::atomic<bool> rolling { false };   // true: the rack plays this track instead of its clips
 
     std::atomic<bool> muted { false };
@@ -136,6 +139,11 @@ public:
 
     // The visualiser's settings for this song (its look and its wiring), kept as the visualiser wrote them
     juce::var visualiser;
+
+    // The visualiser's own automation track, when the visualiser's Automation option is on
+    bool visTrack = false;
+    std::vector<AutoLane> visLanes;     // guarded by lock
+    AutoTarget visShown;
 
     // Save and load (JSON). Loading replaces every track; tell the engine and the views afterwards.
     juce::var toVar() const;

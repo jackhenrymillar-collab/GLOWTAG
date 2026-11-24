@@ -191,6 +191,57 @@ void AudioEngine::runSequencers (int numSamples, double beatsPerSample, bool isP
     }
 }
 
+void AudioEngine::applyAutomation (double beat)
+{
+    const int n = juce::jmin ((int) slots.size(), project.numSlots());
+    for (int i = 0; i < n; ++i)
+    {
+        auto& track = project.slot (i);
+        if (track.lanes.empty())
+            continue;
+        Graph* graph = slots[(size_t) i]->current.get();
+        // Morph lanes first, so a control's own lane has the last word
+        for (int pass = 0; pass < 2; ++pass)
+            for (auto& lane : track.lanes)
+            {
+                if (! lane.plays() || (lane.target.kind == AutoTarget::morph) != (pass == 0))
+                    continue;
+                const float v = Auto::valueAt (lane.points, beat);
+                const auto& t = lane.target;
+                if (t.kind == AutoTarget::knob && graph != nullptr)
+                {
+                    if (auto* node = graph->find (t.module); node != nullptr && t.param >= 0 && t.param < maxParams)
+                        node->knob[(size_t) t.param].store (lane.raw (v));
+                }
+                else if (t.kind == AutoTarget::morph && graph != nullptr)
+                {
+                    if (auto* node = graph->find (t.module); node != nullptr && ! lane.snaps.empty())
+                        for (auto& pv : lane.snaps.front().values)
+                        {
+                            const int param = pv.first;
+                            float out;
+                            if (param >= 0 && param < maxParams && Auto::morphValue (lane, param, v, out))
+                                node->knob[(size_t) param].store (out);
+                        }
+                }
+                else if (t.kind == AutoTarget::mixer)
+                {
+                    const float r = lane.raw (v);
+                    switch (t.param)
+                    {
+                        case MixParam::volume: track.volume.store (r); break;
+                        case MixParam::pan:    track.pan.store (r); break;
+                        case MixParam::sendA:  track.send[0].store (r); break;
+                        case MixParam::sendB:  track.send[1].store (r); break;
+                        case MixParam::trim:   track.trimDb.store (r); break;
+                        case MixParam::width:  track.width.store (r); break;
+                        default: break;
+                    }
+                }
+            }
+    }
+}
+
 void AudioEngine::setKnob (int track, int moduleId, int knob, float value)
 {
     if (track < 0 || track >= (int) slots.size() || knob < 0 || knob >= maxParams)
@@ -409,6 +460,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     segments.push_back ({ 0, pos });
     {
         const juce::SpinLock::ScopedLockType sl (project.lock);
+        applyAutomation (pos);
 
         if (isPlaying)
         {
