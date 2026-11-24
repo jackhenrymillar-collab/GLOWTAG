@@ -495,8 +495,11 @@ void Renderer::frame (const Settings& S, VisListener& ear, double latency, const
     glDisable (GL_SCISSOR_TEST);
     glDisable (GL_CULL_FACE);
 
-    // The picture is worked out at a moderate size and stretched: soft shapes lose nothing by it
-    const float shrink = juce::jmin (1.0f, 900.0f / (float) o.h);
+    // The picture is worked out at a moderate size and stretched: soft shapes lose nothing by it.
+    // Liquid has crisp rims, so it is worked out a little larger than the window and brought down, which
+    // smooths them (twice the size cost frames on a 100 Hz screen for little more smoothness).
+    const float shrink = S.style == liquid ? juce::jmin (1.15f, 1500.0f / (float) o.h, 2800.0f / (float) o.w)
+                                           : juce::jmin (1.0f, 900.0f / (float) o.h);
     const int W = juce::jmax (8, juce::roundToInt ((float) o.w * shrink)), H = juce::jmax (8, juce::roundToInt ((float) o.h * shrink));
     const float aspect = (float) W / (float) H;
     const bool dragging = drag.x >= 0.0f;
