@@ -14,7 +14,12 @@ namespace Neon
     using Lines = std::vector<Line>;
 
     // What every drawing reads: the chosen style (0 tubes, 1 marquee bulbs, 2 block) and the glow
-    struct Look { int style = 0; float glow = 1.0f; };
+    struct Look
+    {
+        int style = 0; float glow = 1.0f;
+        bool padColours = true;                 // Drum Rack: pads coloured by the range they play
+        std::function<void()> changed;          // something here changed: worth saving
+    };
     Look& look();
 
     // Soft light. While a view paints, every lit piece of glass adds its shape here (in the view's

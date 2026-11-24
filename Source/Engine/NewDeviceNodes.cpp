@@ -1169,7 +1169,7 @@ std::unique_ptr<Node> createWorkshopNode (const Module& m, double sr, const Grap
         case ModuleType::Input: case ModuleType::Output: case ModuleType::Sampler: case ModuleType::Synth: case ModuleType::Drums:
         case ModuleType::Filter: case ModuleType::Drive: case ModuleType::Delay: case ModuleType::Reverb: case ModuleType::EQ:
         case ModuleType::Compressor: case ModuleType::LFO: case ModuleType::Plugin: case ModuleType::Attenuator: case ModuleType::Mixer:
-        case ModuleType::Inverter: case ModuleType::Crossfade: case ModuleType::Slew:
+        case ModuleType::Inverter: case ModuleType::Crossfade: case ModuleType::Slew: case ModuleType::DrumSeq:
             break;
     }
     return nullptr;

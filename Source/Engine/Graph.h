@@ -14,8 +14,9 @@
 // handed to the audio thread, and processed in small sub-blocks so modulation cables move
 // knobs smoothly. Knob values live in atomics so the UI can turn them while it plays.
 
-constexpr int maxParams = 96;          // card knobs plus the expanded view's controls (the Drum Rack has the most)
+constexpr int maxParams = 1056;        // card knobs plus the expanded view's controls (the Drum Rack Sequencer's steps are the most)
 constexpr int maxKnobs = maxParams;
+constexpr int maxModulated = Port::sigInBase - Port::modInBase;   // only card knobs take modulation cables
 constexpr int subBlock = 32;
 
 // What the engine tells a graph about the song while it runs: where the playhead is, and the other
@@ -81,6 +82,7 @@ public:
     virtual void allNotesOff() {}
     virtual void anyNoteOn() {}                      // every node hears that a note started (an LFO may restart)
     virtual bool isInstrument() const { return false; }
+    virtual void addNoteTarget (Node*) {}           // a node that makes notes (the Drum Rack Sequencer): where its notes cable goes
 
     // Plugin modules: the hosted processor, for its editor window
     virtual juce::AudioProcessor* hostedPlugin() { return nullptr; }
@@ -105,6 +107,8 @@ public:
     bool on (int i) const { return knob[(size_t) i].load() > 0.5f; }
 
     std::array<float, subBlock> bufL {}, bufR {};
+    std::array<float, subBlock> auxL {}, auxR {};   // the second sound output, for a node that has one
+    bool auxPatched = false;                          // set by the graph when something takes the second output
 
     // Set by the graph from the cables: notes only reach a node whose notes input is patched
     bool takesNotes = false;
@@ -181,4 +185,5 @@ private:
 
 std::unique_ptr<Node> createNode (const Module&, double sampleRate, const Graph::SampleResolver&);
 std::unique_ptr<Node> createDeviceNode (const Module&, double sampleRate, const Graph::SampleResolver&);   // built-in instruments and effects (DeviceNodes.cpp), nullptr for others
+std::unique_ptr<Node> createDrumNode (const Module&, double sampleRate, const Graph::SampleResolver&);     // Drum Rack and Drum Rack Sequencer (DrumNodes.cpp)
 std::unique_ptr<Node> createWorkshopNode (const Module&, double sampleRate, const Graph::SampleResolver&); // Gas Tube ... Transformer (NewDeviceNodes.cpp), nullptr for others

@@ -12,6 +12,8 @@
 // these names, so a control means the same thing on both sides.
 namespace Param
 {
+    inline float expMap (float v, float lo, float hi);
+
     namespace Synth
     {
         enum
@@ -47,10 +49,87 @@ namespace Param
         inline int rootNote (float v)      { return 36 + juce::roundToInt (juce::jlimit (0.0f, 1.0f, v) * 48.0f); }
     }
 
+    // Kit-wide controls first (tune, decay, snap, gain, dirt, velocity), then sixteen of each per-pad
+    // control. Swing and Steps are from before the sequencer had its own device: a project that still
+    // has them is moved onto a Drum Rack Sequencer when it loads, and the rack itself ignores them.
     namespace Drums
     {
         enum { Tune, Decay, Snap, Gain, Swing, Dirt, Selected, Level0, Pitch0 = Level0 + 16, Pan0 = Pitch0 + 16,
-               Choke0 = Pan0 + 16, Steps0 = Choke0 + 16, Count = Steps0 + 16 };
+               Choke0 = Pan0 + 16, Steps0 = Choke0 + 16,
+               VelSens = Steps0 + 16,
+               Attack0, Hold0 = Attack0 + 16, PDecay0 = Hold0 + 16, Start0 = PDecay0 + 16, Reverse0 = Start0 + 16,
+               Cutoff0 = Reverse0 + 16, Res0 = Cutoff0 + 16, FMode0 = Res0 + 16, Drive0 = FMode0 + 16, PSnap0 = Drive0 + 16,
+               Out0 = PSnap0 + 16, Mute0 = Out0 + 16, Solo0 = Mute0 + 16, Voice0 = Solo0 + 16,
+               VoiceA0 = Voice0 + 16, VoiceB0 = VoiceA0 + 16, VoiceC0 = VoiceB0 + 16, Count = VoiceC0 + 16 };
+        enum FilterMode { LP, BP, HP };
+        enum Voice { Sample, Kick, Snare, Hat, Clap, Tom, Perc, numVoices };
+        inline const char* voiceName (int v)
+        {
+            static const char* n[] = { "sample", "kick", "snare", "hat", "clap", "tom", "perc" };
+            return n[juce::jlimit (0, (int) numVoices - 1, v)];
+        }
+        // What each analogue voice's three controls do, in the order VoiceA, VoiceB, VoiceC
+        inline const char* voiceParam (int v, int which)
+        {
+            static const char* n[numVoices][3] = { { "", "", "" }, { "tone", "sweep", "click" }, { "tone", "snappy", "body" },
+                                                   { "metal", "noise", "closed" }, { "spread", "colour", "tail" },
+                                                   { "tone", "sweep", "skin" }, { "tone", "ratio", "ring" } };
+            return n[juce::jlimit (0, (int) numVoices - 1, v)][juce::jlimit (0, 2, which)];
+        }
+
+        // The pad's own envelope: attack and hold in seconds, the decay's time constant (0: it never fades)
+        inline float attackSec (float v) { return v * v * 0.25f; }
+        inline float holdSec (float v)   { return v * v * 0.6f; }
+        inline float decayTau (float v)  { return v >= 0.99f ? 0.0f : expMap (v, 0.01f, 1.2f); }
+        inline float padEnvelope (float t, float atk, float hold, float dec)
+        {
+            const float a = attackSec (atk), h = holdSec (hold), tau = decayTau (dec);
+            if (t < a) return t / a;
+            if (t < a + h || tau <= 0.0f) return 1.0f;
+            return std::exp (-(t - a - h) / tau);
+        }
+        inline float cutoffHz (float v) { return expMap (v, 40.0f, 18000.0f); }
+    }
+
+    // The Drum Rack Sequencer: a groove (swing, humanise, pattern, step size, play), a length for each
+    // row, then four patterns of sixteen rows of sixteen steps. A step is one stored number: 0 is off,
+    // otherwise 1 + velocity (0..127) + 128 x how much chance is taken away (0..20, 5% each)
+    // + 2688 x (ratchet - 1), the ratchet being 1..4 hits in the step.
+    namespace DrumSeq
+    {
+        constexpr int rows = 16, steps = 16, patterns = 4;
+        enum { Swing, Humanise, Pattern, Rate, Play, Selected, Length0, Step0 = Length0 + rows, Count = Step0 + patterns * rows * steps };
+        inline int stepParam (int pattern, int row, int step) { return Step0 + (juce::jlimit (0, patterns - 1, pattern) * rows + juce::jlimit (0, rows - 1, row)) * steps + juce::jlimit (0, steps - 1, step); }
+        // Step size in beats: 1/8, 1/16, 1/16 triplets, 1/32
+        inline double stepBeats (int rate) { static const double b[] = { 0.5, 0.25, 1.0 / 6.0, 0.125 }; return b[juce::jlimit (0, 3, rate)]; }
+        inline const char* rateName (int rate) { static const char* n[] = { "1/8", "1/16", "1/16t", "1/32" }; return n[juce::jlimit (0, 3, rate)]; }
+
+        struct Step
+        {
+            bool on = false;
+            int velocity = 100;      // 0..127
+            int chance = 100;        // percent, in fives
+            int ratchet = 1;         // hits in the step, 1..4
+            bool accent() const { return velocity >= 115; }
+        };
+        inline Step decode (float stored)
+        {
+            Step s;
+            const int v = juce::roundToInt (stored);
+            if (v <= 0) return s;
+            const int x = v - 1;
+            s.on = true;
+            s.velocity = x % 128;
+            s.chance = 100 - 5 * juce::jlimit (0, 20, (x / 128) % 21);
+            s.ratchet = 1 + juce::jlimit (0, 3, x / 2688);
+            return s;
+        }
+        inline float encode (const Step& s)
+        {
+            if (! s.on) return 0.0f;
+            const int miss = juce::jlimit (0, 20, (100 - s.chance + 2) / 5);
+            return (float) (1 + juce::jlimit (0, 127, s.velocity) + 128 * miss + 2688 * (juce::jlimit (1, 4, s.ratchet) - 1));
+        }
     }
 
     namespace Filter  { enum { Cutoff, Res, Drive, Mode, Mix, Follow, Wobble, Rate, Vowel, Slope, WobbleSync, Count }; }

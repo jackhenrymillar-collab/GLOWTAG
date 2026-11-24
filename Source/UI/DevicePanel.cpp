@@ -57,6 +57,7 @@ juce::Point<float> ModuleCard::jackPosition (int port) const
     if (port == Port::audioIn)  return { 0.0f, jackY };
     if (port == Port::notesIn)  return { 0.0f, info.hasAudioIn ? jackY + notesJackDrop : jackY };
     if (port == Port::audioOut) return { w, jackY };
+    if (port == Port::auxOut)   return { w, jackY + notesJackDrop };
     if (port == Port::notesOut) return { w, info.hasAudioOut ? jackY + notesJackDrop : jackY };
     if (port == Port::modOut)   return { w, jackY };
 
@@ -186,7 +187,7 @@ void ModuleCard::chooseSample()
         if (safe == nullptr) return;
         if (auto* m = safe->patch.find (safe->moduleId))
         {
-            if (drums) m->padNames[(size_t) pad] = name;
+            if (drums) { m->padNames[(size_t) pad] = name; m->knobValues[(size_t) (Param::Drums::Voice0 + pad)] = (float) Param::Drums::Sample; }
             else       m->sampleName = name;
         }
         if (safe->onPatchChanged) safe->onPatchChanged();
@@ -334,7 +335,34 @@ bool ModuleCard::isInterestedInFileDrag (const juce::StringArray& files)
     return false;
 }
 
-void ModuleCard::filesDropped (const juce::StringArray& files, int, int)
+bool ModuleCard::isInterestedInDragSource (const SourceDetails& d)
+{
+    const auto t = module().type;
+    return d.description.toString().startsWith ("sample:") && (t == ModuleType::Sampler || t == ModuleType::Drums || t == ModuleType::CrateDigger);
+}
+
+void ModuleCard::itemDropped (const SourceDetails& d)
+{
+    dropHover = false;
+    const auto name = d.description.toString().fromFirstOccurrenceOf ("sample:", false, false);
+    if (auto* m = patch.find (moduleId); m != nullptr && name.isNotEmpty())
+    {
+        if (m->type == ModuleType::Drums)
+        {
+            const int under = DeviceCards::drumPadAt (d.localPosition.toFloat());
+            const int pad = under >= 0 ? under : juce::jlimit (0, 15, card->dev.choice (Param::Drums::Selected));
+            m->padNames[(size_t) pad] = name;
+            m->knobValues[(size_t) (Param::Drums::Voice0 + pad)] = (float) Param::Drums::Sample;
+            m->knobValues[(size_t) Param::Drums::Selected] = (float) pad;
+        }
+        else
+            m->sampleName = name;
+        if (onPatchChanged) onPatchChanged();
+    }
+    repaint();
+}
+
+void ModuleCard::filesDropped (const juce::StringArray& files, int x, int y)
 {
     dropHover = false;
     if (auto* m = patch.find (moduleId))
@@ -342,7 +370,20 @@ void ModuleCard::filesDropped (const juce::StringArray& files, int, int)
         if (m->type == ModuleType::Sampler || m->type == ModuleType::CrateDigger)
             m->sampleName = files[0];
         else if (m->type == ModuleType::Drums)
-            m->padNames[(size_t) juce::jlimit (0, 15, card->dev.choice (Param::Drums::Selected))] = files[0];
+        {
+            // Onto the pad under the pointer (or the chosen pad), more files onto the pads after it
+            const int under = DeviceCards::drumPadAt ({ (float) x, (float) y });
+            const int first = under >= 0 ? under : juce::jlimit (0, 15, card->dev.choice (Param::Drums::Selected));
+            int n = 0;
+            for (auto& f : files)
+            {
+                if (! juce::File (f).hasFileExtension ("wav;aif;aiff;flac;mp3;ogg") || first + n > 15) continue;
+                m->padNames[(size_t) (first + n)] = f;
+                m->knobValues[(size_t) (Param::Drums::Voice0 + first + n)] = (float) Param::Drums::Sample;
+                ++n;
+            }
+            m->knobValues[(size_t) Param::Drums::Selected] = (float) first;
+        }
         else
             return;
         if (onPatchChanged) onPatchChanged();
@@ -534,6 +575,9 @@ juce::String CableLayer::describe (JackRef j) const
     const auto title = m->type == ModuleType::Plugin && m->pluginName.isNotEmpty() ? m->pluginName : info.title;
     const auto kind = patch->kindOf (j.module, j.port);
 
+    if (j.port == Port::notesOut && m->type == ModuleType::DrumSeq)
+        return "Drum Rack Sequencer notes out: its steps, with the track's notes passed on. Patch it to a Drum Rack.";
+    if (j.port == Port::auxOut) return title + " own out: the pads set to \"own\" come out here, past the kit's dirt. Loose, they stay in the kit.";
     if (j.port == Port::notesOut) return "Track notes out: pitch, velocity and gate from clips, the keyboard and the rack. Patch it to an instrument.";
     if (j.port == Port::notesIn)  return title + " notes in: takes notes from the track input only.";
     if (Port::isModIn (j.port))   return title + " " + info.knobs[(size_t) (j.port - Port::modInBase)].first + ": takes modulation (an LFO, or a utility working on one).";
@@ -856,7 +900,7 @@ DevicePanel::DevicePanel (AppContext& c) : ctx (c)
     {
         struct Entry { ModuleType type; const char* name; };
         static const Entry devices[] = {
-            { ModuleType::Sampler, "Sampler" }, { ModuleType::Synth, "Synth" }, { ModuleType::Drums, "Drum Rack" },
+            { ModuleType::Sampler, "Sampler" }, { ModuleType::Synth, "Synth" }, { ModuleType::Drums, "Drum Rack" }, { ModuleType::DrumSeq, "Drum Rack Sequencer" },
             { ModuleType::Filter, "Filter" }, { ModuleType::Delay, "Delay" }, { ModuleType::Reverb, "Reverb" },
             { ModuleType::EQ, "EQ" }, { ModuleType::Compressor, "Compressor" }, { ModuleType::Drive, "Drive" }, { ModuleType::LFO, "LFO" } };
         static const Entry workshop[] = {

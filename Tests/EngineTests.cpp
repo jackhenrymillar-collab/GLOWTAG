@@ -8,6 +8,7 @@
 #include "Engine/Sequencer.h"
 #include "Engine/VisListener.h"
 #include "Engine/DeviceParams.h"
+#include "Engine/DrumKit.h"
 #include "UI/DeviceWallModel.h"
 #include <iostream>
 
@@ -906,14 +907,14 @@ int main()
 
         // Every module carries its card knobs plus its extra controls
         for (auto t : { ModuleType::Synth, ModuleType::Sampler, ModuleType::Drums, ModuleType::Filter, ModuleType::Drive,
-                        ModuleType::Delay, ModuleType::Reverb, ModuleType::EQ, ModuleType::Compressor, ModuleType::LFO })
+                        ModuleType::Delay, ModuleType::Reverb, ModuleType::EQ, ModuleType::Compressor, ModuleType::LFO, ModuleType::DrumSeq })
         {
             Patch q; const int id = q.add (t);
             if ((int) q.find (id)->knobValues.size() != moduleInfo (t).numParams() || moduleInfo (t).numParams() > maxParams)
                 check (false, ("a new " + moduleInfo (t).title + " has all its controls").toRawUTF8());
         }
         check (moduleInfo (ModuleType::Synth).numParams() == Param::Synth::Count && moduleInfo (ModuleType::Sampler).numParams() == Param::Sampler::Count
-                   && moduleInfo (ModuleType::Drums).numParams() == Param::Drums::Count && moduleInfo (ModuleType::Reverb).numParams() == Param::Reverb::Count
+                   && moduleInfo (ModuleType::Drums).numParams() == Param::Drums::Count && moduleInfo (ModuleType::DrumSeq).numParams() == Param::DrumSeq::Count && moduleInfo (ModuleType::Reverb).numParams() == Param::Reverb::Count
                    && moduleInfo (ModuleType::EQ).numParams() == Param::EQ::Count && moduleInfo (ModuleType::LFO).numParams() == Param::LFO::Count,
                "the control lists match the names both sides use");
 
@@ -995,23 +996,204 @@ int main()
                    "two hits in a file are found where they are");
         }
 
-        // Drum Rack: the step row plays with the transport; choke groups cut each other off
+        // Drum Rack Sequencer: its steps play the rack with the transport; choke groups cut each other off
         {
-            Patch q; const int dr = q.add (ModuleType::Drums);
-            q.find (dr)->knobValues[Param::Drums::Steps0] = (float) (1 | (1 << 4));      // kick on steps 1 and 5
+            using namespace Param;
+            Patch q; const int dr = q.add (ModuleType::Drums); const int sq = q.add (ModuleType::DrumSeq);
+            const int into = q.cableInto (dr, Port::notesIn), seqIn = q.cableInto (sq, Port::notesIn);
+            check (into >= 0 && q.cables[(size_t) into].fromModule == sq && seqIn >= 0 && q.cables[(size_t) seqIn].fromModule == Patch::inputId,
+                   "a new sequencer goes in front of the rack: track notes in, its notes out to the rack");
+            check (q.find (sq)->position.x < q.find (dr)->position.x, "and its card sits left of the rack's");
+            {
+                Patch r; const int rs = r.add (ModuleType::DrumSeq); const int rr = r.add (ModuleType::Drums);
+                const int rin = r.cableInto (rr, Port::notesIn);
+                check (rin >= 0 && r.cables[(size_t) rin].fromModule == rs, "a rack added after a loose sequencer is played by it");
+            }
+            DrumSeq::Step on; on.on = true; on.velocity = 120;
+            q.find (sq)->knobValues[(size_t) DrumSeq::stepParam (0, 0, 0)] = DrumSeq::encode (on);
+            q.find (sq)->knobValues[(size_t) DrumSeq::stepParam (0, 0, 4)] = DrumSeq::encode (on);
             Graph g (q, sr, resolve);
             check (run (g, 20) < 1e-6f, "steps stay quiet while stopped");
             g.setTransport (0.0, 120.0 / 60.0 / sr, true, 0);
             check (run (g, 4) > 0.1f, "the first step plays when the song runs");
-            check (g.find (dr)->meter[0].load() >= 0.0f, "and the row shows where it is");
+            check (g.find (sq)->meter[0].load() >= 0.0f, "and the sequencer shows where it is");
+            g.find (sq)->knob[(size_t) DrumSeq::Play] = 0.0f;
+            g.allNotesOff(); run (g, 200);
+            g.setTransport (0.0, 120.0 / 60.0 / sr, true, 0);
+            check (run (g, 40) < 1e-6f, "with play off it sends nothing");
+
+            // Encoding round trip
+            DrumSeq::Step st; st.on = true; st.velocity = 77; st.chance = 35; st.ratchet = 3;
+            const auto back = DrumSeq::decode (DrumSeq::encode (st));
+            check (back.on && back.velocity == 77 && back.chance == 35 && back.ratchet == 3 && ! DrumSeq::decode (0.0f).on,
+                   "a step keeps its velocity, chance and ratchet in one stored number");
+
+            // A step with no chance never plays; a row shorter than sixteen loops early
+            Patch z; const int zr = z.add (ModuleType::Drums); const int zs = z.add (ModuleType::DrumSeq);
+            DrumSeq::Step never = on; never.chance = 0;
+            z.find (zs)->knobValues[(size_t) DrumSeq::stepParam (0, 0, 0)] = DrumSeq::encode (never);
+            Graph zg (z, sr, resolve);
+            zg.setTransport (0.0, 120.0 / 60.0 / sr, true, 0);
+            check (run (zg, 200) < 1e-6f, "a step at no chance never plays");
+            juce::ignoreUnused (zr);
+
+            Patch lq; lq.add (ModuleType::Drums); const int ls = lq.add (ModuleType::DrumSeq);
+            lq.find (ls)->knobValues[(size_t) DrumSeq::Length0] = 3.0f;
+            Graph lg (lq, sr, resolve);
+            lg.setTransport (0.0, 120.0 / 60.0 / sr, true, 0);
+            run (lg, 1);
+            const int beatsPerBlock = 1;
+            juce::ignoreUnused (beatsPerBlock);
+            // At 120 bpm a sixteenth is 6000 samples: step 4 (index 4 of the bar) is index 1 of a 3-step row
+            lg.setTransport (4 * 0.25 + 0.01, 120.0 / 60.0 / sr, true, 0);
+            run (lg, 1);
+            check (lg.find (ls)->views[0].slice.load() == 1 && lg.find (ls)->views[1].slice.load() == 4, "each row keeps its own length");
+
+            // Taking the sequencer out joins the rack back to the track's notes
+            Patch rm; const int rd = rm.add (ModuleType::Drums); const int rs = rm.add (ModuleType::DrumSeq);
+            rm.remove (rs);
+            const int back2 = rm.cableInto (rd, Port::notesIn);
+            check (back2 >= 0 && rm.cables[(size_t) back2].fromModule == Patch::inputId, "removing the sequencer joins the rack back to the track's notes");
+
             Patch c; const int dc = c.add (ModuleType::Drums);
             Graph h (c, sr, resolve);
             const int open = 6, closed = 10;
-            check (h.find (dc)->choice (Param::Drums::Choke0 + open) > 0 && h.find (dc)->choice (Param::Drums::Choke0 + open) == h.find (dc)->choice (Param::Drums::Choke0 + closed),
+            check (h.find (dc)->choice (Drums::Choke0 + open) > 0 && h.find (dc)->choice (Drums::Choke0 + open) == h.find (dc)->choice (Drums::Choke0 + closed),
                    "the hats start in one choke group");
             h.noteOn (36 + open, 1.0f, 0.0); run (h, 2);
             h.noteOn (36 + closed, 1.0f, 0.0); run (h, 8);
             check (h.find (dc)->views[(size_t) open].pitch.load() < 0, "the closed hat cuts off the open one");
+        }
+
+        // An older project's own drum steps move onto a sequencer, and play the same
+        {
+            using namespace Param;
+            Patch q; const int dr = q.add (ModuleType::Drums);
+            auto* m = q.find (dr);
+            m->knobValues[(size_t) Drums::Steps0] = (float) (1 | (1 << 4));
+            m->knobValues[(size_t) Drums::Swing] = 0.4f;
+            m->knobValues[(size_t) Drums::Pitch0 + 3] = 1.0f;                 // an octave up, on the old scale
+            m->knobValues.resize ((size_t) Drums::Steps0 + 16);              // as saved before the change
+            Patch loaded; loaded.fromVar (q.toVar());
+            int seq = -1;
+            for (auto& mm : loaded.modules) if (mm.type == ModuleType::DrumSeq) seq = mm.id;
+            const int into = loaded.cableInto (dr, Port::notesIn);
+            check (seq > 0 && into >= 0 && loaded.cables[(size_t) into].fromModule == seq, "an old rack with steps gets a sequencer patched in front");
+            if (seq > 0)
+            {
+                const auto& sv = loaded.find (seq)->knobValues;
+                const auto a = DrumSeq::decode (sv[(size_t) DrumSeq::stepParam (0, 0, 0)]), b = DrumSeq::decode (sv[(size_t) DrumSeq::stepParam (0, 0, 4)]);
+                check (a.on && b.on && ! DrumSeq::decode (sv[(size_t) DrumSeq::stepParam (0, 0, 1)]).on && std::abs (sv[(size_t) DrumSeq::Swing] - 0.4f) < 1e-6f
+                           && juce::roundToInt (loaded.find (dr)->knobValues[(size_t) Drums::Steps0]) == 0,
+                       "its steps and swing move across, and leave the rack");
+            }
+            check (std::abs (loaded.find (dr)->knobValues[(size_t) Drums::Pitch0 + 3] - 0.75f) < 1e-6f, "an old pad's pitch keeps its sound on the wider scale");
+            Patch plain; const int pd = plain.add (ModuleType::Drums);
+            plain.find (pd)->knobValues.resize ((size_t) Drums::Steps0 + 16);
+            Patch pl; pl.fromVar (plain.toVar());
+            bool none = true;
+            for (auto& mm : pl.modules) none = none && mm.type != ModuleType::DrumSeq;
+            check (none, "an old rack with no steps gets no sequencer");
+        }
+
+        // Kits: pad ranges, a kit as data and back, filling the pads from a folder
+        {
+            using namespace Param::Drums;
+            check (DrumKit::rangeOfName ("Kick 808") == DrumKit::Range::Low && DrumKit::rangeOfName ("Hat Open") == DrumKit::Range::High
+                       && DrumKit::rangeOfName ("Snare Crack") == DrumKit::Range::Mid && DrumKit::rangeOfName ("Tom Low") == DrumKit::Range::Low,
+                   "pads are sorted into low, mid and high by their names");
+            Patch q; const int dr = q.add (ModuleType::Drums);
+            auto& m = *q.find (dr);
+            m.knobValues[(size_t) Voice0 + 6] = (float) Kick;
+            check (DrumKit::rangeOf (m, 6) == DrumKit::Range::Low, "an analogue voice decides a pad's range");
+            m.knobValues[(size_t) PDecay0 + 2] = 0.3f; m.knobValues[(size_t) Gain] = 0.5f; m.padNames[3] = "Rim";
+            const auto kit = DrumKit::toVar (m);
+            Patch q2; const int d2 = q2.add (ModuleType::Drums);
+            auto& m2 = *q2.find (d2);
+            m2.knobValues[(size_t) Selected] = 9.0f;
+            DrumKit::apply (m2, juce::JSON::parse (juce::JSON::toString (kit)));
+            check (std::abs (m2.knobValues[(size_t) PDecay0 + 2] - 0.3f) < 1e-6f && std::abs (m2.knobValues[(size_t) Gain] - 0.5f) < 1e-6f
+                       && m2.padNames[3] == "Rim" && juce::roundToInt (m2.knobValues[(size_t) Voice0 + 6]) == Kick && juce::roundToInt (m2.knobValues[(size_t) Selected]) == 9,
+                   "a kit carries every pad's sound and leaves the chosen pad alone");
+            const auto kits = DrumKit::list();
+            check (kits.size() >= 2 && DrumKit::load (m2, kits[1]) && juce::roundToInt (m2.knobValues[(size_t) Voice0]) == Kick,
+                   "the built-in analogue kit sets every pad to an analogue voice");
+            auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("glowtag-kit-test");
+            dir.deleteRecursively(); dir.createDirectory();
+            for (auto* n : { "hat closed.wav", "big kick.wav", "snare.wav", "notes.txt" }) dir.getChildFile (n).replaceWithText ("x");
+            const int filled = DrumKit::fillFromFolder (m2, dir);
+            check (filled == 3 && m2.padNames[0].endsWith ("big kick.wav") && m2.padNames[1].endsWith ("snare.wav") && m2.padNames[2].endsWith ("hat closed.wav")
+                       && juce::roundToInt (m2.knobValues[(size_t) Voice0]) == Sample,
+                   "fill from folder puts low sounds on the first pads, then mid, then high");
+            dir.deleteRecursively();
+        }
+
+        // The pads' own shaping, analogue voices, mute, solo and the own output
+        {
+            using namespace Param::Drums;
+            auto hit = [&] (std::function<void (Module&)> setup, int pad, float* rms = nullptr)
+            {
+                Patch q; const int dr = q.add (ModuleType::Drums);
+                setup (*q.find (dr));
+                Graph g (q, sr, resolve);
+                g.noteOn (36 + pad, 1.0f, 0.0);
+                return run (g, 12, 120.0, rms);
+            };
+            float plainRms = 0.0f, darkRms = 0.0f, shortRms = 0.0f;
+            const float plain = hit ([] (Module&) {}, 0, &plainRms);
+            hit ([] (Module& m) { m.knobValues[(size_t) Cutoff0] = 0.05f; }, 0, &darkRms);
+            hit ([] (Module& m) { m.knobValues[(size_t) PDecay0] = 0.1f; }, 0, &shortRms);
+            check (plain > 0.1f && darkRms < plainRms * 0.8f, "a pad's own filter darkens it");
+            check (shortRms < plainRms * 0.8f, "a pad's own decay shortens it");
+            check (hit ([] (Module& m) { m.knobValues[(size_t) Mute0] = 1.0f; }, 0) < 1e-6f, "a muted pad is silent");
+            check (hit ([] (Module& m) { m.knobValues[(size_t) Solo0 + 1] = 1.0f; }, 0) < 1e-6f, "soloing another pad silences this one");
+            check (hit ([] (Module& m) { m.knobValues[(size_t) Solo0] = 1.0f; }, 0) > 0.1f, "a soloed pad still plays");
+            {
+                Patch q; const int dr = q.add (ModuleType::Drums);
+                q.find (dr)->knobValues[(size_t) Reverse0] = 1.0f;
+                Graph g (q, sr, resolve);
+                g.noteOn (36, 1.0f, 0.0);
+                run (g, 2);
+                const float early = g.find (dr)->views[0].pos.load();
+                run (g, 4);
+                const float later = g.find (dr)->views[0].pos.load();
+                check (early > 0.5f && later < early, "a reversed pad starts at the end and plays backwards");
+            }
+            check (hit ([] (Module& m) { m.knobValues[(size_t) Attack0] = 0.6f; m.knobValues[(size_t) Hold0] = 0.4f; }, 0) > 0.02f, "a pad with attack and hold still plays");
+
+            bool allVoices = true, allStop = true;
+            for (int v = Kick; v < numVoices; ++v)
+            {
+                Patch q; const int dr = q.add (ModuleType::Drums);
+                q.find (dr)->knobValues[(size_t) Voice0 + 5] = (float) v;
+                q.find (dr)->padNames[5] = "nothing at all";          // an analogue voice needs no sample
+                Graph g (q, sr, resolve);
+                g.noteOn (36 + 5, 1.0f, 0.0);
+                const float peak = run (g, 6);
+                allVoices = allVoices && peak > 0.05f && peak < 4.0f;
+                run (g, 600);
+                allStop = allStop && g.find (dr)->views[5].pitch.load() < 0;
+            }
+            check (allVoices, "every analogue voice (kick, snare, hat, clap, tom, perc) sounds, within bounds");
+            check (allStop, "and every one dies away by itself");
+
+            // A pad set to its own output comes out of the second jack when it is patched
+            Patch q; const int dr = q.add (ModuleType::Drums);
+            q.find (dr)->knobValues[(size_t) Out0] = 1.0f;
+            check (moduleInfo (ModuleType::Drums).hasPort (Port::auxOut) && q.connect (dr, Port::auxOut, Patch::outputId, Port::audioIn),
+                   "the rack has an own output jack that patches like any sound output");
+            Graph g (q, sr, resolve);
+            g.noteOn (36, 1.0f, 0.0);
+            const float ownKick = run (g, 6);
+            run (g, 800);
+            g.noteOn (37, 1.0f, 0.0);
+            const float kitSnare = run (g, 6);
+            check (ownKick > 0.1f && kitSnare < 1e-6f, "an own-out pad plays from the own jack, a kit pad doesn't");
+            Patch u; const int ud = u.add (ModuleType::Drums);
+            u.find (ud)->knobValues[(size_t) Out0] = 1.0f;
+            Graph ug (u, sr, resolve);
+            ug.noteOn (36, 1.0f, 0.0);
+            check (run (ug, 6) > 0.1f, "with the own jack loose, an own-out pad falls back to the kit's output");
         }
 
         // Delay freeze holds what is in the line; the compressor listens to another track

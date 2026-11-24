@@ -23,6 +23,7 @@
 // The whole window: owns the project, the audio engine and every view.
 // Also the application's menu bar model (File / View / Transport) on the Mac.
 class MainComponent : public juce::AudioAppComponent,
+                      public juce::DragAndDropContainer,
                       public juce::MenuBarModel,
                       private juce::Timer,
                       private juce::ChangeListener

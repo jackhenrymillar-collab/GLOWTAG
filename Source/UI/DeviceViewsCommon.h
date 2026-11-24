@@ -86,10 +86,20 @@ namespace DeviceViews
     void dashes (juce::Graphics&, const juce::Path&);
     float waveShape (float shape, float t, float pw = 0.5f);    // Saw › Square › Tri › Sine
 
+    // Drum pads coloured by the range they play: low warm (red, orange, yellow), mid pink and purple,
+    // high cool (blue, white, green), each range's pads taking its colours in turn. Empty colours
+    // when the pad colours setting is off.
+    std::array<Colour, 16> padColours (const Module& rack);
+    const Module* drumRackFor (const Device& sequencer);   // the rack a Drum Rack Sequencer plays, if any
+    // Rows in the order the sequencer shows them: grouped low, mid, high when pad colours are on
+    struct RowOrder { std::array<int, 16> rowAt {}, posOf {}, groupOf {}; };
+    RowOrder rowOrder (const Module* rack);
+
     // The device walls
     void synthWall (Builder&);
     void samplerWall (Builder&);
     void drumsWall (Builder&);
+    void drumSeqWall (Builder&);     // DeviceViewsDrums.cpp, with drumsWall
     void filterWall (Builder&);
     void driveWall (Builder&);
     void delayWall (Builder&);

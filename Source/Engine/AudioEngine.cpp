@@ -63,6 +63,17 @@ bool AudioEngine::swapProject (const std::function<bool()>& load, bool resetTran
     return ok;
 }
 
+void AudioEngine::preview (std::shared_ptr<const AudioData> data)
+{
+    std::shared_ptr<const AudioData> old;
+    {
+        const juce::SpinLock::ScopedLockType sl (previewLock);
+        old = std::move (previewRetired);        // freed here, not on the audio thread
+        previewPending = std::move (data);
+        previewChanged = true;
+    }
+}
+
 std::shared_ptr<const AudioData> AudioEngine::resolveSample (const juce::String& nameOrPath)
 {
     if (nameOrPath.isEmpty())
@@ -696,6 +707,33 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         if (e.click)
             for (auto& c : clicks)
                 if (! c.active) { c = { true, 0.0, 0.0f, e.accent }; break; }
+
+    // The browser's preview, mixed in before the limiter
+    {
+        const juce::SpinLock::ScopedTryLockType sl (previewLock);
+        if (sl.isLocked() && previewChanged)
+        {
+            previewRetired = std::move (previewPlaying);
+            previewPlaying = std::move (previewPending);
+            previewChanged = false;
+            previewPos = 0.0;
+        }
+    }
+    if (const auto* pv = previewPlaying.get(); pv != nullptr && pv->buffer.getNumSamples() > 1)
+    {
+        const int len = pv->buffer.getNumSamples() - 1;
+        const float* pl = pv->buffer.getReadPointer (0);
+        const float* pr = pv->buffer.getReadPointer (juce::jmin (1, pv->buffer.getNumChannels() - 1));
+        const double rate = pv->sampleRate / sr;
+        for (int i = 0; i < numSamples && (int) previewPos < len; ++i)
+        {
+            const int idx = (int) previewPos;
+            const float frac = (float) (previewPos - idx);
+            left[i] += (pl[idx] + frac * (pl[idx + 1] - pl[idx])) * 0.7f;
+            if (right != nullptr) right[i] += (pr[idx] + frac * (pr[idx + 1] - pr[idx])) * 0.7f;
+            previewPos += rate;
+        }
+    }
 
     for (int i = 0; i < numSamples; ++i)
     {

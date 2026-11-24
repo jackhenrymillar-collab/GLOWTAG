@@ -62,6 +62,7 @@ MainComponent::MainComponent()
     devices.onOpenExpanded = [this] (int track, int moduleId) { expanded.open (track, moduleId); };
     expanded.onClose = [this] { devices.refresh(); grabKeyboardFocus(); };
     expanded.onLookChanged = [this] { settings->setValue ("expandedView", juce::JSON::toString (expanded.lookToVar(), true)); };
+    Neon::look().changed = [this] { if (expanded.onLookChanged) expanded.onLookChanged(); };
     expanded.onPatchChanged = [this] (int track) { engine.rebuildTrack (track); };
 
     // Automation: the lane chooser and the settings sit over everything
