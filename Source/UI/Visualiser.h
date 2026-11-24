@@ -139,6 +139,11 @@ private:
     std::unique_ptr<Vis::Renderer> renderer;
 
     Neon::GlowLayer glowLayer;
+    std::vector<std::pair<juce::Rectangle<int>, juce::Image>> arts;   // the steady parts of the panel, kept between frames
+    float artScale = 0.0f;
+    juce::Rectangle<int> artBounds;
+    bool artDirty = true;
+    juce::uint32 artLook = 0;
     std::vector<Hit> hits;
     std::vector<Live> live;
     std::vector<juce::Rectangle<int>> liveAreas;

@@ -191,6 +191,7 @@ void Visualiser::changed()
         sharedOwnWindow = picture != nullptr;
     }
     saveDue = true;
+    artDirty = true;
     repaint();
 }
 
@@ -844,7 +845,7 @@ struct Visualiser::Draw
             g.setColour (juce::Colour (0xff101012)); g.fillEllipse (xs - 8.5f, j.y - 8.5f, 17.0f, 17.0f);
             g.setColour (juce::Colour (0xff4a4d55)); g.drawEllipse (xs - 8.5f, j.y - 8.5f, 17.0f, 17.0f, 1.2f);
             dyn ([=] (juce::Graphics& gg) { Neon::bulb (gg, xs, j.y, c, 0.12f + 0.9f * juce::jmin (1.0f, r->signal[(size_t) s].load()), 4.2f); });
-            hit ({ x, j.y - 14.0f, xs - x + 14.0f, 28.0f }, [self] (float mx, float my) { self->cableEnd = { mx, my }; self->repaint(); }, {}, {}, [self, dst]
+            hit ({ x, j.y - 14.0f, xs - x + 14.0f, 28.0f }, [self] (float mx, float my) { self->cableEnd = { mx, my }; self->artDirty = true; self->repaint(); }, {}, {}, [self, dst]
             {
                 for (int d = 0; d < numDests; ++d)
                     if (std::abs (self->cableEnd.y - dst (d).y) < 22.0f && self->cableEnd.x > dst (d).x - 40.0f)
@@ -856,7 +857,7 @@ struct Visualiser::Draw
                 self->cableFrom = -1;
                 self->changed();
             });
-            v.hits.back().click = [self, s] { self->cableFrom = s; };
+            v.hits.back().click = [self, s] { self->cableFrom = s; self->artDirty = true; };
         }
         for (int d = 0; d < numDests; ++d)
         {
@@ -916,7 +917,7 @@ struct Visualiser::Draw
             }
         });
         y += 3.0f * 26.0f + 28.0f;
-        words ({ "controls", "routing" }, x, y, 20.0f, nc(), v.page, 20.0f, [self] (int i) { self->page = i; self->last = {}; self->repaint(); });
+        words ({ "controls", "routing" }, x, y, 20.0f, nc(), v.page, 20.0f, [self] (int i) { self->page = i; self->last = {}; self->artDirty = true; self->repaint(); });
         if (v.page == 1) { routing (x, y, w); return; }
 
         {
@@ -937,7 +938,7 @@ struct Visualiser::Draw
             y += 84.0f;
         }
         const auto ct = nc();
-        words ({ "shape", "colour", "motion", "trails" }, x + 70.0f, y, 19.0f, ct, v.tab, 16.0f, [self] (int i) { self->tab = i; self->last = {}; self->repaint(); });
+        words ({ "shape", "colour", "motion", "trails" }, x + 70.0f, y, 19.0f, ct, v.tab, 16.0f, [self] (int i) { self->tab = i; self->last = {}; self->artDirty = true; self->repaint(); });
         tube ({ { x, y + 12.0f }, { x + w, y + 12.0f } }, ct, 0.6f, true);
         y += 46.0f;
         tabContent (x, y, w);
@@ -960,69 +961,108 @@ void Visualiser::paint (juce::Graphics& g)
         g.drawFittedText ("The visualiser could not start on this graphics card:\n" + error, getLocalBounds().reduced (40), juce::Justification::centred, 12);
     }
 
+    // The steady part of the panel (glass, tubes, words, their glow) is kept as a picture and only
+    // drawn again when something on it changes. Each frame just lays it down and adds the moving parts.
     const auto l = layout();
-    hits.clear();
-    live.clear();
-    liveAreas.clear();
-    lastPaint = Neon::now();
-
-    glowLayer.draw (g, getLocalBounds().toFloat());
-    auto& glow = Neon::glow();
-    glow.sources.clear();
-    glow.collecting = true;
-    glow.alpha = 1.0f;
-    Draw d { *this, g, {} };
-    const auto pane = juce::Colour (0xc20d0d0f);
-
-    // The look and the form float along the bottom of the picture when there is room
-    if (l.strip != 0)
+    const float scale = (float) g.getInternalContext().getPhysicalPixelScaleFactor();
+    const auto look = Theme::get().themeColour().getARGB() ^ (Theme::get().isRainbow() ? 0x5a5a5a5au : 0u);
+    if (artDirty || arts.empty() || scale != artScale || getLocalBounds() != artBounds || look != artLook)
     {
-        d.setPlace ({});
-        g.setColour (pane);
-        g.fillRoundedRectangle (l.stripBox, 14.0f);
-        g.setColour (juce::Colour (0xff34363c));
-        g.drawRoundedRectangle (l.stripBox, 14.0f, 1.0f);
-        const bool two = l.strip == 2;
-        const float sx = 24.0f, sy = (float) getHeight() - 48.0f;
-        const auto col = Theme::get().themeColour();
-        d.iconRow (0, sx, two ? sy - 56.0f : sy, 128.0f, col, false);
-        d.iconRow (1, two ? sx : sx + 3.0f * 128.0f + 24.0f, sy, 128.0f, col, false);
-        d.block (l.stripBox);
-        liveAreas.push_back (l.stripBox.getSmallestIntegerContainer());
-    }
-    if (panelShown)
-    {
-        d.setPlace ({});
-        g.setColour (pane);
-        g.fillRoundedRectangle (l.panel, 14.0f);
-        g.setColour (juce::Colour (0xff34363c));
-        g.drawRoundedRectangle (l.panel.reduced (0.5f), 14.0f, 1.0f);
-        const auto col = Theme::get().themeColour();
-        const float hw = Neon::textWidth ("hide", 15.0f * l.K);
-        d.word ("hide", l.panel.getRight() - 16.0f, l.panel.getY() + 12.0f + 18.0f * l.K, 15.0f * l.K, col, false, Neon::Align::right);
-        d.hit ({ l.panel.getRight() - 20.0f - hw, l.panel.getY() + 4.0f, hw + 10.0f, 14.0f + 18.0f * l.K }, {}, [this] { panelShown = false; repaint(); });
+        artDirty = false;
+        artLook = look;
+        artScale = scale;
+        artBounds = getLocalBounds();
+        auto drawSteady = [&] (juce::Graphics& gg)
         {
-            juce::Graphics::ScopedSaveState state (g);
-            g.reduceClipRegion (l.panel.getSmallestIntegerContainer());
-            g.addTransform (l.column);
-            d.setPlace (l.column);
-            d.column (l.strip != 0);
+            hits.clear();
+            live.clear();
+            liveAreas.clear();
+            const auto pane = juce::Colour (0xc20d0d0f);
+            Draw d { *this, gg, {} };
+
+            // The look and the form float along the bottom of the picture when there is room
+            if (l.strip != 0)
+            {
+                d.setPlace ({});
+                gg.setColour (pane);
+                gg.fillRoundedRectangle (l.stripBox, 14.0f);
+                gg.setColour (juce::Colour (0xff34363c));
+                gg.drawRoundedRectangle (l.stripBox, 14.0f, 1.0f);
+                const bool two = l.strip == 2;
+                const float sx = 24.0f, sy = (float) getHeight() - 48.0f;
+                const auto col = Theme::get().themeColour();
+                d.iconRow (0, sx, two ? sy - 56.0f : sy, 128.0f, col, false);
+                d.iconRow (1, two ? sx : sx + 3.0f * 128.0f + 24.0f, sy, 128.0f, col, false);
+                d.block (l.stripBox);
+                liveAreas.push_back (l.stripBox.getSmallestIntegerContainer());
+            }
+            if (panelShown)
+            {
+                d.setPlace ({});
+                gg.setColour (pane);
+                gg.fillRoundedRectangle (l.panel, 14.0f);
+                gg.setColour (juce::Colour (0xff34363c));
+                gg.drawRoundedRectangle (l.panel.reduced (0.5f), 14.0f, 1.0f);
+                const auto col = Theme::get().themeColour();
+                const float hw = Neon::textWidth ("hide", 15.0f * l.K);
+                d.word ("hide", l.panel.getRight() - 16.0f, l.panel.getY() + 12.0f + 18.0f * l.K, 15.0f * l.K, col, false, Neon::Align::right);
+                d.hit ({ l.panel.getRight() - 20.0f - hw, l.panel.getY() + 4.0f, hw + 10.0f, 14.0f + 18.0f * l.K }, {}, [this] { panelShown = false; artDirty = true; repaint(); });
+                {
+                    juce::Graphics::ScopedSaveState state (gg);
+                    gg.reduceClipRegion (l.panel.getSmallestIntegerContainer());
+                    gg.addTransform (l.column);
+                    d.setPlace (l.column);
+                    d.column (l.strip != 0);
+                }
+                d.setPlace ({});
+                d.block (l.panel);
+                liveAreas.push_back (l.panel.getSmallestIntegerContainer());
+            }
+            else
+            {
+                d.setPlace ({});
+                const auto col = Theme::get().themeColour();
+                const float w = Neon::textWidth ("show controls", 19.0f);
+                d.word ("show controls", (float) getWidth() - 20.0f, 34.0f, 19.0f, col, true, Neon::Align::right);
+                d.hit ({ (float) getWidth() - 26.0f - w, 10.0f, w + 12.0f, 34.0f }, {}, [this] { panelShown = true; artDirty = true; repaint(); });
+            }
+            Neon::glow().base = Neon::glow().current = {};
+        };
+
+        // Once with nothing drawn, to gather the lit shapes for the glow and find where the pieces are
+        auto& glow = Neon::glow();
+        glow.sources.clear();
+        glow.collecting = true;
+        glow.alpha = 1.0f;
+        {
+            juce::Image none (juce::Image::ARGB, 1, 1, true);
+            juce::Graphics dg (none);
+            dg.reduceClipRegion (juce::Rectangle<int>());
+            drawSteady (dg);
         }
-        d.setPlace ({});
-        d.block (l.panel);
-        liveAreas.push_back (l.panel.getSmallestIntegerContainer());
+        glow.collecting = false;
+        glowLayer.build (getWidth(), getHeight(), l.K);
+
+        // Then for real, into a picture for each piece (a new picture each time: one drawn over in place can show stale on the Mac)
+        auto areas = liveAreas;
+        if (! panelShown) areas.push_back ({ getWidth() - 280, 0, 280, 56 });
+        arts.clear();
+        for (auto area : areas)
+        {
+            area = area.expanded (8).getIntersection (getLocalBounds());
+            if (area.isEmpty()) continue;
+            juce::Image image (juce::Image::ARGB, juce::jmax (1, juce::roundToInt ((float) area.getWidth() * scale)), juce::jmax (1, juce::roundToInt ((float) area.getHeight() * scale)), true);
+            {
+                juce::Graphics ig (image);
+                ig.addTransform (juce::AffineTransform::translation ((float) -area.getX(), (float) -area.getY()).scaled (scale));
+                glowLayer.draw (ig, getLocalBounds().toFloat());
+                drawSteady (ig);
+            }
+            arts.push_back ({ area, image });
+        }
     }
-    else
-    {
-        d.setPlace ({});
-        const auto col = Theme::get().themeColour();
-        const float w = Neon::textWidth ("show controls", 19.0f);
-        d.word ("show controls", (float) getWidth() - 20.0f, 34.0f, 19.0f, col, true, Neon::Align::right);
-        d.hit ({ (float) getWidth() - 26.0f - w, 10.0f, w + 12.0f, 34.0f }, {}, [this] { panelShown = true; repaint(); });
-    }
-    glow.base = glow.current = {};
-    glow.collecting = false;
-    glowLayer.build (getWidth(), getHeight(), l.K);
+    for (auto& piece : arts)
+        g.drawImage (piece.second, piece.first.toFloat());
 
     // The parts that move with the music are drawn on top and leave the steady glow alone
     for (auto& part : live)
@@ -1096,6 +1136,7 @@ void Visualiser::mouseDoubleClick (const juce::MouseEvent& e)
         return;
     }
     panelShown = ! panelShown;
+    artDirty = true;
     repaint();
 }
 
