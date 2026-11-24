@@ -202,6 +202,9 @@ void Project::clear()
     buses.clear();
     for (auto& r : returns) r.reset();
     master.reset();
+    visTrack = false;
+    visLanes.clear();
+    visShown = {};
     file = juce::File();
     dirty = false;
 }
@@ -465,6 +468,8 @@ juce::var Track::toVar() const
     o->setProperty ("clips", cs);
     o->setProperty ("patch", patch.toVar());
     o->setProperty ("seq", seq.toVar());
+    if (! lanes.empty()) o->setProperty ("automation", Auto::toVar (lanes));
+    if (shown.valid()) o->setProperty ("shownLane", Auto::toVar (shown));
     return juce::var (o);
 }
 
@@ -511,6 +516,8 @@ void Track::fromVar (const juce::var& v)
         for (auto& c : clips)
             if (c.kind == ClipKind::Audio) { patch.patchTrackSound(); break; }
     if (v.hasProperty ("seq")) seq.fromVar (v["seq"]);
+    lanes = Auto::lanesFromVar (v["automation"]);
+    shown = Auto::targetFromVar (v["shownLane"]);
 }
 
 juce::var Project::toVar() const
@@ -528,6 +535,9 @@ juce::var Project::toVar() const
     o->setProperty ("returns", rs);
     o->setProperty ("master", master->toVar());
     if (! visualiser.isVoid()) o->setProperty ("visualiser", visualiser);
+    if (visTrack) o->setProperty ("visTrack", true);
+    if (! visLanes.empty()) o->setProperty ("visAutomation", Auto::toVar (visLanes));
+    if (visShown.valid()) o->setProperty ("visShownLane", Auto::toVar (visShown));
     return juce::var (o);
 }
 
@@ -545,9 +555,13 @@ bool Project::fromVar (const juce::var& v)
     if (newTracks.empty())
         return false;
     visualiser = v["visualiser"];
+    auto newVisLanes = Auto::lanesFromVar (v["visAutomation"]);
 
     const juce::SpinLock::ScopedLockType sl (lock);
     tracks = std::move (newTracks);
+    visTrack = (bool) v["visTrack"];
+    visLanes = std::move (newVisLanes);
+    visShown = Auto::targetFromVar (v["visShownLane"]);
     buses.clear();
     if (auto* bs = v["buses"].getArray())
         for (int i = 0; i < bs->size() && i < maxBuses; ++i)

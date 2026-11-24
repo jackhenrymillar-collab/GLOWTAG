@@ -23,6 +23,7 @@ void Device::setRaw (int i, float v)
     m->knobValues[(size_t) i] = v;
     ctx.engine.setKnob (track, moduleId, i, v);
     ctx.touched();
+    ctx.paramTouched (track, { AutoTarget::knob, moduleId, i }, v);     // records its lane, or rests it
 }
 
 void Device::note (int pitch, bool down, float velocity) const
@@ -92,6 +93,7 @@ Item& Builder::fader (Group& g, int param, const String& label, std::function<St
     auto& it = g.fader (x0, y0, x1, y1, bend);
     auto* dev = &d;
     it.text = label.toLowerCase();
+    it.param = param;
     it.isNew = isNew;
     it.bipolar = bipolar;
     if (auto* m = d.module()) it.def = moduleInfo (m->type).defaultValue (param);
@@ -107,6 +109,7 @@ Item& Builder::choice (Group& g, int param, std::vector<String> words, float x, 
     for (size_t i = 0; i < words.size(); ++i) opts.push_back ({ i < values.size() ? values[i] : (int) i, words[i] });
     auto& it = g.words (opts, x, y);
     auto* dev = &d;
+    it.param = param;
     it.isNew = isNew;
     it.getChoice = [dev, param] { return dev->choice (param); };
     it.setChoice = [dev, param] (int v) { dev->setRaw (param, (float) v); };
@@ -119,6 +122,7 @@ Item& Builder::toggle (Group& g, int param, const String& word, float x, float y
     auto* w = &wall;
     auto& it = g.toggle (word, x, y, [dev, param] { return dev->on (param); },
                          [dev, w, param, word] (bool v) { dev->setRaw (param, v ? 1.0f : 0.0f); w->say (word.toLowerCase() + (v ? "   on" : "   off")); });
+    it.param = param;
     it.isNew = isNew;
     return it;
 }

@@ -225,6 +225,13 @@ void ModuleCard::tick()
 void ModuleCard::mouseDown (const juce::MouseEvent& e)
 {
     onControl = moving = false;
+    // Alt-click a control: its lane comes up in the arrangement
+    if (e.mods.isAltDown() && ! e.mods.isPopupMenu())
+        if (const int param = card->built.wall->paramAt (e.position); param >= 0)
+        {
+            ctx.showLane (trackIndex, { AutoTarget::knob, moduleId, param });
+            return;
+        }
     if (! e.mods.isPopupMenu() && card->built.wall->mouseDown (e.position))
     {
         onControl = true;

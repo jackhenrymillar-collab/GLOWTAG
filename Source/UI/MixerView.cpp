@@ -112,10 +112,18 @@ ChannelStrip::ChannelStrip (AppContext& c, int s)
     pan.setValue (track.pan.load(), juce::dontSendNotification);
     width.setValue (track.width.load(), juce::dontSendNotification);
     fader.setValue (track.volume.load(), juce::dontSendNotification);
-    trim.onValueChange  = [this] { track.trimDb = (float) trim.getValue(); ctx.touched(); };
-    pan.onValueChange   = [this] { track.pan = (float) pan.getValue(); ctx.touched(); };
-    width.onValueChange = [this] { track.width = (float) width.getValue(); ctx.touched(); };
-    fader.onValueChange = [this] { track.volume = (float) fader.getValue(); ctx.touched(); };
+    // Each control moved by hand records its lane, or rests it. Alt-click only opens the lane: the value stays.
+    auto hand = [this] (juce::Slider& s, std::atomic<float>& value, int param)
+    {
+        if (juce::ModifierKeys::currentModifiers.isAltDown()) { s.setValue (value.load(), juce::dontSendNotification); return; }
+        value = (float) s.getValue();
+        ctx.touched();
+        ctx.paramTouched (slot, { AutoTarget::mixer, 0, param }, (float) s.getValue());
+    };
+    trim.onValueChange  = [this, hand] { hand (trim, track.trimDb, MixParam::trim); };
+    pan.onValueChange   = [this, hand] { hand (pan, track.pan, MixParam::pan); };
+    width.onValueChange = [this, hand] { hand (width, track.width, MixParam::width); };
+    fader.onValueChange = [this, hand] { hand (fader, track.volume, MixParam::volume); };
 
     phase.setTooltip ("Flip phase");
     mono.setTooltip ("Sum to mono");
@@ -141,7 +149,13 @@ ChannelStrip::ChannelStrip (AppContext& c, int s)
             k->setDoubleClickReturnValue (true, 0.0);
             setUpKnob (*k, ctx.project.returns[(size_t) r]->colourIndex, "Send to " + ctx.project.returns[(size_t) r]->name);
             k->setValue (track.send[(size_t) r].load(), juce::dontSendNotification);
-            k->onValueChange = [this, k, r] { track.send[(size_t) r] = (float) k->getValue(); ctx.touched(); };
+            k->onValueChange = [this, k, r]
+            {
+                if (juce::ModifierKeys::currentModifiers.isAltDown()) { k->setValue (track.send[(size_t) r].load(), juce::dontSendNotification); return; }
+                track.send[(size_t) r] = (float) k->getValue();
+                ctx.touched();
+                ctx.paramTouched (slot, { AutoTarget::mixer, 0, r == 0 ? MixParam::sendA : MixParam::sendB }, (float) k->getValue());
+            };
             addAndMakeVisible (k);
         }
     }
@@ -204,6 +218,17 @@ void ChannelStrip::tick()
 void ChannelStrip::mouseDown (const juce::MouseEvent& e)
 {
     ctx.selectTrack (slot);
+    // Alt-click a fader or knob: its lane comes up in the arrangement
+    if (e.mods.isAltDown() && e.originalComponent != this)
+    {
+        int param = -1;
+        if (e.originalComponent == &fader) param = MixParam::volume;
+        else if (e.originalComponent == &pan) param = MixParam::pan;
+        else if (e.originalComponent == &trim) param = MixParam::trim;
+        else if (e.originalComponent == &width) param = MixParam::width;
+        else for (int i = 0; i < sends.size(); ++i) if (e.originalComponent == sends[i]) param = i == 0 ? MixParam::sendA : MixParam::sendB;
+        if (param >= 0) { ctx.showLane (slot, { AutoTarget::mixer, 0, param }); return; }
+    }
     if (e.originalComponent != this)
         return;
     if (e.mods.isPopupMenu())
