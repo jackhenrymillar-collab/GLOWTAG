@@ -65,6 +65,7 @@ target_sources(Glowtag PRIVATE
     Source/UI/DeviceViewsFx.cpp
     Source/UI/DeviceViewsDrums.cpp
     Source/UI/DeviceViewsNew.cpp
+    Source/UI/DeviceViewsInstruments.cpp
     Source/UI/ExpandedDevice.cpp)
 if(APPLE)
     target_sources(Glowtag PRIVATE Source/UI/VisualiserMac.mm)   # keeps the picture's window under the app's

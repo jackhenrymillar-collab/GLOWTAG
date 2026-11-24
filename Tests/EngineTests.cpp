@@ -960,6 +960,17 @@ int main()
             check (g.find (syn)->display.load() >= 1.99f, "poly plays both");
             int lit = 0; for (auto& vw : g.find (syn)->views) if (vw.pitch.load() >= 0) ++lit;
             check (lit == 2, "each voice shows what it is playing");
+            // The blend hourglass: all A, all B, or both, and an older synth keeps both at full
+            g.allNotesOff(); run (g, 300);
+            g.find (syn)->knob[Param::Synth::Sub] = 0.0f;
+            float ends[2] {};
+            for (int e = 0; e < 2; ++e)
+            {
+                g.find (syn)->knob[Param::Synth::Blend] = (float) e;
+                g.noteOn (48, 0.9f, -1.0); run (g, 30, 120.0, &ends[e]); g.allNotesOff(); run (g, 300);
+            }
+            check (ends[0] > 0.005f && ends[1] > 0.005f, "the blend at either end still plays its oscillator");
+            check (std::abs (moduleInfo (ModuleType::Synth).extras.back().legacy - 0.5f) < 1e-6f, "an older synth opens with both oscillators at full");
         }
 
         // Sampler: grid slices map to keys from C2; reverse and one-shot still sound
@@ -987,6 +998,20 @@ int main()
             Graph g2 (q2, sr, resolve);
             g2.noteOn (60, 1.0f, 0.0);
             check (run (g2, 20) > 0.02f, "a reversed one-shot plays through");
+
+            // The projector's crank: a still hand on the film is silent, a moving one scratches
+            Patch q3; const int s3 = q3.add (ModuleType::Sampler);
+            q3.find (s3)->sampleName = "Vox Ahh";
+            Graph g3 (q3, sr, resolve);
+            auto* sn = g3.find (s3);
+            sn->knob[Param::Sampler::Scrub] = 1.0f; sn->knob[Param::Sampler::ScrubPos] = 0.3f;
+            run (g3, 60);
+            check (run (g3, 20) < 0.01f, "a still crank in scratch is silent");
+            float moving = 0.0f;
+            for (int i = 0; i < 40; ++i) { sn->knob[Param::Sampler::ScrubPos] = 0.3f + 0.004f * (float) i; moving = juce::jmax (moving, run (g3, 1)); }
+            check (moving > 0.02f, "turning the crank scratches the film");
+            sn->knob[Param::Sampler::Scrub] = 0.0f; run (g3, 60);
+            check (run (g3, 10) < 0.01f, "letting go of the crank stops the scratch");
 
             auto hit = std::make_shared<AudioData>();
             hit->buffer.setSize (1, 48000); hit->buffer.clear(); hit->sampleRate = 48000.0;
