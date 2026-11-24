@@ -22,7 +22,10 @@ namespace
 namespace VisNative
 {
     void placeBehind (juce::Component& picture, juce::Component& appWindow);   // VisualiserMac.mm
+    void hide (juce::Component& picture);
     void letGo (juce::Component& picture);
+    void watch (juce::Component& appWindow, std::function<void (int)> changed);
+    void unwatch();
 }
 #endif
 
@@ -38,6 +41,7 @@ Visualiser::~Visualiser()
 {
     gl.detach();
    #if JUCE_MAC
+    VisNative::unwatch();
     if (picture != nullptr) VisNative::letGo (*picture);
    #endif
     picture.reset();
@@ -79,9 +83,11 @@ void Visualiser::release()
     if (picture != nullptr)
     {
        #if JUCE_MAC
+        VisNative::unwatch();
         VisNative::letGo (*picture);
        #endif
         picture.reset();
+        resizing = false;
         // The app's window is solid again
         if (auto* top = dynamic_cast<juce::ResizableWindow*> (window.getTopLevelComponent()))
         {
@@ -111,6 +117,7 @@ void Visualiser::attach (bool ownWindow)
         picture->setVisible (true);
        #if JUCE_MAC
         VisNative::placeBehind (*picture, *top);
+        VisNative::watch (*top, [this] (int what) { windowChanging (what); });
        #endif
         top->toFront (true);
         gl.setComponentPaintingEnabled (false);
@@ -121,6 +128,32 @@ void Visualiser::attach (bool ownWindow)
         gl.setComponentPaintingEnabled (true);
         gl.attachTo (window);
     }
+}
+
+// While the app's window is changing size the picture cannot keep up with it edge for edge, so it
+// steps aside: the app turns solid, the picture's window is put away, and both come back at the new size.
+void Visualiser::windowChanging (int what)
+{
+    if (picture == nullptr) return;
+    if (what == 0 && ! resizing)
+    {
+        resizing = true;
+        Theme::get().setGlass (0.0f);
+       #if JUCE_MAC
+        VisNative::hide (*picture);
+       #endif
+    }
+    else if (what == 1 && resizing)
+    {
+        resizing = false;
+        picture->setBounds (window.getScreenBounds());
+       #if JUCE_MAC
+        if (auto* top = window.getTopLevelComponent()) VisNative::placeBehind (*picture, *top);
+       #endif
+        if (view == behind) Theme::get().setGlass (0.3f + 0.55f * settings.v[F::back]);
+    }
+    else if (what == 2 && ! resizing)
+        picture->setBounds (window.getScreenBounds());      // a new size in one go (zoom, tiling): follow at once
 }
 
 void Visualiser::setView (View v)
@@ -160,7 +193,7 @@ void Visualiser::setBackdrop (float amount)
 {
     settings.v[F::back] = juce::jlimit (0.0f, 1.0f, amount);
     edited = true;
-    if (view == behind) Theme::get().setGlass (0.3f + 0.55f * settings.v[F::back]);
+    if (view == behind && ! resizing) Theme::get().setGlass (0.3f + 0.55f * settings.v[F::back]);
     changed();
 }
 
@@ -204,7 +237,7 @@ void Visualiser::tick()
         if (! first || ctx.project.visualiser.isObject()) projectReplaced();
     }
     if (view == off) return;
-    if (picture != nullptr && picture->getBounds() != window.getScreenBounds())
+    if (picture != nullptr && ! resizing && picture->getBounds() != window.getScreenBounds())
         picture->setBounds (window.getScreenBounds());     // the picture's window follows the app's
     // The song remembers the look: written back a moment after the last change, not on every drag
     if (saveDue && activeDrag == nullptr)

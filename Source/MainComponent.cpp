@@ -598,11 +598,11 @@ void MainComponent::frame (double timestampSeconds, bool fromDisplay)
     }
 
     // A full-window view hides everything else, so only it moves
+    visualiser.tick();
     if (expanded.isOpen()) { expanded.tick(); return; }
     if (wall.isOpen()) { wall.tick (engine.getPulse()); return; }
 
     topBar.tick();
-    visualiser.tick();
     if (visualiser.getView() == Vis::full) return;       // only the picture and its panel are showing
     if (arranger.isVisible()) arranger.tick();
     if (trackList.isVisible()) trackList.tick();

@@ -106,6 +106,7 @@ private:
     void changed();                             // a setting moved: hand it to the drawing thread, mark the song edited
     void attach (bool ownWindow);               // start drawing: over the app's window, or in a window of its own behind it
     void release();
+    void windowChanging (int what);             // 0 the window starts changing size, 1 it has finished, 2 it has a new size
 
     // The control panel is drawn afresh each time, the way the mockup did it: every control leaves
     // behind the box it answers to (hits) and the part of it that moves with the music (live).
@@ -160,6 +161,7 @@ private:
     int frameCount = 0;
     std::unique_ptr<juce::Component> picture;   // the picture's own window, when it sits behind the app's
     juce::Colour windowColour;
+    bool resizing = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Visualiser)
 };
