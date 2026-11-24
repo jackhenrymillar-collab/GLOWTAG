@@ -17,6 +17,7 @@
 #include "UI/EditorView.h"
 #include "UI/DeviceWall.h"
 #include "UI/ExpandedDevice.h"
+#include "UI/Visualiser.h"
 
 // The whole window: owns the project, the audio engine and every view.
 // Also the application's menu bar model (File / View / Transport) on the Mac.
@@ -59,6 +60,8 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void togglePlay();
     void showCommandPalette();
+    void showVisualMenu();                      // the visualiser's views and what it listens to
+    void visualiserViewChanged();
     void addSequencerModule (SeqType);          // onto the selected track's rack, which it opens
     void loadFromWall (int deviceIndex);
     void enableMidiInputs();
@@ -101,6 +104,7 @@ private:
     StatusBar status;
     DeviceWall wall;                            // hold Tab: every device as neon on a brick wall
     ExpandedDevice expanded { ctx };            // double-click a device: its controls as a neon wall
+    Visualiser visualiser { ctx, *this };       // the picture that follows the song: full window, or behind everything
 
     Mode mode = Mode::Arrange;
     bool rackShown = false;

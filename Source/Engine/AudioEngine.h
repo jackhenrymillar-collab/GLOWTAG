@@ -4,6 +4,7 @@
 #include "Project.h"
 #include "Graph.h"
 #include "../DSP/Analog.h"
+#include "VisListener.h"
 #include <map>
 
 // Plays the arrangement through each track's modular patch: MIDI clips and live MIDI drive the
@@ -61,6 +62,10 @@ public:
 
     // Loudness of the last kick-ish hit, for the music-reactive glow (0..1)
     float getPulse() const { return pulse.load(); }
+
+    // The visualiser's ear: fed the master output, or one slot's output when visFeed is a slot index
+    VisListener visListener;
+    std::atomic<int> visFeed { -1 };
 
     // Notes played while recording, read back on the message thread
     struct RecordedEvent { double beat; int pitch; float velocity; bool noteOn; };

@@ -226,6 +226,7 @@ void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
     sr = sampleRate > 0 ? sampleRate : 44100.0;
     blockSize = juce::jmax (16, samplesPerBlockExpected);
     midiInput.reset (sr);
+    visListener.prepare (sr);
     events.reserve (1024);
     liveMidi.ensureSize (2048);
     for (auto& s : slots)
@@ -671,6 +672,14 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     {
         auto& m = project.slot ((int) i).meter;
         m = std::max (std::min (1.5f, peaks[i]), m.load() * 0.82f);    // above 1.0 is over: the strip shows red
+    }
+    if (visListener.enabled.load (std::memory_order_relaxed))
+    {
+        const int feed = visFeed.load();
+        if (feed >= 0 && feed < (int) slots.size() && feed != masterIndex)
+            visListener.push (slots[(size_t) feed]->output.getReadPointer (0), slots[(size_t) feed]->output.getReadPointer (1), numSamples);
+        else
+            visListener.push (left, right, numSamples);
     }
     pulse = pulse.load() * 0.86f;
 }

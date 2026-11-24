@@ -1,0 +1,765 @@
+#include "VisualiserRender.h"
+#include "VisualiserShaders.inc"
+
+using namespace juce::gl;
+
+namespace Vis
+{
+static float clamp01 (float v) { return juce::jlimit (0.0f, 1.0f, v); }
+
+//==============================================================================
+// Settings
+
+static const float faderDefaults[] = {
+   #define X(name, def, label, fmt) def,
+    VIS_FADERS (X)
+   #undef X
+};
+static const char* const faderNames[] = {
+   #define X(name, def, label, fmt) #name,
+    VIS_FADERS (X)
+   #undef X
+};
+static const char* const faderLabels[] = {
+   #define X(name, def, label, fmt) label,
+    VIS_FADERS (X)
+   #undef X
+};
+static const char* const faderFormats[] = {
+   #define X(name, def, label, fmt) #fmt,
+    VIS_FADERS (X)
+   #undef X
+};
+static const int choiceDefaults[] = {
+   #define Y(name, def) def,
+    VIS_CHOICES (Y)
+   #undef Y
+};
+static const char* const choiceNames[] = {
+   #define Y(name, def) #name,
+    VIS_CHOICES (Y)
+   #undef Y
+};
+static const char* const styleNames[] = { "ink", "liquid", "sand", "bloom" };
+
+const char* faderLabel (int fader) { return faderLabels[fader]; }
+
+juce::String faderText (int fader, float v)
+{
+    const juce::String f (faderFormats[fader]);
+    if (f == "hue") return juce::String (juce::roundToInt (v * 360.0f)) + juce::String::fromUTF8 ("\xc2\xb0");
+    if (f == "seg") return juce::String (juce::roundToInt (3.0f + v * 9.0f));
+    if (f == "vort") return juce::String (juce::roundToInt (v * 6.0f));
+    if (f == "cnt") return juce::String (4 + juce::roundToInt (v * 8.0f));
+    if (f == "ms") { const int m = juce::roundToInt ((v - 0.5f) * 160.0f); return (m > 0 ? "+" : "") + juce::String (m) + " ms"; }
+    return juce::String (juce::roundToInt (v * 100.0f)) + "%";
+}
+
+void Settings::resetWiring()
+{
+    for (auto& row : route) row.fill (0.0f);
+    route[sBig][dPulse] = 1.0f;  route[sLow][dPulse] = 0.4f;
+    route[sBig][dFlash] = 1.0f;  route[sSnare][dFlash] = 0.6f;
+    route[sBig][dSpin] = 1.0f;
+    route[sBig][dStir] = 1.0f;   route[sLow][dStir] = 1.0f;
+    route[sBig][dBurst] = 1.0f;
+}
+
+void Settings::reset()
+{
+    for (int i = 0; i < F::count; ++i) v[(size_t) i] = faderDefaults[i];
+    for (int i = 0; i < C::count; ++i) w[(size_t) i] = choiceDefaults[i];
+    style = ink;
+    resetWiring();
+}
+
+juce::var Settings::toVar() const
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("style", styleNames[juce::jlimit (0, numStyles - 1, style)]);
+    auto* fv = new juce::DynamicObject();
+    for (int i = 0; i < F::count; ++i) fv->setProperty (faderNames[i], v[(size_t) i]);
+    auto* cv = new juce::DynamicObject();
+    for (int i = 0; i < C::count; ++i) cv->setProperty (choiceNames[i], w[(size_t) i]);
+    juce::Array<juce::var> wires;
+    for (int s = 0; s < numSources; ++s)
+        for (int d = 0; d < numDests; ++d)
+            if (route[(size_t) s][(size_t) d] > 0.0f)
+            {
+                juce::Array<juce::var> wire;
+                wire.add (s); wire.add (d); wire.add (route[(size_t) s][(size_t) d]);
+                wires.add (wire);
+            }
+    o->setProperty ("faders", juce::var (fv));
+    o->setProperty ("choices", juce::var (cv));
+    o->setProperty ("wires", wires);
+    return juce::var (o);
+}
+
+void Settings::fromVar (const juce::var& var)
+{
+    if (! var.isObject()) return;
+    reset();
+    for (int i = 0; i < numStyles; ++i)
+        if (var["style"].toString() == styleNames[i]) style = i;
+    for (int i = 0; i < F::count; ++i)
+        if (var["faders"].hasProperty (faderNames[i])) v[(size_t) i] = clamp01 ((float) var["faders"][faderNames[i]]);
+    for (int i = 0; i < C::count; ++i)
+        if (var["choices"].hasProperty (choiceNames[i])) w[(size_t) i] = juce::jlimit (0, 3, (int) var["choices"][choiceNames[i]]);
+    if (auto* wires = var["wires"].getArray())
+    {
+        for (auto& row : route) row.fill (0.0f);
+        for (auto& wire : *wires)
+            if (wire.size() == 3)
+            {
+                const int s = wire[0], d = wire[1];
+                if (s >= 0 && s < numSources && d >= 0 && d < numDests) route[(size_t) s][(size_t) d] = clamp01 ((float) wire[2]);
+            }
+    }
+}
+
+int Settings::hueKey() const       { static const int k[] = { F::hue, F::lhue, F::shue, F::bhue };             return k[style]; }
+int Settings::tintKey() const      { static const int k[] = { F::tint, F::ltint, F::stint, F::btint };         return k[style]; }
+int Settings::psyKey() const       { static const int k[] = { F::psy, F::lpsy, F::spsy, F::bpsy };             return k[style]; }
+int Settings::trailsKey() const    { static const int k[] = { F::trails, F::ltrails, F::strails, F::btrails }; return k[style]; }
+int Settings::spinKey() const      { static const int k[] = { F::spin, F::lspin, F::sspin, F::bspin };         return k[style]; }
+int Settings::idleKey() const      { static const int k[] = { F::idle, F::lidle, F::sidle, F::bidle };         return k[style]; }
+int Settings::tonesKey() const     { static const int k[] = { C::tones, C::ltones, C::stones, C::btones };     return k[style]; }
+int Settings::trailModeKey() const { static const int k[] = { C::trails, C::ltrails, C::strails, C::btrails }; return k[style]; }
+int Settings::surfaceKey() const   { static const int k[] = { C::surface, C::lsurface, C::ssurface, C::bsurface }; return k[style]; }
+int Settings::formKey() const      { static const int k[] = { C::form, C::lform, C::sform, C::btype };         return k[style]; }
+
+static juce::Colour hsl (float h, float s, float l)
+{
+    h = std::fmod (std::fmod (h, 360.0f) + 360.0f, 360.0f) / 360.0f;
+    auto f = [&] (float n)
+    {
+        const float k = std::fmod (n + h * 12.0f, 12.0f), a = s * juce::jmin (l, 1.0f - l);
+        return l - a * juce::jmax (-1.0f, juce::jmin (k - 3.0f, 9.0f - k, 1.0f));
+    };
+    return juce::Colour::fromFloatRGBA (f (0), f (8), f (4), 1.0f);
+}
+
+// One hue makes the whole palette: shades of it, or it with its complement, a split pair or a triad
+std::array<juce::Colour, 3> Settings::palette (float shift) const
+{
+    const float h = v[(size_t) hueKey()] * 360.0f + shift, t = v[(size_t) tintKey()];
+    switch (w[(size_t) tonesKey()])
+    {
+        case 0:  return { hsl (h, 0.95f, 0.5f), hsl (h - 60.0f * t, 0.9f, 0.58f), hsl (h + 22.0f * t, 0.95f, 0.46f) };
+        case 2:  return { hsl (h, 0.92f, 0.56f), hsl (h + 150.0f, 0.92f, 0.55f), hsl (h + 210.0f, 0.92f, 0.58f) };
+        case 3:  return { hsl (h, 0.92f, 0.56f), hsl (h + 120.0f, 0.92f, 0.55f), hsl (h + 240.0f, 0.92f, 0.58f) };
+        default: return { hsl (h, 0.92f, 0.56f), hsl (h + 180.0f, 0.92f, 0.55f), hsl (h - 30.0f * t, 0.92f, 0.6f) };
+    }
+}
+
+//==============================================================================
+// Drawing
+
+// The last step: the trails and the fresh picture together, darker towards the corners, dimmed when it sits behind the app
+static const char* const outShader = R"GLSL(#version 330 core
+in vec2 uv;out vec4 o;uniform sampler2D tex,cur;uniform float gain;
+void main(){vec2 cc=uv-.5;o=vec4(max(texture(tex,uv).rgb,texture(cur,uv).rgb)*(1.-.55*dot(cc,cc))*gain,1.);})GLSL";
+
+bool Renderer::Program::build (const char* fragment, juce::String& error)
+{
+    auto compile = [&] (GLenum type, const char* source) -> GLuint
+    {
+        const GLuint sh = glCreateShader (type);
+        glShaderSource (sh, 1, &source, nullptr);
+        glCompileShader (sh);
+        GLint built = 0;
+        glGetShaderiv (sh, GL_COMPILE_STATUS, &built);
+        if (! built)
+        {
+            char log[1024] = {};
+            glGetShaderInfoLog (sh, sizeof (log) - 1, nullptr, log);
+            error << log << "\n";
+        }
+        return sh;
+    };
+    const GLuint vs = compile (GL_VERTEX_SHADER, VisShaders::VS), fs = compile (GL_FRAGMENT_SHADER, fragment);
+    id = glCreateProgram();
+    glAttachShader (id, vs);
+    glAttachShader (id, fs);
+    glBindAttribLocation (id, 0, "p");
+    glLinkProgram (id);
+    GLint linked = 0;
+    glGetProgramiv (id, GL_LINK_STATUS, &linked);
+    glDeleteShader (vs);
+    glDeleteShader (fs);
+    locations.clear();
+    return linked != 0;
+}
+
+GLint Renderer::Program::u (const char* name)
+{
+    auto it = locations.find (name);
+    if (it != locations.end()) return it->second;
+    const GLint loc = glGetUniformLocation (id, name);
+    locations[name] = loc;
+    return loc;
+}
+
+void Renderer::Target::make (int width, int height)
+{
+    release();
+    w = width; h = height;
+    glGenTextures (1, &tex);
+    glBindTexture (GL_TEXTURE_2D, tex);
+    glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_HALF_FLOAT, nullptr);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
+    glGenFramebuffers (1, &fbo);
+    glBindFramebuffer (GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    glClearColor (0, 0, 0, 1);
+    glClear (GL_COLOR_BUFFER_BIT);
+}
+
+void Renderer::Target::release()
+{
+    if (tex != 0) glDeleteTextures (1, &tex);
+    if (fbo != 0) glDeleteFramebuffers (1, &fbo);
+    tex = fbo = 0; w = h = 0;
+}
+
+void Renderer::create (juce::String& error)
+{
+    glGenVertexArrays (1, &vao);
+    glBindVertexArray (vao);
+    glGenBuffers (1, &vbo);
+    glBindBuffer (GL_ARRAY_BUFFER, vbo);
+    static const float tri[] = { -1, -1, 3, -1, -1, 3 };
+    glBufferData (GL_ARRAY_BUFFER, sizeof (tri), tri, GL_STATIC_DRAW);
+    glEnableVertexAttribArray (0);
+    glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+
+    ok = inkStep.build (VisShaders::INK_STEP, error);
+    ok = inkShow.build (VisShaders::INK_SHOW, error) && ok;
+    ok = trail.build (VisShaders::TRAIL, error) && ok;
+    ok = liquidProg.build (VisShaders::LIQ, error) && ok;
+    ok = sandProg.build (VisShaders::SAND, error) && ok;
+    ok = bloomStep.build (VisShaders::BL_STEP, error) && ok;
+    ok = bloomShow.build (VisShaders::BL_SHOW, error) && ok;
+    ok = out.build (outShader, error) && ok;
+    lastTime = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    seed = true;
+}
+
+void Renderer::destroy()
+{
+    for (auto* p : { &inkStep, &inkShow, &trail, &liquidProg, &sandProg, &bloomStep, &bloomShow, &out })
+        if (p->id != 0) { glDeleteProgram (p->id); p->id = 0; }
+    for (auto* t : { &sim[0], &sim[1], &trails[0], &trails[1], &fresh }) t->release();
+    if (vbo != 0) glDeleteBuffers (1, &vbo);
+    if (vao != 0) glDeleteVertexArrays (1, &vao);
+    vbo = vao = 0;
+}
+
+void Renderer::ensureSim (float aspect)
+{
+    const int h = 300, w = juce::jmax (8, juce::roundToInt (300.0f * aspect));
+    if (sim[0].w == w && sim[0].h == h) return;
+    sim[0].make (w, h);
+    sim[1].make (w, h);
+    simIndex = 0;
+    seed = true;
+}
+
+void Renderer::ensureTrail (int w, int h)
+{
+    if (trails[0].w == w && trails[0].h == h) return;
+    trails[0].make (w, h);
+    trails[1].make (w, h);
+    fresh.make (w, h);
+    trailIndex = 0;
+}
+
+//==============================================================================
+// What the music is doing, turned into the six reactions
+
+void Renderer::burst (float strength, const Settings& S)
+{
+    if (strength < 0.05f) return;
+    if (S.style == sand)
+    {
+        static const int every[] = { 4, 3, 2, 1 };
+        if (++sandCount % every[juce::jlimit (0, 3, juce::roundToInt (S.v[F::schange] * 3.0f))] == 0)
+        {
+            const int max = 2 + juce::roundToInt (S.v[F::scomp] * 10.0f);
+            int next;
+            do { next = random.nextInt (max); } while (next == sandB);
+            sandA = sandB; sandB = next; sandTime = T;
+        }
+    }
+    onsets.insert (onsets.begin(), { T, strength, ph });
+    if (onsets.size() > 6) onsets.resize (6);
+    if (S.style == ink && sim[0].h > 0)
+    {
+        // With a mirror the middle of the screen is the corner of the ink, so bursts start near the fold
+        const int m = S.w[C::mirror];
+        const float a = (float) sim[0].w / (float) sim[0].h;
+        const float x = m > 0 ? random.nextFloat() * a * 0.35f : a * (0.3f + random.nextFloat() * 0.4f);
+        const float y = m == 2 ? random.nextFloat() * 0.35f : 0.3f + random.nextFloat() * 0.4f;
+        const int ch = random.nextInt (2);
+        splats.push_back ({ x, y, 0.09f + 0.12f * strength, (0.5f + strength) * (0.35f + S.v[F::drops]), { ch == 0 ? 1.0f : 0.0f, ch == 1 ? 1.0f : 0.0f, 0.0f } });
+        if (strength > 0.5f) splats.push_back ({ x + 0.05f, y + 0.05f, 0.04f, 0.6f * S.v[F::drops] + 0.2f, { 0.0f, 0.0f, 1.0f } });
+    }
+}
+
+void Renderer::hitSignal (int source, float strength, const Settings& S)
+{
+    signal[(size_t) source] = juce::jmax (signal[(size_t) source], strength);
+    if (source == sTrans) lastTransient = T;
+    for (int d = 0; d < numDests; ++d)
+    {
+        const float amount = S.route[(size_t) source][(size_t) d];
+        if (amount <= 0.0f) continue;
+        if (d == dSpin) omega += S.v[(size_t) S.spinKey()] * (0.4f + strength) * 2.6f * amount;
+        if (d == dBurst) burst (strength * amount, S);
+    }
+}
+
+// One found hit can feed several sounds at once: kick, loudest lows and transients are separate
+void Renderer::fire (int kind, float rel, const Settings& S, Readout& readout)
+{
+    const float strength = clamp01 (rel * (0.55f + S.v[F::react] * 0.8f));
+    const bool big = kind == VisListener::kick && rel >= S.v[F::gate] - 0.001f;
+    if (kind == VisListener::kick)
+    {
+        const juce::SpinLock::ScopedLockType lock (readout.lock);
+        if (readout.numKicks == (int) readout.kicks.size())
+        {
+            std::move (readout.kicks.begin() + 1, readout.kicks.end(), readout.kicks.begin());
+            --readout.numKicks;
+        }
+        readout.kicks[(size_t) readout.numKicks++] = { T, rel, big };
+    }
+    static const int sourceOf[] = { sKick, sSnare, sHat };
+    if (kind != VisListener::tone) hitSignal (sourceOf[kind], strength, S);
+    if (big) hitSignal (sBig, strength, S);
+    if (T - lastTransient > 0.05 || strength > signal[sTrans]) hitSignal (sTrans, strength, S);
+}
+
+void Renderer::analyse (float dt, const Settings& S, VisListener& ear, double latency, Readout& readout)
+{
+    {
+        VisListener::Hit hits[64];
+        const int n = ear.readHits (hits, 64);
+        hitQueue.insert (hitQueue.end(), hits, hits + n);
+        VisListener::Bands bands[256];
+        const int nb = ear.readBands (bands, 256);
+        bandQueue.insert (bandQueue.end(), bands, bands + nb);
+        if (bandQueue.size() > 2048) bandQueue.erase (bandQueue.begin(), bandQueue.end() - 1024);
+    }
+    // A sound is heard `latency` after the engine made it; the picture is drawn a touch ahead so it lands together
+    const double now = ear.audioNow() - latency + 0.012 - (double) (S.v[F::nudge] - 0.5f) * 0.16;
+    size_t used = 0;
+    while (used < bandQueue.size() && bandQueue[used].time <= now) rawBands = bandQueue[used++];
+    bandQueue.erase (bandQueue.begin(), bandQueue.begin() + (std::ptrdiff_t) used);
+    if (used == 0 && ear.audioNow() - rawBands.time > 0.25) rawBands = { rawBands.time, 0.0f, 0.0f, 0.0f };   // no sound arriving
+
+    const float gain = 0.4f + S.v[F::react] * 1.3f;
+    const float raw[] = { rawBands.low, rawBands.mid, rawBands.high };
+    for (int k = 0; k < 3; ++k)
+    {
+        peak[k] = juce::jmax (raw[k], peak[k] * (1.0f - dt * 0.12f), 0.12f);
+        const float v = clamp01 (std::pow (raw[k] / peak[k], 1.6f) * gain);
+        band[k] += (v - band[k]) * (1.0f - std::exp (-dt * (v > band[k] ? 45.0f : 7.0f)));
+    }
+    level = (band[0] + band[1] + band[2]) / 3.0f;
+
+    signal[sKick] *= std::exp (-dt * 5.5f);  signal[sBig] *= std::exp (-dt * 5.5f);
+    signal[sSnare] *= std::exp (-dt * 7.0f); signal[sHat] *= std::exp (-dt * 12.0f);
+    signal[sTrans] *= std::exp (-dt * 16.0f);
+    for (size_t i = 0; i < hitQueue.size();)
+    {
+        if (hitQueue[i].time <= now)
+        {
+            const auto h = hitQueue[i];
+            hitQueue.erase (hitQueue.begin() + (std::ptrdiff_t) i);
+            fire (h.kind, h.rel, S, readout);
+        }
+        else ++i;
+    }
+    signal[sLow] = band[0]; signal[sMid] = band[1]; signal[sHigh] = band[2]; signal[sLevel] = level;
+
+    reaction.fill (0.0f);
+    for (int s = 0; s < numSources; ++s)
+        for (int d = 0; d < numDests; ++d)
+        {
+            const float amount = S.route[(size_t) s][(size_t) d];
+            if (amount <= 0.0f) continue;
+            const float v = signal[(size_t) s] * amount;
+            reaction[(size_t) d] += v;
+            if (s <= sTrans) continue;                                   // hits already acted when they landed
+            if (d == dSpin) omega += S.v[(size_t) S.spinKey()] * v * dt * 5.0f;
+            if (d == dBurst)
+            {
+                auto& e = edges[(size_t) s];
+                if (v > 0.6f && ! e.high && T - e.time > 0.25) { e.high = true; e.time = T; burst (v, S); }
+                else if (v < 0.45f) e.high = false;
+            }
+        }
+    for (auto& r : reaction) r = juce::jmin (1.5f, r);
+    while (! onsets.empty() && T - onsets.back().time > 6.0) onsets.pop_back();
+
+    // The beat turns the whole picture; the far past of the turn lags behind and reads as a twist
+    omega *= std::exp (-dt * 5.0f);
+    const float idle = S.v[(size_t) S.idleKey()];
+    spinRate = omega + idle * idle * 1.6f + idle * 0.08f;
+    theta += spinRate * dt;
+    fluidRate += (spinRate - fluidRate) * (1.0f - std::exp (-dt / 2.5f));
+    twist = juce::jlimit (-7.0f, 7.0f, (twist - ((spinRate - fluidRate) + spinRate * 0.25f) * dt * 1.6f) * std::exp (-dt / 3.5f));
+    ph += dt * (0.25f + S.v[F::speed] * 1.6f) * (0.7f + S.v[F::stir] * reaction[dStir] * 1.6f);
+
+    for (int i = 0; i < numSources; ++i) readout.signal[(size_t) i].store (signal[(size_t) i]);
+    for (int i = 0; i < numDests; ++i) readout.reaction[(size_t) i].store (reaction[(size_t) i]);
+    for (int i = 0; i < 3; ++i) readout.band[(size_t) i].store (band[i]);
+    readout.clock.store (T);
+    readout.turn.store (theta);
+    readout.flow.store (ph);
+}
+
+//==============================================================================
+
+void Renderer::common (Program& p, const Settings& S, float aspect)
+{
+    glUseProgram (p.id);
+    const auto c = S.palette (reaction[dHue] * 90.0f);
+    glUniform1f (p.u ("t"), (float) std::fmod (T, 3600.0));
+    glUniform1f (p.u ("asp"), aspect);
+    glUniform1f (p.u ("glow"), 1.0f);
+    glUniform1f (p.u ("flash"), reaction[dFlash] * S.v[F::flash] * 1.6f);
+    glUniform1f (p.u ("low"), band[0]);
+    glUniform1f (p.u ("mid"), band[1]);
+    glUniform1f (p.u ("high"), band[2]);
+    glUniform1f (p.u ("lvl"), level);
+    glUniform1f (p.u ("ph"), ph);
+    glUniform1f (p.u ("pz"), S.v[F::pulse] * reaction[dPulse] * 0.24f);
+    for (int i = 0; i < 3; ++i)
+    {
+        static const char* names[] = { "c1", "c2", "c3" };
+        glUniform3f (p.u (names[i]), c[(size_t) i].getFloatRed(), c[(size_t) i].getFloatGreen(), c[(size_t) i].getFloatBlue());
+    }
+}
+
+// Trails: the last frames linger and drift outward. Echo stamps a ghost about eight times a second instead.
+void Renderer::trailOut (int W, int H, float dt, float aspect, float amount, bool echo, float psy, float zoom, const Out& o)
+{
+    auto& from = trails[trailIndex];
+    auto& to = trails[1 - trailIndex];
+    float cap = 1.0f;
+    if (echo) { echoTime += dt; if (echoTime >= 0.12f) echoTime = 0.0f; else cap = 0.0f; }
+    glUseProgram (trail.id);
+    glBindFramebuffer (GL_FRAMEBUFFER, to.fbo);
+    glViewport (0, 0, W, H);
+    glActiveTexture (GL_TEXTURE0); glBindTexture (GL_TEXTURE_2D, fresh.tex); glUniform1i (trail.u ("cur"), 0);
+    glActiveTexture (GL_TEXTURE1); glBindTexture (GL_TEXTURE_2D, from.tex);  glUniform1i (trail.u ("trail"), 1);
+    glUniform1f (trail.u ("tdec"), amount < 0.02f ? 0.0f : std::pow (0.82f + 0.172f * amount, dt * 60.0f));
+    glUniform1f (trail.u ("tzoom"), 1.0f - (0.001f + 0.0035f * amount) * zoom * (1.0f + reaction[dPulse]));
+    glUniform1f (trail.u ("psy"), psy);
+    glUniform1f (trail.u ("cap"), cap);
+    glUniform1f (trail.u ("asp"), aspect);
+    glUniform1f (trail.u ("trot"), spinRate * dt * 0.7f);
+    glDrawArrays (GL_TRIANGLES, 0, 3);
+    trailIndex = 1 - trailIndex;
+
+    glUseProgram (out.id);
+    glBindFramebuffer (GL_FRAMEBUFFER, o.framebuffer);
+    glViewport (o.x, o.y, o.w, o.h);
+    glActiveTexture (GL_TEXTURE1); glBindTexture (GL_TEXTURE_2D, fresh.tex); glUniform1i (out.u ("cur"), 1);
+    glActiveTexture (GL_TEXTURE0); glBindTexture (GL_TEXTURE_2D, to.tex);    glUniform1i (out.u ("tex"), 0);
+    glUniform1f (out.u ("gain"), o.gain);
+    glDrawArrays (GL_TRIANGLES, 0, 3);
+}
+
+void Renderer::frame (const Settings& S, VisListener& ear, double latency, const Out& o, juce::Point<float> drag, Readout& readout)
+{
+    if (! ok || o.w < 8 || o.h < 8) return;
+    const double wall = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    const float dt = (float) juce::jlimit (0.001, 0.05, wall - lastTime);
+    lastTime = wall;
+    T += dt;
+    if (S.style != lastStyle) { lastStyle = S.style; seed = true; onsets.clear(); splats.clear(); }
+    analyse (dt, S, ear, latency, readout);
+
+    GLint oldVao = 0;
+    glGetIntegerv (GL_VERTEX_ARRAY_BINDING, &oldVao);
+    glBindVertexArray (vao);
+    glDisable (GL_BLEND);
+    glDisable (GL_DEPTH_TEST);
+    glDisable (GL_SCISSOR_TEST);
+    glDisable (GL_CULL_FACE);
+
+    // The picture is worked out at a moderate size and stretched: soft shapes lose nothing by it
+    const float shrink = juce::jmin (1.0f, 900.0f / (float) o.h);
+    const int W = juce::jmax (8, juce::roundToInt ((float) o.w * shrink)), H = juce::jmax (8, juce::roundToInt ((float) o.h * shrink));
+    const float aspect = (float) W / (float) H;
+    const bool dragging = drag.x >= 0.0f;
+    const float psy = S.v[(size_t) S.psyKey()], trailAmount = S.v[(size_t) S.trailsKey()];
+    const bool echo = S.w[(size_t) S.trailModeKey()] == 1;
+    auto rnd = [this] { return random.nextFloat(); };
+
+    if (S.style == ink)
+    {
+        const int m = S.w[C::mirror];
+        ensureSim (m == 1 ? aspect / 2.0f : aspect);
+        const float sw = (float) sim[0].w / (float) sim[0].h;
+        if (seed)
+        {
+            seed = false;
+            for (int i = 0; i < 9; ++i)
+                splats.push_back ({ rnd() * sw, rnd(), 0.08f + rnd() * 0.12f, 0.7f, { i % 3 == 0 ? 1.0f : 0.0f, i % 3 == 1 ? 1.0f : 0.0f, i % 3 == 2 ? 1.0f : 0.0f } });
+        }
+        // Three drifting droppers feed ink with the low, middle and high sound
+        const float d = S.v[F::drops] * dt * 2.2f, chaos = S.v[F::chaos];
+        const float t = (float) std::fmod (T, 3600.0);
+        for (int i = 0; i < 3; ++i)
+        {
+            const float b = band[i], wv = 0.13f + (float) i * 0.07f;
+            const float x = sw * (0.5f + 0.42f * std::cos (t * wv + (float) i * 2.1f + chaos * 1.5f * std::sin (t * 1.1f + (float) i)));
+            const float y = 0.5f + 0.42f * std::sin (t * wv * 1.3f + (float) i + chaos * 1.5f * std::cos (t * 0.9f + (float) i * 2.0f));
+            if (b > 0.15f) splats.push_back ({ x, y, 0.04f + 0.07f * b, d * b * (i == 0 ? 2.2f : 1.5f), { i == 0 ? 1.0f : 0.0f, i == 1 ? 1.0f : 0.0f, i == 2 ? 1.0f : 0.0f } });
+        }
+        if (dragging)
+            splats.push_back ({ (m > 0 ? std::abs (2.0f * (drag.x - 0.5f)) : drag.x) * sw, m == 2 ? std::abs (2.0f * (drag.y - 0.5f)) : drag.y, 0.05f, dt * 6.0f, { 0.0f, 1.0f, 0.0f } });
+
+        float sp[32] = {}, sc[24] = {};
+        const int use = juce::jmin (8, (int) splats.size());
+        for (int i = 0; i < use; ++i)
+        {
+            const auto& s = splats[(size_t) i];
+            sp[i * 4] = s.x; sp[i * 4 + 1] = s.y; sp[i * 4 + 2] = s.r; sp[i * 4 + 3] = s.amount;
+            sc[i * 3] = s.colour[0]; sc[i * 3 + 1] = s.colour[1]; sc[i * 3 + 2] = s.colour[2];
+        }
+        splats.erase (splats.begin(), splats.begin() + use);
+        if (splats.size() > 64) splats.resize (64);
+
+        auto& p = inkStep;
+        common (p, S, aspect);
+        glUniform1f (p.u ("asp"), sw);
+        glUniform1f (p.u ("dt"), dt);
+        glUniform1f (p.u ("swirl"), (0.3f + S.v[F::swirl] * 2.4f) * (0.55f + S.v[F::stir] * reaction[dStir] * 1.8f));
+        glUniform1f (p.u ("flow"), (0.4f + band[1] * 1.4f) * juce::jmin (1.0f, S.v[F::vort] * 3.0f));
+        const int nv = juce::roundToInt (S.v[F::vort] * 6.0f);
+        float vx[18] = {};
+        for (int i = 0; i < nv; ++i)
+        {
+            const float fi = (float) i;
+            vx[i * 3]     = sw * (0.5f + 0.4f * std::sin (t * (0.07f + fi * 0.023f) + fi * 1.7f + chaos * 0.9f * std::sin (t * 1.3f + fi)));
+            vx[i * 3 + 1] = 0.5f + 0.4f * std::cos (t * (0.05f + fi * 0.031f) + fi * 2.9f + chaos * 0.9f * std::cos (t * 1.1f + fi * 3.0f));
+            vx[i * 3 + 2] = (i % 2 ? 1.0f : -1.0f) * (0.5f + chaos * 0.9f) * (1.0f + band[1] * 0.6f + reaction[dStir] * chaos * 1.6f);
+        }
+        glUniform1f (p.u ("swl"), 0.0f);
+        glUniform1f (p.u ("cf"), juce::jmin (spinRate * spinRate * 0.02f, 0.12f) / 0.11f);
+        glUniform2f (p.u ("ctr"), m > 0 ? 0.0f : sw * 0.5f, m == 2 ? 0.0f : 0.5f);
+        glUniform1f (p.u ("comp"), S.w[C::tones] == 0 ? 0.0f : 0.07f);
+        glUniform3fv (p.u ("vx"), 6, vx);
+        glUniform1i (p.u ("nv"), nv);
+        glUniform1f (p.u ("scale"), 0.6f + S.v[F::scale] * 2.4f);
+        glUniform1f (p.u ("detail"), S.v[F::idetail]);
+        glUniform1f (p.u ("chaos"), chaos * (1.0f + reaction[dStir] * 0.35f));
+        glUniform1f (p.u ("fade"), std::pow (0.982f + S.v[F::fade] * 0.0175f, dt * 60.0f));
+        glUniform4fv (p.u ("sp"), 8, sp);
+        glUniform3fv (p.u ("sc"), 8, sc);
+        glUniform1i (p.u ("ns"), use);
+        auto& a = sim[simIndex];
+        auto& b = sim[1 - simIndex];
+        glBindFramebuffer (GL_FRAMEBUFFER, b.fbo);
+        glViewport (0, 0, b.w, b.h);
+        glActiveTexture (GL_TEXTURE0); glBindTexture (GL_TEXTURE_2D, a.tex); glUniform1i (p.u ("prev"), 0);
+        glDrawArrays (GL_TRIANGLES, 0, 3);
+        simIndex = 1 - simIndex;
+
+        ensureTrail (W, H);
+        auto& s = inkShow;
+        common (s, S, aspect);
+        glBindFramebuffer (GL_FRAMEBUFFER, fresh.fbo);
+        glViewport (0, 0, W, H);
+        glActiveTexture (GL_TEXTURE0); glBindTexture (GL_TEXTURE_2D, b.tex); glUniform1i (s.u ("dye"), 0);
+        glUniform2f (s.u ("px"), 1.4f / (float) b.w, 1.4f / (float) b.h);
+        glUniform1i (s.u ("mir"), m);
+        glUniform1f (s.u ("sharp"), S.w[C::tones] == 0 ? 1.4f : 7.0f);
+        glUniform1f (s.u ("mono"), S.w[C::tones] == 0 ? S.v[F::tint] : 0.0f);
+        glUniform1f (s.u ("rot"), theta);
+        glUniform1i (s.u ("form"), S.w[C::form]);
+        glUniform1i (s.u ("surf"), S.w[C::surface]);
+        glUniform1f (s.u ("lsp"), S.v[F::depth] * (0.45f + reaction[dPulse] * 0.5f));
+        glUniform1f (s.u ("segs"), (float) juce::roundToInt (3.0f + S.v[F::seg] * 9.0f));
+        glUniform1f (s.u ("tw"), twist);
+        glUniform1f (s.u ("psy"), psy);
+        glUniform1f (s.u ("trip"), S.v[F::trip]);
+        glDrawArrays (GL_TRIANGLES, 0, 3);
+        trailOut (W, H, dt, aspect, trailAmount, echo, psy, 1.0f, o);
+    }
+    else if (S.style == liquid)
+    {
+        auto& p = liquidProg;
+        common (p, S, aspect);
+        ensureTrail (W, H);
+        glBindFramebuffer (GL_FRAMEBUFFER, fresh.fbo);
+        glViewport (0, 0, W, H);
+        if (liquidLast < 0.0f) liquidLast = ph;
+        liquidPhase += (ph - liquidLast) * (0.3f + S.v[F::lflow] * 1.7f);
+        liquidLast = ph;
+        const int count = 4 + juce::roundToInt (S.v[F::lcount] * 8.0f), form = S.w[C::lform];
+        const float size = 0.45f + S.v[F::lsize] * 0.9f, swell = S.v[F::lswell] * 2.0f, lp = liquidPhase, t = (float) std::fmod (T, 3600.0);
+        float bl[48] = {};
+        int n = 0;
+        for (int i = 0; i < count; ++i, ++n)
+        {
+            const float fi = (float) i, a = fi * 2.399f;
+            float bx, by;
+            if (form == 1)        // lava lamp: columns that rise and sink
+            {
+                bx = aspect * 0.84f * (std::fmod (fi * 0.618f + 0.13f, 1.0f) * 2.0f - 1.0f) + 0.07f * std::sin (lp * 0.2f + fi);
+                by = 0.86f * std::sin (lp * 0.075f * (1.0f + (float) (i % 4) * 0.22f) + fi * 1.9f);
+            }
+            else if (form == 2)   // orbit
+            {
+                const float r = 0.2f + 0.62f * std::fmod (fi * 0.37f + 0.1f, 1.0f), an = lp * 0.11f * (i % 2 ? 1.0f : -1.0f) * (1.25f - r) + a;
+                bx = std::cos (an) * r * juce::jmin (aspect, 1.6f);
+                by = std::sin (an) * r;
+            }
+            else
+            {
+                bx = aspect * 0.78f * std::sin (lp * 0.11f * (1.0f + (float) (i % 5) * 0.13f) + a * 1.3f) + 0.2f * std::sin (t * 0.21f + fi);
+                by = 0.78f * std::cos (lp * 0.09f * (1.0f + (float) (i % 4) * 0.17f) + a * 2.1f) + 0.12f * std::cos (t * 0.17f + fi * 2.0f);
+            }
+            bl[n * 3] = bx; bl[n * 3 + 1] = by;
+            bl[n * 3 + 2] = (0.17f + 0.11f * (float) ((i * 7) % 5) / 5.0f) * size * (1.0f + (band[0] * 0.3f + reaction[dPulse] * (i % 2 ? 0.45f : 0.25f)) * swell);
+        }
+        // Each burst spits a droplet out from the middle
+        const int drops = juce::jmin ((int) onsets.size(), juce::roundToInt (S.v[F::ldrops] * 6.0f));
+        for (int i = 0; i < drops && n < 16; ++i)
+        {
+            const auto& on = onsets[(size_t) i];
+            const float age = (float) (T - on.time);
+            if (age > 2.6f) continue;
+            const float d = on.phase * 7.3f;
+            bl[n * 3] = std::cos (d) * age * 0.6f; bl[n * 3 + 1] = std::sin (d) * age * 0.6f;
+            bl[n * 3 + 2] = 0.2f * size * on.strength * (0.5f + S.v[F::ldrops]) * juce::jmax (0.0f, 1.0f - age / 2.6f);
+            ++n;
+        }
+        if (dragging && n < 16) { bl[n * 3] = (drag.x - 0.5f) * 2.0f * aspect; bl[n * 3 + 1] = (drag.y - 0.5f) * 2.0f; bl[n * 3 + 2] = 0.2f * size; ++n; }
+        glUniform3fv (p.u ("bl"), 16, bl);
+        glUniform1i (p.u ("nb"), n);
+        glUniform1f (p.u ("rot"), theta);
+        glUniform1f (p.u ("psy"), psy);
+        glUniform1f (p.u ("stirv"), reaction[dStir] * S.v[F::stir]);
+        glUniform1i (p.u ("surf"), S.w[C::lsurface]);
+        glUniform1i (p.u ("form"), form);
+        glUniform1f (p.u ("wob"), S.v[F::lwob]);
+        glUniform1f (p.u ("lay"), S.v[F::ldepth]);
+        glDrawArrays (GL_TRIANGLES, 0, 3);
+        trailOut (W, H, dt, aspect, trailAmount, echo, psy, 1.6f, o);
+    }
+    else if (S.style == sand)
+    {
+        static const float modes[12][2] = { { 1, 2 }, { 2, 3 }, { 1, 4 }, { 3, 4 }, { 2, 5 }, { 1, 6 }, { 3, 5 }, { 4, 5 }, { 2, 7 }, { 3, 7 }, { 5, 6 }, { 4, 7 } };
+        auto& p = sandProg;
+        common (p, S, aspect);
+        ensureTrail (W, H);
+        glBindFramebuffer (GL_FRAMEBUFFER, fresh.fbo);
+        glViewport (0, 0, W, H);
+        const float k = clamp01 ((float) (T - sandTime) / 0.45f), blend = k * k * (3.0f - 2.0f * k);
+        glUniform4f (p.u ("md"), modes[sandA][0], modes[sandA][1], modes[sandB][0], modes[sandB][1]);
+        glUniform1f (p.u ("bl"), blend);
+        glUniform1f (p.u ("rot"), theta);
+        glUniform1f (p.u ("psy"), psy);
+        glUniform1f (p.u ("grain"), S.v[F::sgrain]);
+        glUniform1f (p.u ("shake"), clamp01 ((reaction[dPulse] * 0.55f + reaction[dStir] * 0.12f) * S.v[F::sscatter] * 2.0f));
+        glUniform1f (p.u ("sharp"), S.v[F::ssharp]);
+        glUniform1i (p.u ("surf"), S.w[C::ssurface]);
+        glUniform1i (p.u ("form"), S.w[C::sform]);
+        glDrawArrays (GL_TRIANGLES, 0, 3);
+        trailOut (W, H, dt, aspect, trailAmount, echo, psy, 1.0f, o);
+    }
+    else
+    {
+        // Bloom: growth that forms, glows, dims and dissolves. Big hits plant new growth.
+        ensureSim (aspect);
+        const float sw = (float) sim[0].w / (float) sim[0].h;
+        const int kind = S.w[C::btype];
+        auto seedSize = [&] { return (kind == 1 ? 0.038f : 0.02f) + rnd() * 0.016f; };
+        bool clear = false;
+        if (seed)
+        {
+            seed = false; clear = true; bloomTime = T;
+            for (int i = 0; i < 4; ++i) splats.push_back ({ (0.15f + rnd() * 0.7f) * sw, 0.15f + rnd() * 0.7f, seedSize(), 1.0f, {} });
+        }
+        if (rnd() < band[2] * 0.03f * dt * 60.0f) splats.push_back ({ rnd() * sw, rnd(), 0.01f, 1.0f, {} });
+        const double idleGap = 2.8 - (double) S.v[F::bseeds] * 2.0;
+        if ((reaction[dBurst] > 0.4f && T - bloomTime > 0.22) || T - bloomTime > idleGap)
+        {
+            const int n = T - bloomTime > idleGap ? 1 : 1 + juce::roundToInt (reaction[dBurst] * S.v[F::bseeds] * 4.0f);
+            bloomTime = T;
+            for (int i = 0; i < n; ++i) splats.push_back ({ (0.06f + rnd() * 0.88f) * sw, 0.06f + rnd() * 0.88f, seedSize(), 1.0f, {} });
+        }
+        if (dragging) splats.push_back ({ drag.x * sw, drag.y, 0.018f, 1.0f, {} });
+
+        static const float types[3][2] = { { 0.055f, 0.062f }, { 0.03f, 0.0625f }, { 0.029f, 0.057f } };
+        bloomSteps += (8.0f + (float) juce::roundToInt (S.v[F::bspeed] * 20.0f)) * 60.0f * dt;
+        const int steps = juce::jlimit (1, 40, (int) bloomSteps);
+        bloomSteps = juce::jmin (bloomSteps - (float) steps, 40.0f);
+        auto& p = bloomStep;
+        common (p, S, aspect);
+        glUniform1f (p.u ("asp"), sw);
+        glUniform2f (p.u ("px"), 1.0f / (float) sim[0].w, 1.0f / (float) sim[0].h);
+        glUniform1f (p.u ("fd"), types[kind][0] + (level - 0.4f) * 0.0025f);
+        glUniform1f (p.u ("kl"), types[kind][1]);
+        glViewport (0, 0, sim[0].w, sim[0].h);
+        glActiveTexture (GL_TEXTURE0);
+        glUniform1i (p.u ("prev"), 0);
+        const float span = (300.0f + 3000.0f * S.v[F::bcover]) * (kind == 1 ? 1.8f : 1.0f);
+        for (int it = 0; it < steps; ++it)
+        {
+            float sp[32] = {};
+            const int use = it > 5 ? 0 : juce::jmin (8, (int) splats.size());
+            for (int i = 0; i < use; ++i)
+            {
+                const auto& s = splats[(size_t) i];
+                sp[i * 4] = s.x / sw; sp[i * 4 + 1] = s.y; sp[i * 4 + 2] = s.r; sp[i * 4 + 3] = s.amount;
+            }
+            splats.erase (splats.begin(), splats.begin() + use);
+            glUniform4fv (p.u ("sp"), 8, sp);
+            glUniform1i (p.u ("ns"), use);
+            glUniform1f (p.u ("clr"), it == 0 && clear ? 1.0f : 0.0f);
+            glUniform1f (p.u ("up"), it == 0 ? (float) steps / span : 0.0f);
+            glUniform1f (p.u ("dn"), it == 0 ? (float) steps / 900.0f : 0.0f);
+            auto& a = sim[simIndex];
+            auto& b = sim[1 - simIndex];
+            glBindFramebuffer (GL_FRAMEBUFFER, b.fbo);
+            glBindTexture (GL_TEXTURE_2D, a.tex);
+            glDrawArrays (GL_TRIANGLES, 0, 3);
+            simIndex = 1 - simIndex;
+        }
+        if (splats.size() > 64) splats.resize (64);
+
+        ensureTrail (W, H);
+        auto& s = bloomShow;
+        common (s, S, aspect);
+        glBindFramebuffer (GL_FRAMEBUFFER, fresh.fbo);
+        glViewport (0, 0, W, H);
+        glBindTexture (GL_TEXTURE_2D, sim[simIndex].tex);
+        glUniform1i (s.u ("dye"), 0);
+        glUniform2f (s.u ("px"), 1.2f / (float) sim[0].w, 1.2f / (float) sim[0].h);
+        glUniform1f (s.u ("rot"), theta);
+        glUniform1f (s.u ("psy"), psy);
+        glUniform1f (s.u ("fresh"), S.v[F::bfresh]);
+        glUniform1i (s.u ("surf"), S.w[C::bsurface]);
+        glUniform1i (s.u ("mir"), S.w[C::bmirror]);
+        glDrawArrays (GL_TRIANGLES, 0, 3);
+        trailOut (W, H, dt, aspect, trailAmount, echo, psy, 1.0f, o);
+    }
+
+    glActiveTexture (GL_TEXTURE1); glBindTexture (GL_TEXTURE_2D, 0);
+    glActiveTexture (GL_TEXTURE0); glBindTexture (GL_TEXTURE_2D, 0);
+    glUseProgram (0);
+    glBindVertexArray ((GLuint) oldVao);
+}
+}

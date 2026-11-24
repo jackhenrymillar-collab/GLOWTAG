@@ -6,6 +6,7 @@
 #include "Engine/Graph.h"
 #include "Engine/Samples.h"
 #include "Engine/Sequencer.h"
+#include "Engine/VisListener.h"
 #include "Engine/DeviceParams.h"
 #include "UI/DeviceWallModel.h"
 #include <iostream>
@@ -1185,6 +1186,52 @@ int main()
             const float held = render (g, 100, 0.0f);
             check (held > 0.005f && held < 4.0f, "Ghost Tag: a held stretch keeps playing after the input stops");
         }
+    }
+
+    // The visualiser's listener finds kicks on the beat and sharp bright hits off it
+    {
+        const double sr = 48000.0;
+        const int total = (int) (sr * 4.0);
+        std::vector<float> song ((size_t) total, 0.0f);
+        juce::Random r (7);
+        for (int beat = 0; beat < 8; ++beat)
+        {
+            const int k0 = (int) (sr * 0.5 * beat) + 2400, s0 = k0 + (int) (sr * 0.25);
+            double phase = 0.0;
+            for (int i = 0; i < (int) (sr * 0.45) && k0 + i < total; ++i)
+            {
+                const double t = i / sr;
+                phase += juce::MathConstants<double>::twoPi * (50.0 + 90.0 * std::exp (-t / 0.02)) / sr;
+                song[(size_t) (k0 + i)] += (float) (0.8 * std::sin (phase) * std::exp (-t / 0.08));
+            }
+            for (int i = 0; i < (int) (sr * 0.12) && s0 + i < total; ++i)
+                song[(size_t) (s0 + i)] += (r.nextFloat() * 2.0f - 1.0f) * 0.4f * (float) std::exp (-(i / sr) / 0.04);
+        }
+        VisListener l;
+        l.prepare (sr);
+        l.enabled = true;
+        for (int i = 0; i < total; i += 256) l.push (song.data() + i, nullptr, juce::jmin (256, total - i));
+        VisListener::Hit hits[256];
+        const int n = l.readHits (hits, 256);
+        int kicks = 0, late = 0, bright = 0, wrong = 0;
+        for (int i = 0; i < n; ++i)
+        {
+            const double inBeat = std::fmod (hits[i].time - 0.05 + 0.5, 0.5);        // 0 = on a kick, 0.25 = on the noise hit
+            if (hits[i].kind == VisListener::kick)
+            {
+                ++kicks;
+                if (inBeat > 0.02 && inBeat < 0.48) ++late;
+            }
+            else if (hits[i].kind == VisListener::snare || hits[i].kind == VisListener::hat)
+            {
+                if (std::abs (inBeat - 0.25) < 0.02) ++bright; else ++wrong;
+            }
+        }
+        check (kicks == 8, "Visualiser listener: finds each of eight kicks once");
+        check (late == 0, "Visualiser listener: kicks are stamped within 20 ms of where they start");
+        check (bright >= 7 && wrong == 0, "Visualiser listener: noise hits between the kicks read as snare or hat, and kicks do not");
+        VisListener::Bands b[1024];
+        check (l.readBands (b, 1024) > 500, "Visualiser listener: reports levels about every 5 ms");
     }
 
     std::cout << (failures == 0 ? "\nAll passed\n" : "\nSome checks failed\n");
