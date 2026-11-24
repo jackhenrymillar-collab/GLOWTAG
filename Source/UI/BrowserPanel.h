@@ -17,6 +17,7 @@ public:
     void mouseExit (const juce::MouseEvent&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
 
     // Double-clicking a device adds it to the selected track, wired in automatically
     std::function<void (ModuleType)> onAddDevice;
@@ -36,6 +37,8 @@ private:
     juce::TextButton scanButton { "Scan for plugins" };
     int tab = 1;
     int hovered = -1, chosen = -1;
+    double hoveredAt = 0.0;            // when the pointer came onto a sample (it plays once, then again after a pause)
+    void previewSample (int index);
     juce::Rectangle<int> listArea;
 
     const std::vector<Item>& items() const;

@@ -60,8 +60,36 @@ namespace
         // The closed hat cuts the open hat off, as it always has
         for (int i = 0; i < 16; ++i) e.push_back ({ "Pad " + juce::String (i + 1) + " Choke", (i == 6 || i == 10) ? 1.0f : 0.0f, (i == 6 || i == 10) ? 1.0f : 0.0f });
         for (int i = 0; i < 16; ++i) e.push_back ({ "Pad " + juce::String (i + 1) + " Steps", 0.0f, 0.0f });
+        // Kit velocity, then each pad's own shaping. Every default leaves an older rack sounding as it did:
+        // no attack or hold, a decay that never ends (the kit's decay still shapes it), the filter open.
+        e.push_back ({ "Velocity", 1.0f, 1.0f });
+        struct PerPad { const char* name; float value; };
+        const PerPad perPad[] = { { "Attack", 0.0f }, { "Hold", 0.0f }, { "Decay", 1.0f }, { "Start", 0.0f }, { "Reverse", 0.0f },
+                                  { "Cutoff", 1.0f }, { "Res", 0.0f }, { "Filter Mode", 0.0f }, { "Drive", 0.0f }, { "Snap", 0.0f },
+                                  { "Out", 0.0f }, { "Mute", 0.0f }, { "Solo", 0.0f }, { "Voice", 0.0f },
+                                  { "Voice A", 0.5f }, { "Voice B", 0.5f }, { "Voice C", 0.5f } };
+        for (auto& pp : perPad)
+            for (int i = 0; i < 16; ++i)
+                e.push_back ({ "Pad " + juce::String (i + 1) + " " + pp.name, pp.value, pp.value });
+        jassert ((int) e.size() + 4 == Param::Drums::Count);
         return e;
     }
+
+    std::vector<ModuleInfo::Extra> drumSeqExtras()
+    {
+        using namespace Param::DrumSeq;
+        std::vector<ModuleInfo::Extra> e { { "Pattern", 0.0f, 0.0f }, { "Step Size", 1.0f, 1.0f }, { "Play", 1.0f, 1.0f }, { "Selected Row", 0.0f, 0.0f } };
+        for (int r = 0; r < rows; ++r) e.push_back ({ "Row " + juce::String (r + 1) + " Length", 16.0f, 16.0f });
+        const char* names = "ABCD";
+        for (int p = 0; p < patterns; ++p)
+            for (int r = 0; r < rows; ++r)
+                for (int i = 0; i < steps; ++i)
+                    e.push_back ({ juce::String::charToString ((juce::juce_wchar) names[p]) + " " + juce::String (r + 1) + "." + juce::String (i + 1), 0.0f, 0.0f });
+        jassert ((int) e.size() + 2 == Count);
+        return e;
+    }
+
+    ModuleInfo withAuxOut (ModuleInfo info) { info.hasAuxOut = true; return info; }
 
     std::vector<ModuleInfo::Extra> eqExtras()
     {
@@ -133,8 +161,11 @@ const ModuleInfo& moduleInfo (ModuleType t)
     static const ModuleInfo synth = withExtras ({ "Synth",      4, false, true,  false, { { "Wave", 0.0f }, { "Sub", 0.3f }, { "Detune", 0.15f }, { "Cutoff", 0.6f }, { "Res", 0.25f }, { "Env", 0.4f },
                                                                                           { "Attack", 0.02f }, { "Decay", 0.3f }, { "Sustain", 0.6f }, { "Release", 0.3f }, { "Drive", 0.2f }, { "Gain", 0.7f } }, 480.0f, true },
                                                 synthExtras());
-    static const ModuleInfo drums = withExtras ({ "Drum Rack",  6, false, true,  false, { { "Tune", 0.5f }, { "Decay", 0.7f }, { "Snap", 0.3f }, { "Gain", 0.8f } }, 420.0f, true },
-                                                drumExtras());
+    static const ModuleInfo drums = withAuxOut (withExtras ({ "Drum Rack",  6, false, true,  false, { { "Tune", 0.5f }, { "Decay", 0.7f }, { "Snap", 0.3f }, { "Gain", 0.8f } }, 640.0f, true },
+                                                            drumExtras()));
+    // Sends notes, makes no sound: its notes in passes the track's notes on to the rack with its own steps
+    static const ModuleInfo drumSeq = withExtras ({ "Drum Rack Sequencer", 6, false, false, false, { { "Swing", 0.0f }, { "Humanise", 0.0f } }, 380.0f, true, true },
+                                                  drumSeqExtras());
     static const ModuleInfo filter = withExtras ({ "Filter",     2, true,  true,  false, { { "Cutoff", 0.65f }, { "Res", 0.3f }, { "Drive", 0.2f }, { "Mode", 0.0f } }, 320.0f },
                                                  { { "Mix", 1.0f, 1.0f }, { "Follow", 0.0f, 0.0f }, { "Wobble", 0.0f, 0.0f }, { "Wobble Rate", 0.3f, 0.3f },
                                                    { "Vowel", 0.0f, 0.0f }, { "Slope", 0.0f, 0.0f }, { "Wobble In Time", 0.0f, 0.0f } });
@@ -210,6 +241,7 @@ const ModuleInfo& moduleInfo (ModuleType t)
         case ModuleType::GhostTag:   return ghost;
         case ModuleType::Crowd:      return crowd;
         case ModuleType::Transformer: return transformer;
+        case ModuleType::DrumSeq:    return drumSeq;
     }
     return filter;
 }
@@ -222,6 +254,7 @@ std::vector<int> ModuleInfo::ports() const
     if (hasNotesIn)  j.push_back (Port::notesIn);
     for (int i = 0; i < sigIns; ++i) j.push_back (Port::sigIn (i));
     if (hasAudioOut) j.push_back (Port::audioOut);
+    if (hasAuxOut)   j.push_back (Port::auxOut);
     if (hasNotesOut) j.push_back (Port::notesOut);
     if (hasModOut)   j.push_back (Port::modOut);
     if (utility)     j.push_back (Port::sigOut);
@@ -234,6 +267,7 @@ bool ModuleInfo::hasPort (int port) const
 {
     if (port == Port::audioIn)  return hasAudioIn;
     if (port == Port::audioOut) return hasAudioOut;
+    if (port == Port::auxOut)   return hasAuxOut;
     if (port == Port::modOut)   return hasModOut;
     if (port == Port::notesIn)  return hasNotesIn;
     if (port == Port::notesOut) return hasNotesOut;
@@ -385,6 +419,29 @@ int Patch::addAt (ModuleType type, juce::Point<float> position, bool asInstrumen
     if (info.utility)
         return id;                  // utilities are patched by hand
 
+    if (type == ModuleType::DrumSeq)
+    {
+        // In front of the first Drum Rack that has no sequencer yet (or loose, to patch by hand)
+        for (auto& other : modules)
+            if (other.type == ModuleType::Drums)
+            {
+                const int into = cableInto (other.id, Port::notesIn);
+                const auto* src = into >= 0 ? find (cables[(size_t) into].fromModule) : nullptr;
+                if (src == nullptr || src->type != ModuleType::DrumSeq)
+                {
+                    placeBefore (id, other.id);
+                    if (src != nullptr) connect (src->id, cables[(size_t) into].fromPort, id, Port::notesIn);
+                    else connect (inputId, Port::notesOut, id, Port::notesIn);
+                    connect (id, Port::notesOut, other.id, Port::notesIn);
+                    return id;
+                }
+            }
+        connect (inputId, Port::notesOut, id, Port::notesIn);
+        if (auto* out = find (outputId))
+            out->position.x = juce::jmax (out->position.x, find (id)->position.x + info.width + gap);
+        return id;
+    }
+
     // Keep the output at the end of the row
     if (auto* out = find (outputId))
         out->position.x = juce::jmax (out->position.x, m.position.x + info.width + gap);
@@ -392,6 +449,15 @@ int Patch::addAt (ModuleType type, juce::Point<float> position, bool asInstrumen
     if (info.isInstrument() || (type == ModuleType::Plugin && asInstrument))
     {
         wireInstrument (id);
+        // A Drum Rack added after its sequencer: take the notes of a sequencer that plays nothing yet
+        if (type == ModuleType::Drums)
+            for (auto& other : modules)
+                if (other.type == ModuleType::DrumSeq
+                    && std::none_of (cables.begin(), cables.end(), [&] (const Cable& c) { return c.fromModule == other.id && c.fromPort == Port::notesOut; }))
+                {
+                    connect (other.id, Port::notesOut, id, Port::notesIn);
+                    break;
+                }
     }
     else if (info.isEffect())
     {
@@ -426,6 +492,46 @@ int Patch::addAt (ModuleType type, juce::Point<float> position, bool asInstrumen
         }
     }
     return id;
+}
+
+// Slide a new card in just left of another: everything from there on moves right to make room
+void Patch::placeBefore (int id, int before)
+{
+    auto* m = find (id);
+    const auto* b = find (before);
+    if (m == nullptr || b == nullptr)
+        return;
+    const float x = b->position.x, room = moduleInfo (m->type).width + gap;
+    for (auto& o : modules)
+        if (o.id != id && ! moduleInfo (o.type).utility && o.position.x >= x - 1.0f)
+            o.position.x += room;
+    m->position.x = x;
+}
+
+int Patch::addSequencerFor (int drumRack)
+{
+    const int into = cableInto (drumRack, Port::notesIn);
+    if (into >= 0)
+        if (const auto* src = find (cables[(size_t) into].fromModule); src != nullptr && src->type == ModuleType::DrumSeq)
+            return src->id;
+    const auto& info = moduleInfo (ModuleType::DrumSeq);
+    Module m;
+    m.id = nextId++;
+    m.type = ModuleType::DrumSeq;
+    m.position = { 12.0f, top };
+    for (int i = 0; i < info.numParams(); ++i)
+        m.knobValues.push_back (info.defaultValue (i));
+    modules.push_back (m);
+    placeBefore (m.id, drumRack);
+    if (into >= 0)
+    {
+        const auto was = cables[(size_t) into];
+        connect (was.fromModule, was.fromPort, m.id, Port::notesIn);
+    }
+    else
+        connect (inputId, Port::notesOut, m.id, Port::notesIn);
+    connect (m.id, Port::notesOut, drumRack, Port::notesIn);
+    return m.id;
 }
 
 // An instrument plays the track's notes and starts the audio chain
@@ -513,6 +619,7 @@ void Patch::remove (int id)
     const auto& info = moduleInfo (m->type);
     int inPort = -1, outPort = -1;
     if (info.isEffect())    { inPort = Port::audioIn; outPort = Port::audioOut; }
+    else if (info.hasNotesIn && info.hasNotesOut) { inPort = Port::notesIn; outPort = Port::notesOut; }   // notes pass on
     else if (info.utility)  { outPort = Port::sigOut; for (int i = info.sigIns; --i >= 0;) if (cableInto (id, Port::sigIn (i)) >= 0) inPort = Port::sigIn (i); }
 
     const int in = inPort >= 0 ? cableInto (id, inPort) : -1;
@@ -652,6 +759,39 @@ void Patch::upgrade()
     }
 }
 
+// A rack's own step rows (one bit per sixteenth, the downbeats a little louder, the off-beats swung)
+// become pattern A of a sequencer in front of it, so the project plays just as it did.
+void Patch::moveDrumSteps (const std::vector<int>& oldRacks)
+{
+    using namespace Param;
+    for (int rack : oldRacks)
+    {
+        auto* m = find (rack);
+        if (m == nullptr)
+            continue;
+        const float swing = m->knobValues[(size_t) Drums::Swing];
+        std::array<int, 16> masks {};
+        for (int p = 0; p < 16; ++p)
+        {
+            masks[(size_t) p] = juce::roundToInt (m->knobValues[(size_t) (Drums::Steps0 + p)]);
+            m->knobValues[(size_t) (Drums::Steps0 + p)] = 0.0f;
+        }
+        m->knobValues[(size_t) Drums::Swing] = 0.0f;
+        const int seq = addSequencerFor (rack);
+        auto* s = find (seq);
+        s->knobValues[(size_t) DrumSeq::Swing] = swing;
+        for (int p = 0; p < 16; ++p)
+            for (int i = 0; i < 16; ++i)
+                if ((masks[(size_t) p] >> i) & 1)
+                {
+                    DrumSeq::Step st;
+                    st.on = true;
+                    st.velocity = i % 4 == 0 ? 121 : 95;        // 0.95 and 0.75, as the rack played them
+                    s->knobValues[(size_t) DrumSeq::stepParam (0, p, i)] = DrumSeq::encode (st);
+                }
+    }
+}
+
 //==============================================================================
 juce::var Patch::toVar() const
 {
@@ -672,6 +812,7 @@ juce::var Patch::toVar() const
         bool anyPad = false;
         for (auto& pn : m.padNames) { pads.add (pn); anyPad = anyPad || pn.isNotEmpty(); }
         if (anyPad) mo->setProperty ("pads", pads);
+        if (m.kitName.isNotEmpty()) mo->setProperty ("kit", m.kitName);
         if (m.pluginId.isNotEmpty()) mo->setProperty ("plugin", m.pluginId);
         if (m.pluginName.isNotEmpty()) mo->setProperty ("pluginName", m.pluginName);
         if (m.pluginState.getSize() > 0) mo->setProperty ("pluginState", m.pluginState.toBase64Encoding());
@@ -693,6 +834,7 @@ void Patch::fromVar (const juce::var& v)
 {
     modules.clear();
     cables.clear();
+    std::vector<int> oldRacks;
     if (auto* ms = v["modules"].getArray())
         for (auto& mv : *ms)
         {
@@ -707,6 +849,17 @@ void Patch::fromVar (const juce::var& v)
             if (auto* ks = mv["knobs"].getArray())
                 for (int i = 0; i < ks->size() && i < (int) m.knobValues.size(); ++i, ++saved)
                     m.knobValues[(size_t) i] = (float) (*ks)[i];
+            // A rack saved before the sequencer was its own device, with steps in it
+            if (m.type == ModuleType::Drums && saved <= Param::Drums::Steps0 + 16)
+                for (int p = 0; p < 16; ++p)
+                    if (juce::roundToInt (m.knobValues[(size_t) (Param::Drums::Steps0 + p)]) != 0) { oldRacks.push_back (m.id); break; }
+            // ...and with pitch over an octave each way, where it now goes two
+            if (m.type == ModuleType::Drums && saved <= Param::Drums::Steps0 + 16)
+                for (int p = 0; p < 16; ++p)
+                {
+                    auto& pv = m.knobValues[(size_t) (Param::Drums::Pitch0 + p)];
+                    pv = 0.5f + (pv - 0.5f) * 0.5f;
+                }
             // Before the expanded view the synth's two oscillators shared one wave
             if (m.type == ModuleType::Synth && saved <= Param::Synth::WaveB)
                 m.knobValues[(size_t) Param::Synth::WaveB] = m.knobValues[(size_t) Param::Synth::Wave];
@@ -714,6 +867,7 @@ void Patch::fromVar (const juce::var& v)
             if (auto* ps = mv["pads"].getArray())
                 for (int i = 0; i < ps->size() && i < 16; ++i)
                     m.padNames[(size_t) i] = (*ps)[i].toString();
+            m.kitName = mv["kit"].toString();
             m.pluginId = mv["plugin"].toString();
             m.pluginName = mv["pluginName"].toString();
             if (mv.hasProperty ("pluginState")) m.pluginState.fromBase64Encoding (mv["pluginState"].toString());
@@ -735,6 +889,7 @@ void Patch::fromVar (const juce::var& v)
     upgraded = (int) v.getProperty ("v", 1) < 2;
     if (upgraded)
         upgrade();
+    moveDrumSteps (oldRacks);
     // Anything a newer or damaged file wired that the rules don't allow is dropped
     for (size_t i = cables.size(); i-- > 0;)
     {

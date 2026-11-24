@@ -311,6 +311,7 @@ std::unique_ptr<Node> createNode (const Module& m, double sr, const Graph::Sampl
         case ModuleType::Compressor: case ModuleType::LFO:        // made by createDeviceNode
         case ModuleType::GasTube: case ModuleType::CrateDigger: case ModuleType::StringWall:
         case ModuleType::GhostTag: case ModuleType::Crowd: case ModuleType::Transformer:
+        case ModuleType::DrumSeq:
         case ModuleType::Input:
         case ModuleType::Output:     break;
     }
@@ -381,11 +382,16 @@ Graph::Graph (const Patch& patch, double sampleRate, const SampleResolver& resol
         const auto kind = patch.kindOf (c);
         if (kind == Signal::Notes)
         {
-            // Notes all come from the track input, so a notes cable just switches its instrument on
+            // The track's notes reach every instrument whose notes jack is patched; a node that makes
+            // notes of its own (the Drum Rack Sequencer) also plays them straight into what it is patched to
             if (c.toPort == Port::notesIn)
                 to->takesNotes = true;
+            if (c.fromModule != Patch::inputId)
+                from->addNoteTarget (to);
             continue;
         }
+        if (c.fromPort == Port::auxOut)
+            from->auxPatched = true;
         links.push_back ({ from, c.fromPort, to, c.toPort, kind == Signal::Mod });
     }
     for (auto& n : nodes)
@@ -434,7 +440,7 @@ void Graph::processSubBlock (const float* inL, const float* inR, float* outL, fl
     for (auto& node : nodes)
     {
         // Gather audio from cables into this node's input, and modulation into its knobs
-        node->mod.fill (0.0f);
+        std::fill (node->mod.begin(), node->mod.begin() + maxModulated, 0.0f);
         if (ext > 0.0001f && node->isInstrument())
             node->mod[(size_t) (node->type == ModuleType::Synth ? 3 : 0)] += ext * 0.6f;
         if (node.get() == input)
@@ -453,6 +459,9 @@ void Graph::processSubBlock (const float* inL, const float* inR, float* outL, fl
         for (auto& link : links)
         {
             if (link.to != node.get()) continue;
+            const bool aux = link.fromPort == Port::auxOut;
+            const float* fromL = aux ? link.from->auxL.data() : link.from->bufL.data();
+            const float* fromR = aux ? link.from->auxR.data() : link.from->bufR.data();
             if (Port::isSigIn (link.toPort) && utility != nullptr)
             {
                 const auto in = (size_t) juce::jlimit (0, Port::maxSigIns - 1, link.toPort - Port::sigInBase);
@@ -461,22 +470,22 @@ void Graph::processSubBlock (const float* inL, const float* inR, float* outL, fl
                 else
                     for (int i = 0; i < n; ++i)
                     {
-                        utility->inL[in][(size_t) i] += link.from->bufL[(size_t) i];
-                        utility->inR[in][(size_t) i] += link.from->bufR[(size_t) i];
+                        utility->inL[in][(size_t) i] += fromL[i];
+                        utility->inR[in][(size_t) i] += fromR[i];
                     }
             }
             else if (link.toPort == Port::audioIn)
             {
                 for (int i = 0; i < n; ++i)
                 {
-                    node->bufL[(size_t) i] += link.from->bufL[(size_t) i];
-                    node->bufR[(size_t) i] += link.from->bufR[(size_t) i];
+                    node->bufL[(size_t) i] += fromL[i];
+                    node->bufR[(size_t) i] += fromR[i];
                 }
             }
             else if (Port::isModIn (link.toPort))
             {
                 const int kn = link.toPort - Port::modInBase;
-                if (kn < maxKnobs)
+                if (kn < maxModulated)
                     node->mod[(size_t) kn] += link.from->modValue();
             }
         }

@@ -25,6 +25,7 @@ juce::var ExpandedDevice::lookToVar() const
     auto* o = new juce::DynamicObject();
     o->setProperty ("style", look().style);
     o->setProperty ("glow", look().glow);
+    o->setProperty ("padColours", look().padColours);
     return juce::var (o);
 }
 
@@ -33,12 +34,22 @@ void ExpandedDevice::lookFromVar (const juce::var& v)
     if (! v.isObject()) return;
     look().style = juce::jlimit (0, 2, (int) v.getProperty ("style", 0));
     look().glow = juce::jlimit (0.0f, 1.5f, (float) v.getProperty ("glow", 1.0f));
+    look().padColours = (bool) v.getProperty ("padColours", true);
 }
 
 void ExpandedDevice::open (int track, int moduleId)
 {
     device = std::make_unique<DeviceViews::Device> (DeviceViews::Device { ctx, track, moduleId, {}, {} });
-    device->patchChanged = [this] { if (onPatchChanged && device) onPatchChanged (device->track); rebuild(); };
+    // Later, not now: a control on the wall may be what asked, and the wall is about to be rebuilt
+    device->patchChanged = [this]
+    {
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<ExpandedDevice> (this)]
+        {
+            if (safe == nullptr || safe->device == nullptr) return;
+            if (safe->onPatchChanged) safe->onPatchChanged (safe->device->track);
+            safe->rebuild();
+        });
+    };
     device->loadAudio = [this] { loadAudio(); };
     generation = ctx.generation;
     if (ctx.selectedTrack != track) ctx.selectTrack (track);
@@ -373,4 +384,31 @@ bool ExpandedDevice::keyStateChanged (bool)
         else ++it;
     }
     return used;
+}
+
+//==============================================================================
+// Files dropped on the wall
+
+bool ExpandedDevice::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    if (built == nullptr || ! built->dropFiles) return false;
+    for (auto& f : files)
+        if (juce::File (f).hasFileExtension ("wav;aif;aiff;flac;mp3;ogg")) return true;
+    return false;
+}
+
+void ExpandedDevice::fileDragMove (const juce::StringArray&, int x, int y)
+{
+    if (built != nullptr && built->dropHover) built->dropHover (toWall ({ (float) x, (float) y }));
+}
+
+void ExpandedDevice::fileDragExit (const juce::StringArray&)
+{
+    if (built != nullptr && built->dropHover) built->dropHover (std::nullopt);
+}
+
+void ExpandedDevice::filesDropped (const juce::StringArray& files, int x, int y)
+{
+    if (built != nullptr && built->dropFiles) built->dropFiles (toWall ({ (float) x, (float) y }), files);
+    if (built != nullptr && built->dropHover) built->dropHover (std::nullopt);
 }

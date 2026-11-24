@@ -28,4 +28,5 @@ namespace DeviceCards
     };
 
     std::unique_ptr<Card> make (AppContext&, int track, int moduleId, float width, float height);
+    int drumPadAt (juce::Point<float> cardPoint);     // the Drum Rack card's pad under a point on the card, or -1
 }

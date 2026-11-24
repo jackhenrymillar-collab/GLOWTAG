@@ -10,8 +10,8 @@
 
 enum class ModuleType { Input, Output, Sampler, Synth, Drums, Filter, Drive, Delay, Reverb, EQ, Compressor, LFO, Plugin,
                         Attenuator, Mixer, Inverter, Crossfade, Slew,
-                        GasTube, CrateDigger, StringWall, GhostTag, Crowd, Transformer };
-constexpr int numModuleTypes = 24;
+                        GasTube, CrateDigger, StringWall, GhostTag, Crowd, Transformer, DrumSeq };
+constexpr int numModuleTypes = 25;
 
 // What a jack carries. Notes are the track's MIDI: pitch, velocity, gate and the rest, from clips, the
 // keyboard and the sequencer rack. A utility's signal jacks are `Any`: they take on whatever they are
@@ -26,6 +26,7 @@ namespace Port
     constexpr int modOut   = 2;
     constexpr int notesIn  = 3;
     constexpr int notesOut = 4;
+    constexpr int auxOut   = 5;                     // a second sound output (the Drum Rack's pads set to their own out)
     constexpr int modInBase = 10;                     // modInBase + k = modulation input for knob k
     constexpr int sigInBase = 40;                     // sigInBase + i = a utility's signal input i
     constexpr int sigOut    = 60;                     // a utility's signal output
@@ -39,7 +40,7 @@ namespace Port
     // What the jack carries by its own nature (`Any` for a utility's signal jacks)
     inline Signal kind (int port)
     {
-        if (port == audioIn || port == audioOut) return Signal::Audio;
+        if (port == audioIn || port == audioOut || port == auxOut) return Signal::Audio;
         if (port == notesIn || port == notesOut) return Signal::Notes;
         if (port == modOut || isModIn (port))    return Signal::Mod;
         return Signal::Any;
@@ -56,6 +57,7 @@ struct ModuleInfo
     bool hasNotesIn = false, hasNotesOut = false;
     int sigIns = 0;                                   // utilities: signal inputs (they all have one signal output)
     bool utility = false;                             // a half-height module on the utility row
+    bool hasAuxOut = false;                           // a second sound output (Port::auxOut)
 
     // Controls only the expanded view shows, stored after the knobs. `fresh` is the value on a new
     // module; `legacy` is what a project saved before the control existed gets, chosen so it sounds
@@ -83,6 +85,7 @@ struct Module
     std::vector<float> knobValues;
     juce::String sampleName;                          // Sampler: built-in sample name, or a file path
     std::array<juce::String, 16> padNames;            // Drum Rack: sample per pad
+    juce::String kitName;                             // Drum Rack: the kit it was last saved as or loaded from
     juce::String pluginId, pluginName;                // Plugin: AU / VST3 identifier and display name
     juce::MemoryBlock pluginState;                    // Plugin: its saved state
 };
@@ -157,4 +160,10 @@ private:
     void wireInstrument (int id);
     void joinChain (int fromModule, int fromPort, bool replaceTrackSound);
     void upgrade();                                   // bring a patch saved before note cables up to date
+    void moveDrumSteps (const std::vector<int>& oldRacks);
+    void placeBefore (int id, int before);   // racks saved with their own step rows get a sequencer
+public:
+    // Put a Drum Rack Sequencer in front of a Drum Rack: the notes that went into the rack now go through
+    // the sequencer, which adds its steps. Returns the sequencer's id (an existing one if there is one).
+    int addSequencerFor (int drumRack);
 };

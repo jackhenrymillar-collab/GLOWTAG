@@ -2,13 +2,15 @@
 #include "../Engine/Samples.h"
 #include "../Engine/PluginHost.h"
 #include "DeviceCards.h"
+#include "../Engine/DrumKit.h"
 
 namespace
 {
     const std::vector<BrowserPanel::Item> devices = {
         { "Sampler",    "Chop, slice and play",   Icon::Sampler,    Pal::Rose },
         { "Synth",      "Wavetable voice",        Icon::Synth,      Pal::Violet },
-        { "Drum Rack",  "16 pads, step grid",     Icon::Drums,      Pal::Amber },
+        { "Drum Rack",  "16 pads, analogue voices", Icon::Drums,    Pal::Amber },
+        { "Drum Rack Sequencer", "Steps for the drum rack", Icon::Drums, Pal::Gold },
         { "Filter",     "Ladder low / high pass", Icon::Filter,     Pal::Sky },
         { "Delay",      "Tempo-synced echoes",    Icon::Delay,      Pal::Blue },
         { "Reverb",     "Rooms to halls",         Icon::Reverb,     Pal::Ice },
@@ -24,7 +26,7 @@ namespace
         { "Transformer", "Circuit bending, broken parts",    Icon::Transformer, Pal::Green },
     };
 
-    const ModuleType deviceTypes[] = { ModuleType::Sampler, ModuleType::Synth, ModuleType::Drums, ModuleType::Filter,
+    const ModuleType deviceTypes[] = { ModuleType::Sampler, ModuleType::Synth, ModuleType::Drums, ModuleType::DrumSeq, ModuleType::Filter,
                                        ModuleType::Delay, ModuleType::Reverb, ModuleType::EQ, ModuleType::Compressor,
                                        ModuleType::Drive, ModuleType::LFO,
                                        ModuleType::GasTube, ModuleType::CrateDigger, ModuleType::StringWall,
@@ -158,7 +160,41 @@ int BrowserPanel::itemAt (juce::Point<int> p) const
 void BrowserPanel::mouseMove (const juce::MouseEvent& e)
 {
     const int i = itemAt (e.getPosition());
-    if (i != hovered) { hovered = i; repaint(); }
+    if (i != hovered)
+    {
+        hovered = i;
+        repaint();
+        // A sample plays as the pointer comes onto it
+        if (tab == 0 && i >= 0 && Neon::now() - hoveredAt > 0.12) previewSample (i);
+        hoveredAt = Neon::now();
+    }
+}
+
+void BrowserPanel::previewSample (int index)
+{
+    const auto& bank = Samples::bank();
+    if (index >= 0 && index < (int) bank.size())
+        ctx.engine.preview (bank[(size_t) index].data);
+}
+
+void BrowserPanel::mouseDrag (const juce::MouseEvent& e)
+{
+    // Drag a sample onto a Drum Rack pad, a Sampler or the Crate Digger
+    if (tab != 0 || chosen < 0 || e.getDistanceFromDragStart() < 6) return;
+    if (auto* container = juce::DragAndDropContainer::findParentDragContainerFor (this); container != nullptr && ! container->isDragAndDropActive())
+    {
+        const auto& it = items()[(size_t) chosen];
+        juce::Image img (juce::Image::ARGB, 160, 28, true);
+        {
+            juce::Graphics ig (img);
+            ig.setColour (juce::Colour (0xcc1b1c1f));
+            ig.fillRoundedRectangle (0, 0, 160, 28, 8);
+            ig.setColour (Theme::get().themeColour());
+            ig.setFont (Theme::get().body (13.0f));
+            ig.drawText (it.name, 10, 0, 140, 28, juce::Justification::centredLeft);
+        }
+        container->startDragging ("sample:" + it.name, this, juce::ScaledImage (img), true);
+    }
 }
 
 void BrowserPanel::mouseExit (const juce::MouseEvent&)
@@ -170,6 +206,7 @@ void BrowserPanel::mouseExit (const juce::MouseEvent&)
 void BrowserPanel::mouseDown (const juce::MouseEvent& e)
 {
     chosen = itemAt (e.getPosition());
+    if (tab == 0) previewSample (chosen);
     repaint();
 }
 
@@ -226,7 +263,13 @@ void BrowserPanel::paint (juce::Graphics& g)
 
             const auto& it = list[(size_t) i];
             const bool lit = i == hovered || i == chosen;
-            const auto c = th.isRainbow() ? th.pal (it.pal) : theme;
+            auto c = th.isRainbow() ? th.pal (it.pal) : theme;
+            // Drum samples take the pad colour of the range they play
+            if (tab == 0 && Neon::look().padColours && it.detail.startsWith ("Drums"))
+            {
+                const auto range = DrumKit::rangeOfName (it.name);
+                c = range == DrumKit::Range::Low ? juce::Colour (0xffff6a2a) : range == DrumKit::Range::High ? juce::Colour (0xff38a8ff) : juce::Colour (0xffff3fa4);
+            }
 
             // A faint pane under the pointer or the chosen row, nothing more
             if (real && lit)

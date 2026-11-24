@@ -1,6 +1,7 @@
 #include "DeviceCards.h"
 #include "DeviceViewsCommon.h"
 #include "../Engine/Samples.h"
+#include "../Engine/DrumKit.h"
 
 namespace DeviceCards
 {
@@ -69,6 +70,16 @@ void art (juce::Graphics& g, ModuleType type, float x, float y, const Colour* c,
             for (int i = 0; i < 4; ++i)
                 tube (g, roundRect (x + (float) (i % 2) * 34, y + (float) (i / 2) * 25, 28, 20, 4), c[i % 3], w (0.65f));
             break;
+        case ModuleType::DrumSeq:
+        {
+            // A little step grid with a playhead running across it
+            const int head = (int) std::fmod (t * 4.0f, 8.0f);
+            static const int lit[4] = { 0x11, 0x44, 0xaa, 0x29 };
+            for (int r = 0; r < 4; ++r)
+                for (int k = 0; k < 8; ++k)
+                    bulb (g, x + 4 + (float) k * 8, y + 6 + (float) r * 11, k == head ? C::white : c[r % 3], ((lit[r] >> k) & 1) ? 0.9f : (k == head ? 0.35f : 0.08f), 2.6f);
+            break;
+        }
         case ModuleType::Filter:
             for (int i = 0; i < 5; ++i) tube (g, Line { { x + 8, y + 4 + (float) i * 9 }, { x + 40, y + 4 + (float) i * 9 } }, c[0], w (0.6f));
             tube (g, Lines { Line { { x + 8, y }, { x + 8, y + 44 } }, Line { { x + 40, y }, { x + 40, y + 44 } } }, c[1], w (0.6f));
@@ -209,7 +220,8 @@ String line (ModuleType t)
     {
         case ModuleType::Sampler:     return "chop, slice and play";
         case ModuleType::Synth:       return "analog voice";
-        case ModuleType::Drums:       return "16 pads, step row";
+        case ModuleType::Drums:       return "sixteen pads, analogue voices";
+        case ModuleType::DrumSeq:     return "steps for the drum rack";
         case ModuleType::Filter:      return "ladder, low to high pass";
         case ModuleType::Drive:       return "tube, tape, fuzz, fold";
         case ModuleType::Delay:       return "tape echoes";
@@ -238,7 +250,8 @@ void palette (ModuleType t, Colour out[3])
     {
         case ModuleType::Sampler:     set (C::PK, C::YL, C::BL); break;
         case ModuleType::Synth:       set (C::VI, C::PK, C::CY); break;
-        case ModuleType::Drums:       set (C::OR, C::YL, C::PK); break;
+        case ModuleType::Drums:       set (C::YL, C::PK, C::CY); break;
+        case ModuleType::DrumSeq:     set (C::YL, C::CY, C::PK); break;
         case ModuleType::Filter:      set (C::CY, C::BL, C::PK); break;
         case ModuleType::Drive:       set (C::OR, C::PK, C::YL); break;
         case ModuleType::Delay:       set (C::BL, C::CY, C::YL); break;
@@ -265,7 +278,8 @@ float width (ModuleType t)
     {
         case ModuleType::Sampler:     return 440;
         case ModuleType::Synth:       return 480;
-        case ModuleType::Drums:       return 420;
+        case ModuleType::Drums:       return 640;
+        case ModuleType::DrumSeq:     return 380;
         case ModuleType::Filter:      return 320;
         case ModuleType::Drive:       return 300;
         case ModuleType::Delay:       return 330;
@@ -456,101 +470,212 @@ namespace
         d.at (4, 3, top, 2, Release, "release", [] (float v) { return F::time (DeviceViews::expMap (v, 0.01f, 8.0f)); });
     }
 
+    // The Drum Rack card: mini pads, the kit's block and the chosen pad's block side by side
+    constexpr float cPW = 38, cPH = 34, cGP = 4, cPadTop = 2;
+    juce::Point<float> cardPadPos (int i) { return { (float) (i % 4) * (cPW + cGP), cPadTop + (float) (3 - i / 4) * (cPH + cGP) }; }
+    int cardPadAt (float lx, float ly)
+    {
+        for (int i = 0; i < 16; ++i)
+        {
+            const auto p = cardPadPos (i);
+            if (lx >= p.x && lx < p.x + cPW && ly >= p.y && ly < p.y + cPH) return i;
+        }
+        return -1;
+    }
+
     void drumsBody (CardBody& d)
     {
         using namespace Param::Drums;
         auto* dev = &d.card.dev;
+        auto* wall = &d.b.wall;
         auto sel = [dev] { return juce::jlimit (0, 15, dev->choice (Selected)); };
-        auto padName = [dev] (int i)
+        auto padName = [dev] (int i) { auto* m = dev->module(); return m != nullptr ? DrumKit::padName (*m, i).toLowerCase() : String(); };
+        auto silent = [dev] (int i)
+        {
+            bool solo = false;
+            for (int p = 0; p < 16; ++p) solo = solo || dev->on (Solo0 + p);
+            return dev->on (Mute0 + i) || (solo && ! dev->on (Solo0 + i));
+        };
+
+        // The pads: hit high for loud
+        auto& a = d.g.dragArea ({ 0, cPadTop, 4 * cPW + 3 * cGP, 4 * cPH + 3 * cGP }, Cursor::PointingHandCursor);
+        a.tip = [sel, padName] { return "pad " + String (sel() + 1) + "   " + padName (sel()); };
+        a.down = [dev, wall, padName] (float lx, float ly) -> std::optional<Gesture>
+        {
+            const int i = cardPadAt (lx, ly);
+            if (i < 0) return Gesture {};
+            dev->setRaw (Selected, (float) i);
+            const float vel = clampf (1.0f - (ly - cardPadPos (i).y) / cPH * 0.8f);
+            dev->note (36 + i, true, juce::jmax (0.2f, vel));
+            wall->say (padName (i) + "   velocity " + String (juce::roundToInt (juce::jmax (0.2f, vel) * 127.0f)));
+            Gesture gs;
+            gs.up = [dev, i] { dev->note (36 + i, false); };
+            return gs;
+        };
+
+        // The kit's block
+        const float kx = 184, px = 410;
+        auto loadKit = [dev, wall] (int delta)
         {
             auto* m = dev->module();
-            const auto n = m != nullptr && m->padNames[(size_t) i].isNotEmpty() ? m->padNames[(size_t) i] : Samples::defaultPads()[(size_t) i];
-            return juce::File (n).getFileNameWithoutExtension().toLowerCase();
+            if (m == nullptr) return;
+            const auto kits = DrumKit::list();
+            const int at = DrumKit::indexOf (kits, m->kitName), n = (int) kits.size();
+            if (n == 0) return;
+            const int next = at < 0 ? (delta > 0 ? 0 : n - 1) : ((at + delta) % n + n) % n;
+            if (DrumKit::load (*m, kits[(size_t) next]))
+            {
+                dev->ctx.touched();
+                wall->say ("kit   " + kits[(size_t) next].name);
+                if (dev->patchChanged) dev->patchChanged();
+            }
         };
-        const float pw = 32, ph = 21;
-        for (int i = 0; i < 16; ++i)
+        auto& prev = d.g.toggle ("<", kx + 150, 10, [] { return true; }, [loadKit] (bool) { loadKit (-1); });
+        prev.size = 15; prev.tip = [] { return String ("the kit before"); };
+        auto& next = d.g.toggle (">", kx + 176, 10, [] { return true; }, [loadKit] (bool) { loadKit (1); });
+        next.size = 15; next.tip = [] { return String ("the next kit"); };
+        d.fader (Tune, "tune", [] (float v) { return F::signedVal ((float) juce::roundToInt ((v - 0.5f) * 24), " st", 0); }, kx, 30, 92, false, true);
+        d.fader (Gain, "gain", [] (float v) { return F::db (v / 0.8f); }, kx + 114, 30, 92);
+        d.fader (Decay, "decay", pct, kx, 64, 92);
+        d.fader (Snap, "snap", pct, kx + 114, 64, 92);
+        d.fader (Dirt, "dirt", pct, kx, 98, 92);
+        d.fader (VelSens, "velocity", pct, kx + 114, 98, 92, true);
+        auto chooser = std::make_shared<std::unique_ptr<juce::FileChooser>>();
+        auto& fill = d.g.toggle ("fill from folder", kx, 146, [] { return true; }, [dev, wall, chooser] (bool)
         {
-            const int row = 3 - i / 4, col = i % 4;     // pad 0 bottom-left, like a drum machine
-            auto& a = d.g.dragArea ({ (float) col * (pw + 5), -10 + (float) row * (ph + 5), pw, ph }, Cursor::PointingHandCursor);
-            a.down = [dev, i] (float, float) -> std::optional<Gesture>
+            *chooser = std::make_unique<juce::FileChooser> ("Fill the pads from a folder of samples", juce::File());
+            (*chooser)->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [dev, wall] (const juce::FileChooser& fc)
             {
-                dev->setRaw (Selected, (float) i);
-                dev->note (36 + i, true, 0.9f);
-                Gesture gs;
-                gs.up = [dev, i] { dev->note (36 + i, false); };
-                return gs;
-            };
-            a.tip = [padName, i] { return "pad " + String (i + 1) + "   " + padName (i); };
-        }
-        const float rx = 4 * (pw + 5) + 14, rw = d.W - rx;
-        // The chosen pad's level and pitch
+                auto* m = dev->module();
+                const auto dir = fc.getResult();
+                if (m == nullptr || ! dir.isDirectory()) return;
+                const int n = DrumKit::fillFromFolder (*m, dir);
+                wall->say (n > 0 ? String (n) + " pads filled" : String ("no samples in that folder"));
+                if (n > 0) { dev->ctx.touched(); if (dev->patchChanged) dev->patchChanged(); }
+            });
+        });
+        fill.size = 13; fill.ci = 1; fill.isNew = true;
+
+        // The chosen pad's block
+        auto perPad = [&] (int base, const String& name, float x, float y, float def, bool bipolar, std::function<String (float)> fmt) -> Item&
         {
-            const float cw = (rw - 14) / 2;
-            auto& lv = d.g.fader (rx, 26 + 11, rx + cw, 26 + 11);
-            lv.text = "level";
-            lv.def = 0.8f;
-            lv.get = [dev, sel] { return dev->get (Level0 + sel()); };
-            lv.set = [dev, sel] (float v) { dev->set (Level0 + sel(), v); };
-            lv.tip = [dev, sel, padName] { return padName (sel()) + "   level " + F::pct (dev->get (Level0 + sel())); };
-            auto& pt = d.g.fader (rx + cw + 14, 26 + 11, rx + rw, 26 + 11);
-            pt.text = "pitch";
-            pt.bipolar = true;
-            pt.def = 0.5f;
-            pt.get = [dev, sel] { return dev->get (Pitch0 + sel()); };
-            pt.set = [dev, sel] (float v) { dev->set (Pitch0 + sel(), v); };
-            pt.tip = [dev, sel, padName] { return padName (sel()) + "   pitch " + F::signedVal ((dev->get (Pitch0 + sel()) - 0.5f) * 24.0f, " st", 1); };
-        }
+            auto& it = d.g.fader (x, y + 11, x + 92, y + 11);
+            it.text = name; it.def = def; it.bipolar = bipolar;
+            it.get = [dev, sel, base] { return dev->get (base + sel()); };
+            it.set = [dev, sel, base] (float v) { dev->set (base + sel(), v); };
+            it.tip = [dev, sel, base, name, fmt, padName] { return padName (sel()) + "   " + name + "   " + fmt (dev->get (base + sel())); };
+            return it;
+        };
+        perPad (Level0, "level", px, 30, 0.8f, false, [] (float v) { return F::db (v / 0.8f); });
+        perPad (Pitch0, "pitch", px + 106, 30, 0.5f, true, [] (float v) { return F::signedVal ((float) juce::roundToInt ((v - 0.5f) * 48), " st", 0); });
+        perPad (PDecay0, "decay", px, 64, 1.0f, false, [] (float v) { return v >= 0.99f ? String ("rings out") : F::pct (v); });
+        perPad (Cutoff0, "cutoff", px + 106, 64, 1.0f, false, [] (float v) { return F::hz (Param::Drums::cutoffHz (v)); });
+        perPad (Drive0, "drive", px, 98, 0.0f, false, pct);
+        perPad (Pan0, "pan", px + 106, 98, 0.5f, true, [] (float v) { const int p = juce::roundToInt ((v - 0.5f) * 200); return p == 0 ? String ("centre") : (p < 0 ? "left " : "right ") + String (std::abs (p)); });
+        auto& mute = d.g.toggle ("mute", px, 146, [dev, sel] { return dev->on (Mute0 + sel()); }, [dev, sel] (bool v) { dev->setRaw (Mute0 + sel(), v ? 1.0f : 0.0f); });
+        mute.size = 14; mute.ci = 1;
+        auto& solo = d.g.toggle ("solo", px + 48, 146, [dev, sel] { return dev->on (Solo0 + sel()); }, [dev, sel] (bool v) { dev->setRaw (Solo0 + sel(), v ? 1.0f : 0.0f); });
+        solo.size = 14; solo.ci = 1;
+        auto& voice = d.g.words ({ { 1, "voice" } }, px + 100, 146);
+        voice.pre = "voice"; voice.size = 14; voice.ci = 2; voice.toggle = false;
+        voice.dyn = [dev, sel] { return String (voiceName (dev->choice (Voice0 + sel()))); };
+        voice.getChoice = [] { return 1; };
+        voice.setChoice = [dev, sel, wall] (int)
         {
-            CardBody r { d.card, d.b, d.g, rw, d.ox + rx, d.oy, d.knobs };
-            auto put = [&] (int c, int row, int param, const String& label)
-            {
-                const float cw = (rw - 14) / 2;
-                r.fader (param, label, pct, (float) c * (cw + 14), 64 + (float) row * 36, cw);
-            };
-            // r's x is relative to rx: shift the items it makes
-            const size_t before = d.g.items.size();
-            put (0, 0, Tune, "tune"); put (1, 0, Decay, "decay");
-            put (0, 1, Snap, "snap"); put (1, 1, Gain, "gain");
-            for (size_t i = before; i < d.g.items.size(); ++i)
-            {
-                auto& it = *d.g.items[i];
-                for (auto& p : it.pts) p.x += rx;
-                it.lx += rx;
-            }
-        }
-        // The chosen pad's step row, along the bottom
-        const float W = d.W, sy = 154;
-        for (int i = 0; i < 16; ++i)
+            const int v = (dev->choice (Voice0 + sel()) + 1) % numVoices;
+            dev->setRaw (Voice0 + sel(), (float) v);
+            wall->say (v == Sample ? String ("plays its sample") : String ("analogue ") + voiceName (v));
+        };
+        voice.tip = [] { return String ("click for the next voice: its sample, or an analogue kick, snare, hat, clap, tom or perc"); };
+
+        d.g.draw = [dev, sel, padName, silent, kx, px] (juce::Graphics& g, double, float, const Colour* c)
         {
-            const float bx = 6 + (float) i * ((W - 12) / 15.0f);
-            auto& a = d.g.dragArea ({ bx - 8, sy - 9, 16, 18 }, Cursor::PointingHandCursor);
-            a.down = [dev, sel, i] (float, float) -> std::optional<Gesture>
-            {
-                const int p = Steps0 + sel(), mask = juce::roundToInt (dev->get (p));
-                dev->setRaw (p, (float) (mask ^ (1 << i)));
-                return Gesture {};
-            };
-            a.tip = [i] { return "step " + String (i + 1); };
-        }
-        d.g.draw = [dev, sel, padName, rx, W, sy, pw, ph] (juce::Graphics& g, double t, float, const Colour* c)
-        {
+            auto* m = dev->module();
+            const auto pc = m != nullptr ? DeviceViews::padColours (*m) : std::array<Colour, 16> {};
+            const auto* node = dev->live();
             const int s = sel();
-            auto* node = dev->live();
             for (int i = 0; i < 16; ++i)
             {
-                const int row = 3 - i / 4, col = i % 4;
-                const bool on = i == s;
-                tube (g, roundRect ((float) col * (pw + 5), -10 + (float) row * (ph + 5), pw, ph, 4), c[i % 3], w (0.6f, ! on));
+                const auto p = cardPadPos (i);
+                const bool me = i == s;
+                const auto col = pc[(size_t) i].isTransparent() ? c[me ? 1 : 0] : pc[(size_t) i];
+                const float lv = node != nullptr ? clampf (node->views[(size_t) i].level.load() * (0.4f + 0.9f * node->views[(size_t) i].velocity.load())) : 0.0f;
+                if (lv > 0.03f) { g.setColour (rgba (col, 0.55f * lv)); g.fillRoundedRectangle (p.x + 2, p.y + 2, cPW - 4, cPH - 4, 6); }
+                if (silent (i)) { g.setColour (juce::Colours::black.withAlpha (0.4f)); g.fillRoundedRectangle (p.x + 2, p.y + 2, cPW - 4, cPH - 4, 6); }
+                TubeOptions o = w (me ? 0.95f : 0.5f);
+                o.closed = true;
+                o.style = me ? 0 : (look().style == 1 ? 1 : 0);
+                tube (g, roundRect (p.x, p.y, cPW, cPH, 7), me ? mix (col, C::white, 0.2f) : col, o);
             }
-            text (g, padName (s), rx, 4, 19, c[1], 1.0f);
-            const int mask = juce::roundToInt (dev->get (Steps0 + s));
-            const int step = node != nullptr && dev->ctx.engine.isPlaying() ? (int) std::fmod (dev->ctx.playheadBeats() * 4.0, 16.0) : -1;
-            juce::ignoreUnused (t);
-            for (int i = 0; i < 16; ++i)
+            tube (g, Lines { Line { { kx - 12, 0 }, { kx - 12, 150 } }, Line { { px - 12, 0 }, { px - 12, 150 } } }, c[0], w (0.45f, true));
+            text (g, "kit", kx, 10, 15, c[0], 0.9f);
+            const String kit = m != nullptr && m->kitName.isNotEmpty() ? m->kitName.toLowerCase() : String ("factory");
+            text (g, kit.substring (0, 14), kx + 32, 10, 13, c[1], 0.6f);
+            float nx = px;
+            if (! pc[(size_t) s].isTransparent()) { bulb (g, px + 4, 5, pc[(size_t) s], 1.0f, 4); nx += 14; }
+            const float tw = text (g, padName (s).substring (0, 16), nx, 10, 15, c[0], 0.9f);
+            text (g, "pad " + String (s + 1), nx + tw + 10, 10, 12, c[2], 0.45f);
+        };
+    }
+
+    // The Drum Rack Sequencer card: all sixteen rows in miniature, its pattern and groove
+    void drumSeqBody (CardBody& d)
+    {
+        using namespace Param::DrumSeq;
+        auto* dev = &d.card.dev;
+        auto* wall = &d.b.wall;
+        auto cx = [] (int s) { return 4.0f + (float) s * 19.5f + (float) (s / 4) * 4.0f; };
+        auto ry = [dev] (int i)
+        {
+            const auto o = DeviceViews::rowOrder (DeviceViews::drumRackFor (*dev));
+            return 4.0f + (float) o.posOf[(size_t) i] * 7.6f + (float) o.groupOf[(size_t) i] * 4.0f;
+        };
+        auto pattern = [dev] { return juce::jlimit (0, patterns - 1, dev->choice (Pattern)); };
+        auto len = [dev] (int row) { return juce::jlimit (1, steps, juce::roundToInt (dev->get (Length0 + row))); };
+        auto& a = d.g.dragArea ({ 0, 0, 320, 134 }, Cursor::PointingHandCursor);
+        a.tip = [] { return String ("click a lamp to set a step, double-click the card for every control"); };
+        a.down = [dev, wall, cx, ry, pattern, len] (float lx, float ly) -> std::optional<Gesture>
+        {
+            int row = -1;
+            for (int r = 0; r < rows; ++r) if (std::abs (ry (r) - ly) < 3.8f) row = r;
+            if (row < 0) return Gesture {};
+            int s = -1;
+            float best = 10.0f;
+            for (int k = 0; k < steps; ++k) if (std::abs (cx (k) - lx) < best) { best = std::abs (cx (k) - lx); s = k; }
+            if (s < 0 || s >= len (row)) return Gesture {};
+            dev->setRaw (Selected, (float) row);
+            const int param = stepParam (pattern(), row, s);
+            auto st = decode (dev->get (param));
+            st.on = ! st.on;
+            dev->setRaw (param, encode (st));
+            wall->say ("step " + String (s + 1) + (st.on ? "   on" : "   off"));
+            return Gesture {};
+        };
+        auto& on = d.b.toggle (d.g, Play, "on", 322, 14);
+        on.size = 14; on.ci = 1;
+        auto& pat = d.words (Pattern, { "a", "b", "c", "d" }, 0, 156, 1);
+        pat.pre = "pattern"; pat.size = 14; pat.gap = 8;
+        d.fader (Swing, "swing", [] (float v) { return String (juce::roundToInt (50 + v * 25)) + "%"; }, 150, 138, 86);
+        d.fader (Humanise, "humanise", pct, 258, 138, 90);
+        d.g.draw = [dev, cx, ry, pattern, len] (juce::Graphics& g, double, float, const Colour* c)
+        {
+            const auto* rack = DeviceViews::drumRackFor (*dev);
+            const auto pc = rack != nullptr ? DeviceViews::padColours (*rack) : std::array<Colour, 16> {};
+            auto* node = dev->live();
+            const bool playing = node != nullptr && dev->ctx.engine.isPlaying();
+            const int pat = pattern(), chosen = juce::jlimit (0, rows - 1, dev->choice (Selected));
+            for (int i = 0; i < rows; ++i)
             {
-                const float bx = 6 + (float) i * ((W - 12) / 15.0f);
-                const bool on = (mask >> i) & 1;
-                bulb (g, bx, sy, i == step ? c[1] : c[0], on ? (i == step ? 1.0f : 0.75f) : (i == step ? 0.25f : 0.0f), 4.2f);
+                const float y = ry (i);
+                const auto col = pc[(size_t) i].isTransparent() ? c[0] : pc[(size_t) i];
+                if (i == chosen) { g.setColour (rgba (col, 0.1f)); g.fillRoundedRectangle (0, y - 3.6f, 318, 7.2f, 3); }
+                const int ph = playing ? node->views[(size_t) i].slice.load() : -1;
+                for (int s = 0; s < len (i); ++s)
+                {
+                    const auto st = decode (dev->get (stepParam (pat, i, s)));
+                    if (st.on || ph == s) bulb (g, cx (s), y, ph == s ? C::white : col, st.on ? 0.35f + 0.65f * (float) st.velocity / 127.0f : 0.35f, 2.8f);
+                    else { g.setColour (Colour (0xff2a2b30)); g.fillEllipse (cx (s) - 1.6f, y - 1.6f, 3.2f, 3.2f); }
+                }
             }
         };
     }
@@ -978,6 +1103,7 @@ std::unique_ptr<Card> make (AppContext& ctx, int track, int moduleId, float widt
         case ModuleType::Sampler:     samplerBody (body); break;
         case ModuleType::Synth:       synthBody (body); break;
         case ModuleType::Drums:       drumsBody (body); break;
+        case ModuleType::DrumSeq:     drumSeqBody (body); break;
         case ModuleType::Filter:      filterBody (body); break;
         case ModuleType::Drive:       driveBody (body); break;
         case ModuleType::Delay:       delayBody (body); break;
@@ -1002,5 +1128,10 @@ std::unique_ptr<Card> make (AppContext& ctx, int track, int moduleId, float widt
     for (auto& it : g.items)
         if (it->kind == Item::words && it->size > 15.0f && it->toggle == false) it->size = 15.0f;
     return card;
+}
+
+int drumPadAt (juce::Point<float> cardPoint)
+{
+    return cardPadAt (cardPoint.x - side, cardPoint.y - bodyTop);
 }
 }
