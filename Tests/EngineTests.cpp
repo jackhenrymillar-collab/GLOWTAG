@@ -9,6 +9,7 @@
 #include "Engine/VisListener.h"
 #include "Engine/DeviceParams.h"
 #include "Engine/DrumKit.h"
+#include "Engine/NoteEdit.h"
 #include "UI/DeviceWallModel.h"
 #include <iostream>
 
@@ -1520,6 +1521,51 @@ int main()
                && q.tracks[0]->lanes[0].target == AutoTarget { AutoTarget::mixer, 0, MixParam::volume }, "Automation: lanes save and load");
         check (q.tracks[0]->shown == t.shown, "Automation: the shown lane is remembered");
         check (q.visTrack && q.visLanes.size() == 1 && std::abs (q.visLanes[0].points[0].curve - 0.5f) < 1.0e-6f, "Automation: the visualiser's lanes save and load");
+    }
+
+    std::cout << "Piano roll note editing\n";
+    {
+        auto note = [] (double st, double len, int p, float v = 0.8f) { Note n; n.start = st; n.length = len; n.pitch = p; n.velocity = v; return n; };
+        check (NoteEdit::gridName (NoteEdit::numGrids - 1) == "1/32" && NoteEdit::finer (NoteEdit::numGrids - 1) == NoteEdit::numGrids - 1,
+               "Piano roll: the finest grid is 1/32");
+        check (NoteEdit::gridName (NoteEdit::defaultGrid) == "1/16" && NoteEdit::gridName (0) == "1 bar" && NoteEdit::coarser (0) == 0,
+               "Piano roll: grid runs 1 bar to 1/32, starting on 1/16");
+        check (std::abs (NoteEdit::changedLength (16.0, 1) - 18.0) < 1e-9 && std::abs (NoteEdit::changedLength (16.0, -1) - 14.0) < 1e-9,
+               "Piano roll: clip length moves by half a bar");
+        check (std::abs (NoteEdit::changedLength (2.0, -1) - 2.0) < 1e-9 && std::abs (NoteEdit::changedLength (3.0, 1) - 4.0) < 1e-9,
+               "Piano roll: clip length stops at half a bar and lands on half-bar lines");
+        check (NoteEdit::lengthName (4.0) == "1 bar" && NoteEdit::lengthName (10.0) == "2.5 bars", "Piano roll: length readout");
+
+        std::vector<Note> ns { note (0.1, 0.25, 60), note (1.13, 0.5, 64), note (3.97, 0.25, 67) };
+        NoteEdit::quantise (ns, { 1 }, 0.25, 4.0);
+        check (std::abs (ns[1].start - 1.25) < 1e-9 && std::abs (ns[0].start - 0.1) < 1e-9, "Piano roll: quantise moves only the selection to the nearest step");
+        NoteEdit::quantise (ns, {}, 0.25, 4.0);
+        check (std::abs (ns[0].start - 0.0) < 1e-9 && std::abs (ns[2].start - 3.75) < 1e-9, "Piano roll: quantise with nothing picked does every note, kept inside the loop");
+
+        auto box = NoteEdit::inBox (ns, 0.9, 2.0, 62, 70);
+        check (box.size() == 1 && box[0] == 1, "Piano roll: a box picks the notes it touches");
+
+        double loop = 4.0;
+        std::vector<Note> d { note (0.0, 0.5, 60), note (0.5, 0.5, 62) };
+        auto copies = NoteEdit::duplicate (d, { 0, 1 }, 0.25, loop);
+        check (d.size() == 4 && copies == std::vector<int> ({ 2, 3 }) && std::abs (d[2].start - 1.0) < 1e-9 && std::abs (d[3].start - 1.5) < 1e-9,
+               "Piano roll: duplicate places a copy straight after the selection");
+        std::vector<Note> e { note (3.0, 1.0, 60) };
+        loop = 4.0;
+        NoteEdit::duplicate (e, { 0 }, 0.25, loop);
+        check (std::abs (loop - 8.0) < 1e-9, "Piano roll: duplicating past the end makes the clip longer by whole bars");
+
+        std::vector<Note> t { note (0.0, 1.0, 60), note (1.0, 1.0, 120) };
+        check (NoteEdit::transpose (t, { 0 }, 12) && t[0].pitch == 72, "Piano roll: octave up");
+        check (! NoteEdit::transpose (t, { 0, 1 }, 12) && t[0].pitch == 72 && t[1].pitch == 120, "Piano roll: nothing moves past the top of the keyboard");
+        check (NoteEdit::transpose (t, { 0, 1 }, -12) && t[0].pitch == 60 && t[1].pitch == 108, "Piano roll: octave down moves every picked note");
+
+        NoteEdit::nudgeVelocity (t, { 0 }, 0.5f);
+        check (std::abs (t[0].velocity - 1.0f) < 1e-6f && std::abs (t[1].velocity - 0.8f) < 1e-6f, "Piano roll: velocity nudge, capped at full");
+        NoteEdit::erase (t, { 1, 0 });
+        check (t.empty(), "Piano roll: deleting several notes");
+        check (std::abs (NoteEdit::snap (1.13, 0.25, true) - 1.25) < 1e-9 && std::abs (NoteEdit::snap (1.13, 0.25, false) - 1.13) < 1e-9,
+               "Piano roll: snap off leaves positions free");
     }
 
     std::cout << (failures == 0 ? "\nAll passed\n" : "\nSome checks failed\n");
