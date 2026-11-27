@@ -361,6 +361,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
             return true;
     }
 
+    // The piano roll's own shortcuts (Q, Cmd+arrows, Cmd+A/D/=/-, Alt+S) while the Edit tab is open
+    if (mode == Mode::Edit && editor.keyUsed (key))
+        return true;
+
     if (key == juce::KeyPress::escapeKey && devices.isFullScreen())  { devices.setFullScreen (false); return true; }
     if (key == juce::KeyPress::spaceKey)                         { togglePlay(); return true; }
     if (key == juce::KeyPress ('k', juce::ModifierKeys::commandModifier, 0)) { showCommandPalette(); return true; }
@@ -592,6 +596,9 @@ void MainComponent::timerCallback()
         // GLOWTAG_MODE=1 or 2 shows the mixer or the editor
         if (const auto modeVar = juce::SystemStats::getEnvironmentVariable ("GLOWTAG_MODE", {}); modeVar.isNotEmpty())
             setMode ((Mode) juce::jlimit (0, 2, modeVar.getIntValue()));
+        // GLOWTAG_PIANO=all picks every note in the piano roll, to check how picked notes look
+        if (juce::SystemStats::getEnvironmentVariable ("GLOWTAG_PIANO", {}) == "all")
+            editor.selectAll();
         // GLOWTAG_CARDS="Gas Tube,Crowd" swaps the selected track's devices for those, to check the cards
         const auto cards = juce::StringArray::fromTokens (juce::SystemStats::getEnvironmentVariable ("GLOWTAG_CARDS", {}), ",", {});
         if (! cards.isEmpty())

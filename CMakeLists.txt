@@ -60,6 +60,8 @@ target_sources(Glowtag PRIVATE
     Source/UI/StatusBar.cpp
     Source/UI/MixerView.cpp
     Source/UI/EditorView.cpp
+    Source/UI/PianoRollArt.cpp
+    Source/Engine/NoteEdit.cpp
     Source/UI/DeviceWallModel.cpp
     Source/UI/DeviceWallArt.cpp
     Source/UI/DeviceWall.cpp
@@ -124,6 +126,7 @@ if(GLOWTAG_TESTS)
         Source/Engine/PluginHost.cpp
         Source/Engine/VisListener.cpp
     Source/Engine/Automation.cpp
+        Source/Engine/NoteEdit.cpp
         Source/UI/DeviceWallModel.cpp)
     target_include_directories(GlowtagTests PRIVATE Source)
     target_compile_definitions(GlowtagTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_PLUGINHOST_VST3=1 JUCE_PLUGINHOST_AU=1)
