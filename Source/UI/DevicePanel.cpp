@@ -871,7 +871,9 @@ void DevicePanel::Canvas::paint (juce::Graphics& g)
     if (dots.getWidth() != w || dots.getHeight() != h || dotsColour != key)
     {
         dotsColour = key;
-        dots = juce::Image (juce::Image::RGB, w, h, false);
+        // A fresh, cleared picture with see-through pixels: with the visualiser behind the app the panel
+        // colour is glass, and painting it over an old or uncleared picture stacks up until it is solid
+        dots = juce::Image (juce::Image::ARGB, w, h, true);
         juce::Graphics dg (dots);
         dg.addTransform (juce::AffineTransform::scale ((float) w / (float) juce::jmax (1, getWidth()), (float) h / (float) juce::jmax (1, getHeight())));
         dg.fillAll (th.panel);
