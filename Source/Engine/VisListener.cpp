@@ -7,6 +7,13 @@ void VisListener::prepare (double sampleRate)
     for (int i = 0; i < size; ++i)
         window[(size_t) i] = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * (float) i / (float) (size - 1));
     numBins = juce::jmin (bins, (int) std::ceil (15000.0 / (sr / size)));
+    for (int i = 0; i < spectrumBars; ++i)
+    {
+        const double f0 = spectrumLow * std::pow (spectrumHigh / spectrumLow, (double) i / spectrumBars);
+        const double f1 = spectrumLow * std::pow (spectrumHigh / spectrumLow, (double) (i + 1) / spectrumBars);
+        barFrom[(size_t) i] = juce::jlimit (1, numBins - 1, (int) std::floor (f0 / (sr / size)));
+        barTo[(size_t) i] = juce::jlimit (barFrom[(size_t) i], numBins - 1, (int) std::ceil (f1 / (sr / size)));
+    }
     ring.fill (0.0f);
     writePos = sinceHop = specCount = 0;
     for (auto& d : det) d = {};
@@ -25,6 +32,13 @@ void VisListener::push (const float* left, const float* right, int numSamples)
     }
     clockAtPush.store ((double) samples / sr);
     wallAtPush.store (juce::Time::getMillisecondCounterHiRes() * 0.001);
+}
+
+void VisListener::setBand (int band, float lowHz, float highHz)
+{
+    if (band < 0 || band > 2) return;
+    bandLow[(size_t) band].store (juce::jlimit (20.0f, 20000.0f, lowHz));
+    bandHigh[(size_t) band].store (juce::jlimit (20.0f, 20000.0f, juce::jmax (lowHz, highHz)));
 }
 
 double VisListener::audioNow() const
@@ -89,7 +103,15 @@ void VisListener::analyse()
     {
         const auto scope = bandFifo.write (1);
         if (scope.blockSize1 > 0)
-            bands[(size_t) scope.startIndex1] = { now, average (35, 140), average (200, 2000), average (3000, 12000) };
+            bands[(size_t) scope.startIndex1] = { now, average (bandLow[0].load(), bandHigh[0].load()),
+                                                       average (bandLow[1].load(), bandHigh[1].load()),
+                                                       average (bandLow[2].load(), bandHigh[2].load()) };
+    }
+    for (int i = 0; i < spectrumBars; ++i)
+    {
+        float top = 0.0f;
+        for (int b = barFrom[(size_t) i]; b <= barTo[(size_t) i]; ++b) top = juce::jmax (top, level[(size_t) b]);
+        spectrum[(size_t) i].store (top, std::memory_order_relaxed);
     }
 
     static constexpr double range[4][2] = { { 35, 130 }, { 1500, 6000 }, { 7000, 14000 }, { 180, 1400 } };

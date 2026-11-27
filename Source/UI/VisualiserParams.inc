@@ -74,6 +74,22 @@
     X (back, .55f, "Backdrop", pct) \
     X (gate, .5f, "Loudest lows", pct) \
     X (nudge, .5f, "Sync nudge", ms) \
+    X (marble, 0.0f, "Marble", pct) \
+    X (bleed, 0.0f, "Bleed", pct) \
+    X (breathe, 0.0f, "Breathe", pct) \
+    X (lheat, 0.0f, "Heat", pct) \
+    X (lmerge, .5f, "Merge", pct) \
+    X (lshim, 0.0f, "Shimmer", pct) \
+    X (sdens, .5f, "Density", pct) \
+    X (sdrift, 0.0f, "Drift", pct) \
+    X (sres, 0.0f, "Resonance", pct) \
+    X (bbranch, .5f, "Branching", pct) \
+    X (brings, 0.0f, "Rings", pct) \
+    X (bhalo, 0.0f, "Halo", pct) \
+    X (tgate, 0.0f, "Transients", pct) \
+    X (lgate, 0.0f, "Low", pct) \
+    X (mgate, 0.0f, "Mid", pct) \
+    X (hgate, 0.0f, "High", pct) \
 
 #define VIS_CHOICES(Y) \
     Y (surface, 0) \
@@ -100,4 +116,6 @@
     Y (btrails, 0) \
     Y (bsurface, 0) \
     Y (bmirror, 0) \
+    Y (lmirror, 0) \
+    Y (smirror, 0) \
 

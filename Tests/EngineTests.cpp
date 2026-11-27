@@ -1442,6 +1442,40 @@ int main()
         check (l.readBands (b, 1024) > 500, "Visualiser listener: reports levels about every 5 ms");
     }
 
+    // What low, mid and high listen to can be moved, and the spectrum shows where the sound is
+    {
+        const double sr = 48000.0;
+        const int total = (int) (sr * 0.5);
+        std::vector<float> tone ((size_t) total);
+        for (int i = 0; i < total; ++i) tone[(size_t) i] = 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * 1000.0 * i / sr);
+        auto levels = [&] (VisListener& l)
+        {
+            for (int i = 0; i < total; i += 256) l.push (tone.data() + i, nullptr, juce::jmin (256, total - i));
+            VisListener::Bands b[1024];
+            const int n = l.readBands (b, 1024);
+            return n > 0 ? b[n - 1] : VisListener::Bands { 0.0, 0.0f, 0.0f, 0.0f };
+        };
+        VisListener l;
+        l.prepare (sr);
+        l.enabled = true;
+        const auto usual = levels (l);
+        check (usual.mid > 0.05f && usual.mid > usual.low * 3.0f && usual.mid > usual.high * 3.0f, "Visualiser listener: a 1 kHz tone shows in the mid band as it comes");
+        l.setBand (0, 800.0f, 1250.0f);
+        l.setBand (1, 3000.0f, 5000.0f);
+        const auto moved = levels (l);
+        check (moved.low > 0.2f && moved.low > moved.mid * 3.0f, "Visualiser listener: moving the low band onto the tone moves the tone into it");
+
+        // Bar i of the spectrum covers 30 Hz * (16000 / 30) ^ (i / 56)
+        const int at = (int) (std::log (1000.0 / VisListener::spectrumLow) / std::log (VisListener::spectrumHigh / VisListener::spectrumLow) * VisListener::spectrumBars);
+        const float there = l.spectrum[(size_t) at].load(), below = l.spectrum[(size_t) (at - 12)].load(), above = l.spectrum[(size_t) (at + 12)].load();
+        check (there > 0.8f && below < there * 0.5f && above < there * 0.5f, "Visualiser listener: the spectrum's bar at 1 kHz stands above the rest for a 1 kHz tone");
+        std::vector<float> silence ((size_t) total, 0.0f);
+        for (int i = 0; i < total; i += 256) l.push (silence.data() + i, nullptr, juce::jmin (256, total - i));
+        float loudest = 0.0f;
+        for (auto& bar : l.spectrum) loudest = juce::jmax (loudest, bar.load());
+        check (loudest < 0.05f, "Visualiser listener: the spectrum falls flat in silence");
+    }
+
     std::cout << "Automation\n";
     {
         std::vector<AutoPoint> pts;

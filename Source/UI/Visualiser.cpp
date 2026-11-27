@@ -15,7 +15,6 @@ namespace
     constexpr float panelWidth = 392.0f;
     const juce::StringArray sourceNames { "kick", "snare", "hats", "loudest lows", "transients", "low", "mid", "high", "loudness" };
     const juce::StringArray destNames { "pulse", "flash", "spin", "stir", "burst", "colour" };
-    float beadAt (float amount) { return 0.15f + 0.7f * amount; }
 }
 
 #if JUCE_MAC
@@ -107,6 +106,9 @@ void Visualiser::attach (bool ownWindow)
     gl.setOpenGLVersionRequired (juce::OpenGLContext::openGL3_2);
     gl.setContinuousRepainting (true);
     gl.setSwapInterval (1);
+    // The panel keeps one picture and one glow per card. The usual allowance (8 million pixels) is less
+    // than those come to on a large or Retina window, and a picture pushed out is sent to the card again.
+    gl.setImageCacheSize ((size_t) 96 * 1024 * 1024);
     auto* top = dynamic_cast<juce::ResizableWindow*> (window.getTopLevelComponent());
     if (ownWindow && top != nullptr && top->isOnDesktop())
     {
@@ -161,7 +163,13 @@ void Visualiser::windowChanging (int what)
 
 void Visualiser::setView (View v)
 {
-    if (v == view) return;
+    if (v == view)
+    {
+        // Asked for the full view while the picture has the window: the controls come back
+        if (v == full && maximised && ! keepMaximised) toggleMaximised();
+        return;
+    }
+    if (! keepMaximised) { maximised = false; cameFrom = full; }
     view = v;
     ctx.engine.visListener.enabled = v != off;
     const bool ownWindow = v == behind && wantsOwnWindow();
@@ -175,21 +183,59 @@ void Visualiser::setView (View v)
     if (onViewChanged) onViewChanged();
 }
 
+// V: the picture alone takes the whole window, from wherever you are; again (or Esc) goes back there
+void Visualiser::toggleMaximised()
+{
+    setMouseCursor (juce::MouseCursor::NormalCursor);
+    lastPointerMove = juce::Time::getMillisecondCounter();
+    chromeShown = true;
+    if (isMaximised())
+    {
+        const auto back = cameFrom;
+        maximised = false;
+        cameFrom = full;
+        if (back != full) { setView (back); return; }
+    }
+    else
+    {
+        cameFrom = view;
+        maximised = true;
+        if (view != full)
+        {
+            keepMaximised = true;
+            setView (full);
+            keepMaximised = false;
+            return;
+        }
+    }
+    relayout();
+    if (onViewChanged) onViewChanged();
+}
+
 void Visualiser::setup (const juce::String& words)
 {
     const auto w = juce::StringArray::fromTokens (words, " ,", {});
     static const char* const styles[] = { "ink", "liquid", "sand", "bloom" };
     for (int i = 0; i < numStyles; ++i) if (w.contains (styles[i])) settings.style = i;
     page = w.contains ("routing") ? 1 : 0;
-    for (int i = 0; i < 4; ++i) if (w.contains (juce::StringArray { "shape", "colour", "motion", "trails" }[i])) tab = i;
     for (auto& word : w)
-        if (word.containsChar ('='))        // look=2, form=1
+        if (word.containsChar ('='))        // look=2, form=1, mirror=4, or any fader by name: marble=0.8
         {
-            const int value = word.fromFirstOccurrenceOf ("=", false, false).getIntValue();
-            if (word.startsWith ("look")) settings.w[(size_t) settings.surfaceKey()] = value;
-            if (word.startsWith ("form")) settings.w[(size_t) settings.formKey()] = value;
+            const auto key = word.upToFirstOccurrenceOf ("=", false, false);
+            const auto text = word.fromFirstOccurrenceOf ("=", false, false);
+            if (key == "look") settings.w[(size_t) settings.surfaceKey()] = text.getIntValue();
+            else if (key == "form") settings.w[(size_t) settings.formKey()] = text.getIntValue();
+            else if (key == "mirror") settings.w[(size_t) settings.mirrorKey()] = juce::jlimit (0, 4, text.getIntValue());
+            else
+            {
+                auto all = settings.toVar();
+                if (all["faders"].hasProperty (key)) { all["faders"].getDynamicObject()->setProperty (key, text.getFloatValue()); settings.fromVar (all); }
+            }
         }
+    if (w.contains ("scenes")) { scenes[0] = settings; scenes[2] = settings; scene = 2; }
     setView (w.contains ("behind") ? behind : full);
+    if (w.contains ("max") && ! isMaximised()) toggleMaximised();
+    relayout();
 }
 
 void Visualiser::setBackdrop (float amount)
@@ -207,13 +253,25 @@ void Visualiser::setFeed (int slot)
 
 void Visualiser::projectReplaced()
 {
+    for (auto& s : scenes) s.reset();
+    scene = -1;
+    storing = false;
     if (ctx.project.visualiser.isObject())
     {
         settings.fromVar (ctx.project.visualiser);
-        tab = 0;
+        if (auto* list = ctx.project.visualiser["scenes"].getArray())
+            for (int i = 0; i < list->size() && i < (int) scenes.size(); ++i)
+                if (list->getReference (i).isObject())
+                {
+                    Settings look;
+                    look.fromVar (list->getReference (i));
+                    scenes[(size_t) i] = look;
+                }
     }
     ctx.engine.visFeed = -1;
     seen = settings;
+    for (int k = 0; k < 3; ++k) ctx.engine.visListener.setBand (k, settings.bandHz[(size_t) k][0], settings.bandHz[(size_t) k][1]);
+    markAll();
     const juce::SpinLock::ScopedLockType lock (sharedLock);
     shared = settings;
 }
@@ -222,16 +280,28 @@ void Visualiser::changed()
 {
     if (probing) return;
     reportTouches();
+    for (int k = 0; k < 3; ++k) ctx.engine.visListener.setBand (k, settings.bandHz[(size_t) k][0], settings.bandHz[(size_t) k][1]);
+    screenBox = layout().screen;
     {
         const juce::SpinLock::ScopedLockType lock (sharedLock);
         shared = settings;
-        // Behind the app the picture fills the window; in the full view it sits under the top bar
-        sharedArea = view == behind ? window.getLocalBounds() : getBounds();
+        // Behind the app the picture fills the window; in the full view it has its screen among the controls
+        sharedBehind = view == behind;
+        sharedArea = sharedBehind ? window.getLocalBounds() : screenBox.toNearestInt() + getPosition();
         sharedOwnWindow = picture != nullptr;
     }
     saveDue = true;
-    artDirty = true;
-    repaint();
+    // A control being dragged only changes its own card; anything else may change them all
+    if (activeDrag != nullptr && activeCard >= 0 && activeCard < cChrome && ! wholePanel)
+    {
+        pieces[(size_t) activeCard].dirty = true;
+        repaint (pieces[(size_t) activeCard].area);
+    }
+    else
+    {
+        markAll();
+        repaint();
+    }
 }
 
 void Visualiser::tick()
@@ -250,7 +320,10 @@ void Visualiser::tick()
     if (saveDue && activeDrag == nullptr)
     {
         saveDue = false;
-        const auto now = settings.toVar();
+        auto now = settings.toVar();
+        bool anyScene = false;
+        for (auto& s : scenes) anyScene = anyScene || s.has_value();
+        if (anyScene) now.getDynamicObject()->setProperty ("scenes", scenesVar());
         if (juce::JSON::toString (now, true) != juce::JSON::toString (ctx.project.visualiser, true))
         {
             const bool had = ctx.project.visualiser.isObject();
@@ -258,8 +331,20 @@ void Visualiser::tick()
             if (had || edited) ctx.touched();
         }
     }
-    if (view == full && (++frameCount & 1) == 0)
-        for (auto& r : liveAreas) repaint (r);                       // the lamps and meters, 30 times a second
+    if (view != full) return;
+    if ((++frameCount & 1) == 0)
+        for (auto& p : pieces)
+            if (p.shown)
+                for (auto& part : p.live) repaint (part.box);        // the lamps and meters, 30 times a second, and no more than they cover
+
+    // With the picture filling the window, the "show controls" word and the pointer step aside when the pointer rests
+    const bool want = ! maximised || juce::Time::getMillisecondCounter() - lastPointerMove < 2500;
+    if (want != chromeShown)
+    {
+        chromeShown = want;
+        repaint (pieces[cChrome].area);
+        if (maximised && ! want) setMouseCursor (juce::MouseCursor::NoCursor);
+    }
 }
 
 //==============================================================================
@@ -284,14 +369,14 @@ void Visualiser::renderOpenGL()
     using namespace juce::gl;
     Settings s;
     juce::Rectangle<int> area;
-    bool ownWindow = false;
+    bool ownWindow = false, isBehind = false;
     {
         const juce::SpinLock::ScopedLockType lock (sharedLock);
         s = shared;
         area = sharedArea;
         ownWindow = sharedOwnWindow;
+        isBehind = sharedBehind;
     }
-    const bool isBehind = area.getY() == 0;
 
     // GLOWTAG_VIS_STATS=1 prints how fast the picture is really being drawn, and on what
     static const bool stats = juce::SystemStats::getEnvironmentVariable ("GLOWTAG_VIS_STATS", {}).getIntValue() != 0;
@@ -333,40 +418,89 @@ void Visualiser::renderOpenGL()
 }
 
 //==============================================================================
-// The control panel: neon glass on a dark pane at the right of the picture, laid out as in the mockup
+// The controls: the Monitor layout settled in the mockup. The picture has a screen of its own at the
+// top left; every section is on show at once as a card, three beside the screen and a row beneath it.
+
+namespace
+{
+    // Each card's own height when it is 392 wide, and the widest its contents are allowed to spread
+    //                              head    pics    scenes  shape   colour  motion  trails  special bands   gates   route
+    constexpr float cardHeight[] = { 356.0f, 250.0f, 128.0f, 306.0f, 306.0f, 306.0f, 306.0f, 306.0f, 452.0f, 452.0f, 452.0f };
+    constexpr float cardSpread[] = { 470.0f, 560.0f, 560.0f, 560.0f, 560.0f, 560.0f, 560.0f, 560.0f, 560.0f, 560.0f, 840.0f };
+    constexpr float designWidth = 1700.0f, designHeight = 894.0f;       // smaller windows shrink the whole panel to fit
+
+    float cardScale (int card, juce::Rectangle<float> box) { return juce::jmin (box.getWidth() / panelWidth, box.getHeight() / cardHeight[card]); }
+
+    // Where a frequency sits along the listening bands' scale, and back
+    float hzToT (float hz) { return std::log (hz / Settings::lowestHz) / std::log (Settings::highestHz / Settings::lowestHz); }
+    float tToHz (float t)  { return Settings::lowestHz * std::pow (Settings::highestHz / Settings::lowestHz, juce::jlimit (0.0f, 1.0f, t)); }
+    juce::String hzText (float hz)
+    {
+        if (hz < 1000.0f) return juce::String (juce::roundToInt (hz)) + " Hz";
+        const int tenths = juce::roundToInt (hz / 100.0f);
+        return (tenths % 10 == 0 ? juce::String (tenths / 10) : juce::String ((float) tenths / 10.0f, 1)) + " kHz";
+    }
+}
 
 Visualiser::Layout Visualiser::layout() const
 {
     Layout l;
-    const float W = (float) getWidth(), H = (float) getHeight();
-    auto fit = [] (float room) { return room >= 7.0f * 128.0f + 56.0f ? 1 : room >= 4.0f * 128.0f + 40.0f ? 2 : 0; };
-    if (! panelShown)
-        l.strip = fit (W - 32.0f);
+    const float w = (float) getWidth(), h = (float) getHeight();
+    const float size = 19.0f;
+    if (maximised || w < 80.0f || h < 80.0f)
+    {
+        l.screen = getLocalBounds().toFloat();
+        const float tw = Neon::textWidth ("show controls", size);
+        l.box[cChrome] = { w - 26.0f - tw, 10.0f, tw + 12.0f, 34.0f };
+        l.shown[cChrome] = true;
+        return l;
+    }
+    l.Z = juce::jmin (1.0f, w / designWidth, h / designHeight);
+    const float W = w / l.Z, H = h / l.Z, g = 12.0f, X0 = 12.0f, Y0 = 12.0f, AW = W - 24.0f, AH = H - 24.0f;
+    auto put = [&l] (int n, float x, float y, float cw, float ch) { l.box[(size_t) n] = juce::Rectangle<float> (x, y, cw, ch) * l.Z; l.shown[(size_t) n] = true; };
+
+    // The row of sections is only as tall as its cards need, so the screen gets the rest
+    const bool routing = page == 1;
+    const float rowHeight = routing ? AH * 0.45f : juce::jmin (AH * 0.44f, (AW - 4.0f * g) / 5.0f / panelWidth * 306.0f + 6.0f);
+    const float sh = std::round (AH - g - rowHeight), rw = juce::jlimit (300.0f, 480.0f, AW * 0.25f);
+    l.screen = (juce::Rectangle<float> (X0, Y0, AW - rw - g, sh) * l.Z).toNearestInt().toFloat();
+
+    const float total = cardHeight[cHead] + cardHeight[cPics] + cardHeight[cScenes], room = sh - 2.0f * g;
+    float y = Y0;
+    for (int n : { cHead, cPics, cScenes })
+    {
+        const float ch = room * cardHeight[n] / total;
+        put (n, X0 + AW - rw, y, rw, ch);
+        y += ch + g;
+    }
+    const float ry = Y0 + sh + g;
+    if (routing)
+    {
+        const float w1 = std::round (AW * 0.23f), w2 = std::round (AW * 0.25f);
+        put (cBands, X0, ry, w1, rowHeight);
+        put (cGates, X0 + w1 + g, ry, w2, rowHeight);
+        put (cRoute, X0 + w1 + w2 + 2.0f * g, ry, AW - w1 - w2 - 2.0f * g, rowHeight);
+    }
     else
     {
-        l.K = juce::jmin (juce::jlimit (0.7f, 1.4f, (H - 28.0f) / (page == 1 ? 700.0f : 668.0f)), (W - 24.0f) / panelWidth);
-        l.strip = fit (W - panelWidth * l.K - 56.0f);
-        if (l.strip == 0 && page == 0) l.K = juce::jmin (l.K, juce::jlimit (0.6f, 1.35f, (H - 28.0f) / 880.0f));
-        const float pw = std::round (panelWidth * l.K);
-        l.panel = { W - pw - 12.0f, 12.0f, pw, H - 24.0f };
-        l.column = juce::AffineTransform::scale (l.K).translated (l.panel.getX() + 16.0f * l.K, l.panel.getY());
+        const float cw = (AW - 4.0f * g) / 5.0f;
+        for (int i = 0; i < 5; ++i) put (cShape + i, X0 + (float) i * (cw + g), ry, cw, rowHeight);
     }
-    if (l.strip != 0)
-    {
-        const bool two = l.strip == 2;
-        const float bw = two ? 4.0f * 128.0f + 16.0f : 7.0f * 128.0f + 40.0f, bh = two ? 122.0f : 66.0f;
-        l.stripBox = { 12.0f, H - 15.0f - bh, bw, bh };
-    }
+    const float fs = 15.0f * l.Z, tw = Neon::textWidth ("fill window", fs);
+    l.box[cChrome] = { l.screen.getRight() - 20.0f * l.Z - tw, l.screen.getBottom() - 34.0f * l.Z, tw + 12.0f * l.Z, 28.0f * l.Z };
+    l.shown[cChrome] = true;
     return l;
 }
 
-// Everything the panel is made of. One of these lives for the length of a paint.
+// Everything the panel is made of. One of these lives for the drawing of one card.
 struct Visualiser::Draw
 {
     Visualiser& v;
     juce::Graphics& g;
-    juce::AffineTransform place;
+    Piece& piece;
+    int card;
     int ci = 0;
+    juce::AffineTransform place {};
     const juce::Colour grey { 0xff8d8f96 }, dim { 0xff6d7078 };
 
     Settings& S() { return v.settings; }
@@ -381,10 +515,11 @@ struct Visualiser::Draw
         if (h < 0.0f) h += 1.0f;
         return juce::Colour::fromHSL (h, s, l, 1.0f);
     }
+    // Hits and moving parts are kept in the component's own coordinates; the glow in the card's picture's
     void setPlace (const juce::AffineTransform& t)
     {
         place = t;
-        Neon::glow().base = Neon::glow().current = t;
+        Neon::glow().base = Neon::glow().current = t.translated ((float) -piece.area.getX(), (float) -piece.area.getY());
     }
 
     void hit (juce::Rectangle<float> box, std::function<void (float, float)> drag, std::function<void()> click = {}, std::function<void()> reset = {}, std::function<void()> up = {})
@@ -396,10 +531,21 @@ struct Visualiser::Draw
         h.click = std::move (click);
         h.reset = std::move (reset);
         h.up = std::move (up);
-        v.hits.push_back (std::move (h));
+        h.card = card;
+        piece.hits.push_back (std::move (h));
+    }
+    // A control of the panel itself (a page, a scene): not something a lane can drive
+    void ui (juce::Rectangle<float> box, std::function<void()> click)
+    {
+        hit (box, {}, std::move (click));
+        piece.hits.back().setting = false;
     }
     void block (juce::Rectangle<float> box) { hit (box, {}); }          // takes the pointer and does nothing
-    void dyn (std::function<void (juce::Graphics&)> f) { v.live.push_back ({ place, std::move (f) }); }
+    // A part that moves with the music: `box` is all it ever covers, so only that is drawn again
+    void dyn (juce::Rectangle<float> box, std::function<void (juce::Graphics&)> f)
+    {
+        piece.live.push_back ({ place, box.transformedBy (place).getSmallestIntegerContainer().expanded (2), std::move (f) });
+    }
 
     void tube (const Line& l, juce::Colour c, float w = 1.0f, bool off = false)
     {
@@ -421,6 +567,16 @@ struct Visualiser::Draw
     {
         Neon::label (g, t, x, y, al, c, size);
     }
+    // A card's title: quiet letter-spaced serif capitals, with an optional note beside it
+    void heading (const juce::String& t, float x, float y, const juce::String& note = {})
+    {
+        juce::GlyphArrangement ga;
+        ga.addLineOfText (Theme::get().heading (12.5f), t.toUpperCase(), x, y);
+        for (int i = 0; i < ga.getNumGlyphs(); ++i) ga.getGlyph (i).moveBy (3.2f * (float) i, 0.0f);
+        g.setColour (juce::Colour (0xffa3a5ac));
+        ga.draw (g);
+        if (note.isNotEmpty()) small (note, ga.getBoundingBox (0, -1, true).getRight() + 14.0f, y - 1.0f, dim);
+    }
     void glassBox (juce::Rectangle<float> r, float radius, juce::Colour fill)
     {
         g.setColour (fill);
@@ -429,13 +585,6 @@ struct Visualiser::Draw
         g.drawRoundedRectangle (r, radius, 1.0f);
     }
 
-    void setV (int key, float value)
-    {
-        S().v[(size_t) key] = juce::jlimit (0.0f, 1.0f, value);
-        v.last = juce::String (faderLabel (key)) + "  " + faderText (key, S().v[(size_t) key]);
-        v.edited = true;
-        v.changed();
-    }
     std::function<void()> resetOf (int key)
     {
         return [this_ = &v, key]
@@ -463,13 +612,14 @@ struct Visualiser::Draw
     void valTxt (int key, float x, float y, Neon::Align al = Neon::Align::right) { small (faderText (key, S().v[(size_t) key]), x, y, grey, al); }
 
     // A row of sign words, one lit
-    float words (const juce::StringArray& list, float x, float y, float size, juce::Colour c, int selected, float gap, std::function<void (int)> pick)
+    float words (const juce::StringArray& list, float x, float y, float size, juce::Colour c, int selected, float gap, std::function<void (int)> pick, bool setting = true)
     {
         float cx = x;
         for (int i = 0; i < list.size(); ++i)
         {
             const float w = word (list[i], cx, y, size, c, i == selected);
             hit ({ cx - 4.0f, y - size, w + 8.0f, size * 1.3f }, {}, [pick, i] { pick (i); });
+            piece.hits.back().setting = setting;
             cx += w + gap;
         }
         return cx;
@@ -484,7 +634,7 @@ struct Visualiser::Draw
         Neon::bulb (g, x, y + h - h * val, c, 1.0f, 5.5f);
         word (label.isEmpty() ? name (key) : label, x, y + h + 22.0f, 14.0f, c, true, Neon::Align::centre);
         hit ({ x - 24.0f, y - 10.0f, 48.0f, h + 38.0f }, [set = setter (key), y, h] (float, float py) { set ((y + h - py) / h); }, {}, resetOf (key));
-        dyn ([=] (juce::Graphics& gg) { const float lv = juce::jlimit (0.0f, 1.0f, signal()); Neon::bulb (gg, x + 12.0f, y + h - h * val * lv, c, 0.3f + lv * 0.7f, 3.0f); });
+        dyn ({ x + 8.0f, y - 4.0f, 8.0f, h + 8.0f }, [=] (juce::Graphics& gg) { const float lv = juce::jlimit (0.0f, 1.0f, signal()); Neon::bulb (gg, x + 12.0f, y + h - h * val * lv, c, 0.3f + lv * 0.7f, 3.0f); });
     }
 
     // Dial: drag round the ring; the spokes keep turning to show what it does
@@ -509,7 +659,8 @@ struct Visualiser::Draw
             if (t < juce::MathConstants<float>::halfPi) t += juce::MathConstants<float>::twoPi;
             set ((t - a0) / (a1 - a0));
         }, {}, resetOf (key));
-        dyn ([=] (juce::Graphics& gg)
+        const float inner = R - 9.0f;
+        dyn ({ cx - inner, cy - inner, inner * 2.0f, inner * 2.0f }, [=] (juce::Graphics& gg)
         {
             const float th = angle();
             for (int i = 0; i < 3; ++i)
@@ -662,7 +813,7 @@ struct Visualiser::Draw
     }
 
     // Picture buttons: the look (row 0) and the form (row 1) of the mode
-    void iconRow (int row, float x, float y, float bw, juce::Colour c, bool stack)
+    void iconRow (int row, float x, float y, float bw, juce::Colour c)
     {
         static const char* const names[4][2][4] = { { { "smoke", "oil", "neon", nullptr }, { "blot", "petals", "rays", "tiles" } },
                                                     { { "lamp", "glass", "neon", nullptr }, { "drift", "lava", "orbit", "mirror" } },
@@ -673,18 +824,17 @@ struct Visualiser::Draw
         {
             if (Theme::get().isRainbow()) c = Theme::get().pal (i + (row == 1 ? 3 : 0));
             const bool on = S().w[(size_t) key] == i;
-            const float bx = x + (float) i * bw, sc = stack ? 1.15f : 1.2f, fw = bw - 8.0f, fh = stack ? 74.0f : 46.0f, fy = stack ? y - 24.0f : y - 23.0f;
+            const float bx = x + (float) i * bw, sc = 1.15f, fw = bw - 8.0f, fh = 74.0f, fy = y - 24.0f;
             if (on) tube (Neon::roundRect (bx, fy, fw, fh, 10.0f), c, 0.7f);
             else    glassBox ({ bx, fy, fw, fh }, 10.0f, juce::Colour (0x730a0a0c));
-            const float cx = stack ? bx + fw * 0.5f : bx + 26.0f, cy = y;
+            const float cx = bx + fw * 0.5f, cy = y;
             for (const auto& line : VisIcons::icons[style][row][i])
             {
                 Line p;
                 for (auto pt : line) p.push_back ({ cx + pt.x * sc, cy + pt.y * sc });
                 tube (p, c, 0.85f, ! on);
             }
-            if (stack) word (names[style][row][i], cx, cy + 40.0f, 16.0f, c, on, Neon::Align::centre);
-            else       word (names[style][row][i], bx + 52.0f, cy + 8.0f, 21.0f, c, on);
+            word (names[style][row][i], cx, cy + 40.0f, 16.0f, c, on, Neon::Align::centre);
             hit ({ bx, fy, fw, fh }, {}, [this_ = &v, key, i] { this_->settings.w[(size_t) key] = i; this_->edited = true; this_->changed(); });
         }
     }
@@ -701,9 +851,119 @@ struct Visualiser::Draw
             for (int i = 0; i < 3; ++i) Neon::bulb (g, end + 4.0f + (float) i * 16.0f, y - 6.0f, pal[(size_t) i], 1.0f, 5.0f);
         }
     }
+    void mirrorRow (float x, float y) { wrow ("mirror", S().mirrorKey(), { "off", "2-way", "4-way", "6-way", "8-way" }, x, y, nc()); }
 
     //==========================================================================
-    void colourTab (float x, float y, float w)
+    // The one-of-a-kind controls of each mode
+
+    // Breathe: a ring that swells and shrinks; drag up for more
+    void breatheRing (int key, float cx, float cy, float R, juce::Colour c)
+    {
+        const float val = S().v[(size_t) key], rest = R * (0.28f + 0.5f * val);
+        tube (Neon::circle (cx, cy, R), c, 1.0f, true);
+        tube (Neon::circle (cx, cy, rest), c, 0.8f, val < 0.02f);
+        word (name (key), cx, cy + R + 20.0f, 14.0f, c, true, Neon::Align::centre);
+        valTxt (key, cx, cy + R + 34.0f, Neon::Align::centre);
+        hit ({ cx - R - 12.0f, cy - R - 12.0f, R * 2.0f + 24.0f, R * 2.0f + 50.0f }, [set = setter (key), cy, R] (float, float py) { set ((cy + R - py) / (2.0f * R)); }, {}, resetOf (key));
+        if (val >= 0.02f)
+            dyn ({ cx - R, cy - R, R * 2.0f, R * 2.0f }, [=, r = &v.readout] (juce::Graphics& gg)
+            {
+                const float rr = rest * (1.0f + 0.24f * val * std::sin (r->flow.load() * 0.9f));
+                gg.setColour (c.withAlpha (0.5f));
+                gg.drawEllipse (cx - rr, cy - rr, rr * 2.0f, rr * 2.0f, 1.2f);
+            });
+    }
+
+    // Heat: a thermometer; the bubbles beside it rise faster as it warms
+    void thermometer (int key, float x, float y, float h, juce::Colour c)
+    {
+        const float val = S().v[(size_t) key];
+        tube ({ { x, y + h }, { x, y } }, c, 1.0f, true);
+        if (val > 0.01f) tube ({ { x, y + h }, { x, y + h - h * val } }, c);
+        Neon::bulb (g, x, y + h + 9.0f, c, 0.35f + val * 0.65f, 9.0f);
+        Neon::bulb (g, x, y + h - h * val, c, 1.0f, 5.0f);
+        g.setColour (juce::Colour (0xff4a4d55));
+        for (int i = 1; i < 5; ++i) g.drawLine (x + 9.0f, y + h * (float) i / 5.0f, x + 15.0f, y + h * (float) i / 5.0f, 1.0f);
+        word (name (key), x, y + h + 40.0f, 14.0f, c, true, Neon::Align::centre);
+        valTxt (key, x, y + h + 54.0f, Neon::Align::centre);
+        hit ({ x - 24.0f, y - 10.0f, 52.0f, h + 70.0f }, [set = setter (key), y, h] (float, float py) { set ((y + h - py) / h); }, {}, resetOf (key));
+        if (val > 0.01f)
+            dyn ({ x - 15.0f, y - 4.0f, 10.0f, h + 8.0f }, [=, r = &v.readout] (juce::Graphics& gg)
+            {
+                const double T = r->clock.load();
+                for (int i = 0; i < 3; ++i)
+                {
+                    const float t = (float) std::fmod (T * (0.15 + val * 0.9) + (double) i / 3.0, 1.0);
+                    Neon::bulb (gg, x - 11.0f + (float) (i % 2) * 3.0f, y + h - h * t, c, val * (1.0f - t) * 0.9f, 2.2f);
+                }
+            });
+    }
+
+    // Merge: two blobs that pull together as you drag right
+    void mergeBlobs (int key, float x, float y, float w, juce::Colour c)
+    {
+        const float val = S().v[(size_t) key], cx = x + w * 0.5f, d = 6.0f + 30.0f * (1.0f - val), R = 15.0f;
+        word (name (key), x, y - 28.0f, 16.0f, c, true);
+        valTxt (key, x + w, y - 29.0f);
+        tube ({ { x, y + 30.0f }, { x + w, y + 30.0f } }, c, 0.6f, true);
+        if (val > 0.01f) tube ({ { x, y + 30.0f }, { x + w * val, y + 30.0f } }, c, 0.6f);
+        Neon::bulb (g, x + w * val, y + 30.0f, c, 1.0f, 5.0f);
+        if (d > R * 0.95f)
+        {
+            tube (Neon::circle (cx - d, y, R), c, 0.8f);
+            tube (Neon::circle (cx + d, y, R), c, 0.8f);
+        }
+        else
+        {
+            Line p;
+            for (int i = 0; i <= 48; ++i)
+            {
+                const float a = (float) i / 48.0f * juce::MathConstants<float>::twoPi, ca = std::cos (a), sa = std::sin (a);
+                const float rad = d * std::abs (ca) + std::sqrt (juce::jmax (0.0f, R * R - d * d * sa * sa)) * (0.86f + 0.14f * std::abs (ca));
+                p.push_back ({ cx + ca * rad, y + sa * rad });
+            }
+            tube (p, c, 0.8f);
+        }
+        hit ({ x - 10.0f, y - 24.0f, w + 20.0f, 66.0f }, [set = setter (key), x, w] (float px, float) { set ((px - x) / w); }, {}, resetOf (key));
+    }
+
+    // Density: a tray of grains; drag across to pour more in
+    void grainTray (int key, float x, float y, float w, float h, juce::Colour c)
+    {
+        const float val = S().v[(size_t) key];
+        const int n = 44;
+        word (name (key), x, y - 10.0f, 16.0f, c, true);
+        valTxt (key, x + w, y - 11.0f);
+        glassBox ({ x, y, w, h }, 10.0f, juce::Colour (0x8008080a));
+        auto rnd = [] (int i) { const double q = std::sin ((double) i * 127.1 + 311.7) * 43758.5453; return (float) (q - std::floor (q)); };
+        for (int i = 0; i < n; ++i)
+            Neon::bulb (g, x + 10.0f + rnd (i) * (w - 20.0f), y + 9.0f + rnd (i + 70) * (h - 18.0f), c, (float) i < val * (float) n ? 0.95f : 0.0f, 2.3f);
+        hit ({ x, y - 4.0f, w, h + 8.0f }, [set = setter (key), x, w] (float px, float) { set ((px - x - 8.0f) / (w - 16.0f)); }, {}, resetOf (key));
+    }
+
+    // Branching: a stem that sprouts more side shoots
+    void branchStem (int key, float x, float y, float w, juce::Colour c)
+    {
+        const float val = S().v[(size_t) key];
+        const int n = 9;
+        word (name (key), x, y - 26.0f, 16.0f, c, true);
+        valTxt (key, x + w, y - 27.0f);
+        tube ({ { x, y }, { x + w, y } }, c, 1.0f, true);
+        if (val > 0.02f) tube ({ { x, y }, { x + w * val, y } }, c);
+        for (int i = 0; i < n; ++i)
+        {
+            const float t = ((float) i + 0.6f) / (float) n, px = x + w * t, up = i % 2 ? 1.0f : -1.0f, len = 7.0f + 10.0f * (float) ((i * 7) % 4) / 3.0f;
+            const bool on = t < val;
+            tube ({ { px, y }, { px + len * 0.7f, y + up * len }, { px + len * 1.25f, y + up * len * (on ? 1.5f : 1.0f) } }, c, 0.6f, ! on);
+        }
+        Neon::bulb (g, x + w * val, y, c, 1.0f, 5.5f);
+        hit ({ x - 10.0f, y - 24.0f, w + 20.0f, 50.0f }, [set = setter (key), x, w] (float px, float) { set ((px - x) / w); }, {}, resetOf (key));
+    }
+
+    //==========================================================================
+    // The sections
+
+    void colourSection (float x, float y, float w)
     {
         wrow ("tones", S().tonesKey(), { "one", "complement", "split", "triad" }, x, y, nc(), true);
         hueWheel (x + 74.0f, y + 98.0f, 62.0f);
@@ -718,24 +978,27 @@ struct Visualiser::Draw
         wheel (S().idleKey(), x + 58.0f, y + 50.0f, 44.0f, nc(), [r = &v.readout] { return -r->turn.load(); }, "idle spin");
     }
 
-    void tabContent (float x, float y, float w)
+    // shape (0), colour (1), motion (2) or trails (3) of the mode on show
+    void section (int which, float x, float y0, float w)
     {
-        const int style = S().style, section = v.tab;
+        static const char* const titles[] = { "shape", "colour", "motion", "trails" };
+        heading (titles[which], x, y0 + 28.0f);
+        const float y = y0 + 62.0f;
+        const int style = S().style;
         const float hw = (w - 28.0f) / 2.0f, rx = x + 172.0f, rw = w - 172.0f;
-        const juce::StringArray mirrors { "off", "2-way", "4-way" };
-        if (section == 1) { colourTab (x, y, w); return; }
+        if (which == 1) { colourSection (x, y, w); return; }
         if (style == ink)
         {
-            if (section == 0)
+            if (which == 0)
             {
-                wrow ("mirror", C::mirror, mirrors, x, y, nc());
+                mirrorRow (x, y);
                 bulbCount (F::seg, 10, x, y + 46.0f, w, nc(), false);
                 sfader (F::trip, x, y + 100.0f, w, nc(), wave);
                 const auto cd = nc();
                 layersPic (x, y + 142.0f, cd, F::depth);
                 sfader (F::depth, x + 86.0f, y + 158.0f, w - 86.0f, cd, plain);
             }
-            else if (section == 2)
+            else if (which == 2)
             {
                 idleWheel (x, y);
                 sfader (F::spin, x, y + 166.0f, 132.0f, nc(), plain);
@@ -754,7 +1017,7 @@ struct Visualiser::Draw
         }
         else if (style == liquid)
         {
-            if (section == 0)
+            if (which == 0)
             {
                 bulbCount (F::lcount, 9, x, y + 22.0f, w, nc(), false);
                 sfader (F::lsize, x, y + 84.0f, hw, nc(), plain);
@@ -764,7 +1027,7 @@ struct Visualiser::Draw
                 layersPic (x, y + 184.0f, cd, F::ldepth);
                 sfader (F::ldepth, x + 86.0f, y + 200.0f, w - 86.0f, cd, plain);
             }
-            else if (section == 2)
+            else if (which == 2)
             {
                 idleWheel (x, y);
                 sfader (F::lspin, rx, y + 24.0f, rw, nc(), plain);
@@ -775,7 +1038,7 @@ struct Visualiser::Draw
         }
         else if (style == sand)
         {
-            if (section == 0)
+            if (which == 0)
             {
                 sfader (F::sgrain, x, y + 22.0f, hw, nc(), jag);
                 sfader (F::scomp, x + hw + 28.0f, y + 22.0f, hw, nc(), wave);
@@ -783,168 +1046,83 @@ struct Visualiser::Draw
                 sfader (F::sscatter, x + hw + 28.0f, y + 80.0f, hw, nc(), jag);
                 sfader (F::schange, x, y + 138.0f, w, nc(), comet);
             }
-            else if (section == 2) { idleWheel (x, y); sfader (F::sspin, rx, y + 40.0f, rw, nc(), plain); }
+            else if (which == 2) { idleWheel (x, y); sfader (F::sspin, rx, y + 40.0f, rw, nc(), plain); }
             else { trailsRow (x, y); sfader (F::strails, x, y + 52.0f, w, nc(), comet); }
         }
         else
         {
-            if (section == 0)
+            if (which == 0)
             {
-                wrow ("mirror", C::bmirror, mirrors, x, y, nc());
+                mirrorRow (x, y);
                 sfader (F::bspeed, x, y + 56.0f, hw, nc(), comet);
                 sfader (F::bcover, x + hw + 28.0f, y + 56.0f, hw, nc(), wave);
                 sfader (F::bseeds, x, y + 114.0f, hw, nc(), jag);
                 sfader (F::bfresh, x + hw + 28.0f, y + 114.0f, hw, nc(), plain);
             }
-            else if (section == 2) { idleWheel (x, y); sfader (F::bspin, rx, y + 40.0f, rw, nc(), plain); }
+            else if (which == 2) { idleWheel (x, y); sfader (F::bspin, rx, y + 40.0f, rw, nc(), plain); }
             else { trailsRow (x, y); sfader (F::btrails, x, y + 52.0f, w, nc(), comet); }
         }
     }
 
-    // Routing: a patch bay. Pull a cable from a sound to a reaction; slide its bead for strength.
-    void routing (float x, float y, float w)
+    // The controls only this mode has
+    void special (float x, float y0, float w)
     {
+        static const char* const styles[] = { "ink", "liquid", "sand", "bloom" };
+        heading (juce::String ("only in ") + styles[S().style], x, y0 + 28.0f);
+        const float y = y0 + 62.0f;
         auto* r = &v.readout;
-        auto* self = &v;
-
-        // Loud lows only: each bar is a low hit, only bars above the line count
-        const auto gc = nc();
-        const float gy = y + 54.0f, gh = 50.0f, gate = S().v[F::gate];
-        word ("loudest lows", x, y + 44.0f, 16.0f, gc, true);
-        small ("low hits above the line", x + 118.0f, y + 42.0f, dim);
-        valTxt (F::gate, x + w, y + 42.0f);
-        glassBox ({ x, gy, w, gh }, 8.0f, juce::Colour (0x8008080a));
-        const float ly = gy + gh - 4.0f - (gh - 8.0f) * gate;
-        tube ({ { x + 4.0f, ly }, { x + w - 4.0f, ly } }, gc, 0.5f);
-        Neon::bulb (g, x + w - 8.0f, ly, gc, 1.0f, 5.0f);
-        hit ({ x, gy - 8.0f, w, gh + 16.0f }, [set = setter (F::gate), gy, gh] (float, float py) { set ((gy + gh - 4.0f - py) / (gh - 8.0f)); }, {}, resetOf (F::gate));
-        dyn ([=] (juce::Graphics& gg)
+        if (S().style == ink)
         {
-            const double now = r->clock.load();
-            const juce::SpinLock::ScopedLockType lock (r->lock);
-            for (int i = 0; i < r->numKicks; ++i)
-            {
-                const auto& k = r->kicks[(size_t) i];
-                const float age = (float) (now - k.time);
-                if (age > 5.0f) continue;
-                const float bx = x + w - 14.0f - age / 5.0f * (w - 24.0f), bh = juce::jmax (3.0f, (gh - 8.0f) * k.rel);
-                gg.setColour (k.pass ? gc.interpolatedWith (juce::Colours::white, 0.45f) : juce::Colour (0xff55585f));
-                gg.fillRoundedRectangle (bx - 1.5f, gy + gh - 4.0f - bh, 3.0f, bh, 1.5f);
-            }
-        });
-
-        small ("Drag from a sound to a reaction to wire it. Slide the bead on a", x, y + 128.0f, dim);
-        small ("cable for strength; slide it to zero to unplug.", x, y + 142.0f, dim);
-        const float by = y + 172.0f, xs = x + 112.0f, xd = x + w - 74.0f;
-        auto src = [=] (int i) { return juce::Point<float> (xs, by + (float) i * 28.0f); };
-        auto dst = [=] (int i) { return juce::Point<float> (xd, by + (float) i * 44.8f); };
-        auto cable = [] (juce::Point<float> a, juce::Point<float> b)
-        {
-            const float sag = 16.0f + std::abs (b.y - a.y) * 0.08f;
-            Line p;
-            for (int i = 0; i <= 24; ++i)
-            {
-                const float t = (float) i / 24.0f, u = 1.0f - t;
-                p.push_back ({ u * u * u * a.x + 3 * u * u * t * (a.x + 70.0f) + 3 * u * t * t * (b.x - 70.0f) + t * t * t * b.x,
-                               u * u * u * a.y + 3 * u * u * t * (a.y + sag) + 3 * u * t * t * (b.y + sag) + t * t * t * b.y });
-            }
-            return p;
-        };
-        std::array<juce::Colour, numSources> sc;
-        for (auto& c : sc) c = nc();
-        const auto dc = Theme::get().isRainbow() ? juce::Colour (0xffd8dae0) : Theme::get().themeColour();
-
-        // Beads first, so they are picked before the jacks under them
-        for (int s = 0; s < numSources; ++s)
-            for (int d = 0; d < numDests; ++d)
-            {
-                const float amount = S().route[(size_t) s][(size_t) d];
-                if (amount <= 0.0f) continue;
-                const auto line = cable (src (s), dst (d));
-                tube (line, sc[(size_t) s], 0.35f + amount * 0.5f, amount < 0.02f);
-                const auto bead = Neon::pointAt (line, beadAt (amount));
-                Neon::bulb (g, bead.x, bead.y, sc[(size_t) s], 0.35f + amount * 0.65f, 4.5f);
-                hit ({ bead.x - 10.0f, bead.y - 10.0f, 20.0f, 20.0f }, [self, s, d, line] (float mx, float my)
-                {
-                    float& a = self->settings.route[(size_t) s][(size_t) d];
-                    a = juce::jlimit (0.001f, 1.0f, (Neon::nearest (line, { mx, my }).t - 0.15f) / 0.7f);
-                    self->last = sourceNames[s] + " to " + destNames[d] + (a < 0.03f ? "  let go to unplug" : "  " + juce::String (juce::roundToInt (a * 100.0f)) + "%");
-                    self->edited = true;
-                    self->changed();
-                }, {}, {}, [self, s, d]
-                {
-                    float& a = self->settings.route[(size_t) s][(size_t) d];
-                    if (a < 0.03f) { a = 0.0f; self->last = "unplugged"; self->changed(); }
-                });
-            }
-        for (int s = 0; s < numSources; ++s)
-        {
-            const auto j = src (s);
-            const auto c = sc[(size_t) s];
-            word (sourceNames[s], xs - 16.0f, j.y + 6.0f, 16.0f, c, true, Neon::Align::right);
-            g.setColour (juce::Colour (0xff101012)); g.fillEllipse (xs - 8.5f, j.y - 8.5f, 17.0f, 17.0f);
-            g.setColour (juce::Colour (0xff4a4d55)); g.drawEllipse (xs - 8.5f, j.y - 8.5f, 17.0f, 17.0f, 1.2f);
-            dyn ([=] (juce::Graphics& gg) { Neon::bulb (gg, xs, j.y, c, 0.12f + 0.9f * juce::jmin (1.0f, r->signal[(size_t) s].load()), 4.2f); });
-            hit ({ x, j.y - 14.0f, xs - x + 14.0f, 28.0f }, [self] (float mx, float my) { self->cableEnd = { mx, my }; self->artDirty = true; self->repaint(); }, {}, {}, [self, dst]
-            {
-                for (int d = 0; d < numDests; ++d)
-                    if (std::abs (self->cableEnd.y - dst (d).y) < 22.0f && self->cableEnd.x > dst (d).x - 40.0f)
-                    {
-                        self->settings.route[(size_t) self->cableFrom][(size_t) d] = 1.0f;
-                        self->last = sourceNames[self->cableFrom] + " to " + destNames[d];
-                        self->edited = true;
-                    }
-                self->cableFrom = -1;
-                self->changed();
-            });
-            v.hits.back().click = [self, s] { self->cableFrom = s; self->artDirty = true; };
+            breatheRing (F::breathe, x + 58.0f, y + 50.0f, 44.0f, nc());
+            const float rx = x + 150.0f, rw = w - 150.0f;
+            sfader (F::marble, rx, y + 24.0f, rw, nc(), wave);
+            small ("veins run through the ink", rx, y + 46.0f, dim);
+            sfader (F::bleed, rx, y + 96.0f, rw, nc(), rings);
+            small ("colour soaks out past the edges", rx, y + 118.0f, dim);
+            small ("Breathe: the whole blot slowly swells and shrinks.", x, y + 170.0f, dim);
         }
-        for (int d = 0; d < numDests; ++d)
+        else if (S().style == liquid)
         {
-            const auto j = dst (d);
-            word (destNames[d], xd + 16.0f, j.y + 6.0f, 17.0f, dc, true);
-            g.setColour (juce::Colour (0xff101012)); g.fillEllipse (xd - 8.5f, j.y - 8.5f, 17.0f, 17.0f);
-            g.setColour (juce::Colour (0xff4a4d55)); g.drawEllipse (xd - 8.5f, j.y - 8.5f, 17.0f, 17.0f, 1.2f);
-            dyn ([=] (juce::Graphics& gg) { Neon::bulb (gg, xd, j.y, dc, 0.12f + 0.75f * juce::jmin (1.0f, r->reaction[(size_t) d].load()), 4.2f); });
+            mirrorRow (x, y);
+            thermometer (F::lheat, x + 26.0f, y + 40.0f, 92.0f, nc());
+            const float rx = x + 84.0f, rw = w - 84.0f;
+            mergeBlobs (F::lmerge, rx, y + 74.0f, rw, nc());
+            sfader (F::lshim, rx, y + 156.0f, rw, nc(), jag);
+            small ("sparkle on the oil, brighter on highs", rx, y + 178.0f, dim);
         }
-        if (v.cableFrom >= 0)
-            dyn ([=, from = v.cableFrom, end = v.cableEnd] (juce::Graphics& gg) { tubeOn (gg, cable (src (from), end), sc[(size_t) from], 0.6f); });
-
-        const float ny = by + 274.0f;
-        sfader (F::nudge, x, ny, w, nc(), plain, "sync nudge");
-        small ("Each hit is drawn on the frame you hear it. Nudge it if it feels early or late.", x, ny + 24.0f, dim);
-        const auto rc = nc();
-        const float rw2 = Neon::textWidth ("reset wiring", 15.0f);
-        word ("reset wiring", x + w, ny + 56.0f, 15.0f, rc, false, Neon::Align::right);
-        hit ({ x + w - rw2 - 6.0f, ny + 40.0f, rw2 + 12.0f, 24.0f }, {}, [self]
+        else if (S().style == sand)
         {
-            Settings defaults;
-            self->settings.resetWiring();
-            self->settings.v[F::gate] = defaults.v[F::gate];
-            self->settings.v[F::nudge] = defaults.v[F::nudge];
-            self->last = "wiring reset";
-            self->edited = true;
-            self->changed();
-        });
-        if (v.last.isNotEmpty()) small (v.last, x, ny + 54.0f, juce::Colour (0xffb8bac0));
+            mirrorRow (x, y);
+            grainTray (F::sdens, x, y + 46.0f, w - 130.0f, 72.0f, nc());
+            wheel (F::sdrift, x + w - 50.0f, y + 76.0f, 38.0f, nc(), [r, amount = S().v[F::sdrift]] { return (float) std::fmod (r->clock.load() * (double) amount * 2.0, 6.283185307); }, "drift");
+            sfader (F::sres, x, y + 176.0f, w, nc(), jag);
+            small ("hats and highs make the grains shiver", x, y + 198.0f, dim);
+        }
+        else
+        {
+            branchStem (F::bbranch, x, y + 34.0f, w, nc());
+            small ("from round spots to long branches", x, y + 72.0f, dim);
+            sfader (F::brings, x, y + 124.0f, w - 124.0f, nc(), rings);
+            small ("each hit sends a ring of light", x, y + 146.0f, dim);
+            small ("through the growth", x, y + 160.0f, dim);
+            wheel (F::bhalo, x + w - 48.0f, y + 130.0f, 36.0f, nc(), [r] { return (float) std::fmod (r->clock.load() * 0.4, 6.283185307); }, "halo");
+        }
     }
 
-    // The whole control section, in its own coordinates (360 wide)
-    void column (bool strip)
+    // Modes, meters, the page switch and the main reactions
+    void head (float x, float y0, float w)
     {
-        const float x = 0.0f, w = 360.0f;
-        float y = 36.0f;
         auto* self = &v;
         auto* r = &v.readout;
         const bool rainbowOn = Theme::get().isRainbow();
         const auto col = rainbowOn ? juce::Colour (0xffbfeaff) : Theme::get().themeColour();
-
+        float y = y0 + 40.0f;
         words ({ "ink", "liquid", "sand", "bloom" }, x, y, 27.0f, nc(), S().style, 22.0f,
                [self] (int i) { self->settings.style = i; self->last = {}; self->edited = true; self->changed(); });
         y += 34.0f;
         static const char* const rows[] = { "low", "mid", "high" };
         for (int i = 0; i < 3; ++i) word (rows[i], x, y + (float) i * 26.0f + 5.0f, 15.0f, col, false);
-        dyn ([=] (juce::Graphics& gg)
+        dyn ({ x + 46.0f, y - 6.0f, w - 44.0f, 64.0f }, [=] (juce::Graphics& gg)
         {
             const int n = 14;
             const float x0 = x + 52.0f, gap = (w - 60.0f) / (float) (n - 1);
@@ -957,35 +1135,391 @@ struct Visualiser::Draw
             }
         });
         y += 3.0f * 26.0f + 28.0f;
-        words ({ "controls", "routing" }, x, y, 20.0f, nc(), v.page, 20.0f, [self] (int i) { self->page = i; self->last = {}; self->artDirty = true; self->repaint(); });
-        if (v.page == 1) { routing (x, y, w); return; }
+        words ({ "controls", "routing" }, x, y, 20.0f, nc(), v.page, 20.0f, [self] (int i) { self->page = i; self->last = {}; self->relayout(); }, false);
 
+        const float th = 84.0f, ty = y + 22.0f, gp = juce::jmin (64.0f, (w - 120.0f) / 4.0f + 8.0f);
+        vtube (F::pulse, x + 18.0f, ty, th, nc(), [r] { return r->reaction[dPulse].load(); });
+        vtube (F::flash, x + 18.0f + gp, ty, th, nc(), [r] { return r->reaction[dFlash].load(); });
+        vtube (F::stir, x + 18.0f + gp * 2.0f, ty, th, nc(), [r] { return r->reaction[dStir].load() * 0.6f; });
+        vtube (F::react, x + 18.0f + gp * 3.0f, ty, th, nc(), [r] { return r->signal[sLevel].load(); }, "gain");
+        wheel (F::speed, x + w - 46.0f, ty + th * 0.46f, 38.0f, nc(), [r] { return r->flow.load() * 1.3f; });
+        // What was last touched, and its value: it changes with every drag anywhere, so it is drawn with the moving parts
+        const float ly = ty + th + 56.0f;
+        dyn ({ x, ly - 12.0f, w, 16.0f }, [self, x, ly] (juce::Graphics& gg) { if (self->last.isNotEmpty()) Neon::label (gg, self->last, x, ly, Neon::Align::left, juce::Colour (0xffb8bac0), 11.5f); });
+    }
+
+    void pictures (float x, float y, float w)
+    {
+        const int style = S().style;
+        const float bw = juce::jmin (w / 4.0f, 124.0f);
+        heading ("look", x, y + 28.0f);
+        iconRow (0, x, y + 66.0f, bw, nc());
+        heading (style == bloom ? "kind" : style == sand ? "plate" : "form", x, y + 146.0f);
+        iconRow (1, x, y + 184.0f, bw, nc());
+    }
+
+    // Eight lamps that each keep a whole look
+    void sceneLamps (float x, float y, float w)
+    {
+        auto* self = &v;
+        heading ("scenes", x, y + 28.0f);
+        const auto sc = nc();
+        const float sw = word ("store", x + w, y + 30.0f, 17.0f, sc, v.storing, Neon::Align::right);
+        ui ({ x + w - sw - 6.0f, y + 10.0f, sw + 12.0f, 28.0f }, [self]
         {
-            const float th = 84.0f, ty = y + 22.0f, gp = 60.0f;
-            vtube (F::pulse, x + 18.0f, ty, th, nc(), [r] { return r->reaction[dPulse].load(); });
-            vtube (F::flash, x + 18.0f + gp, ty, th, nc(), [r] { return r->reaction[dFlash].load(); });
-            vtube (F::stir, x + 18.0f + gp * 2.0f, ty, th, nc(), [r] { return r->reaction[dStir].load() * 0.6f; });
-            vtube (F::react, x + 18.0f + gp * 3.0f, ty, th, nc(), [r] { return r->signal[sLevel].load(); }, "gain");
-            wheel (F::speed, x + w - 46.0f, ty + th * 0.46f, 38.0f, nc(), [r] { return r->flow.load() * 1.3f; });
-            y = ty + th + 62.0f;
-        }
-        static const char* const styles[] = { "ink", "liquid", "sand", "bloom" };
-        word (styles[S().style], x, y, 20.0f, nc(), true);
-        if (! strip)
+            self->storing = ! self->storing;
+            self->last = self->storing ? "pick a lamp to store this look" : juce::String();
+            self->pieces[cScenes].dirty = true;
+            self->repaint();
+        });
+        const float gap = juce::jmin (46.0f, (w - 20.0f) / 7.0f);
+        for (int i = 0; i < 8; ++i)
         {
-            y += 45.0f; iconRow (0, x, y, w / 4.0f, nc(), true);
-            y += 84.0f; iconRow (1, x, y, w / 4.0f, nc(), true);
-            y += 84.0f;
+            const float bx = x + 12.0f + (float) i * gap, by = y + 66.0f;
+            const bool has = v.scenes[(size_t) i].has_value();
+            Neon::bulb (g, bx, by, sc, v.scene == i && has ? 1.0f : has ? 0.45f : 0.0f, 8.0f);
+            small (juce::String (i + 1), bx, by + 24.0f, has ? juce::Colour (0xffb8bac0) : dim, Neon::Align::centre, 10.5f);
+            ui ({ bx - gap * 0.5f, by - 16.0f, gap, 46.0f }, [self, i] { self->sceneClicked (i); });
         }
-        const auto ct = nc();
-        words ({ "shape", "colour", "motion", "trails" }, x + 70.0f, y, 19.0f, ct, v.tab, 16.0f, [self] (int i) { self->tab = i; self->last = {}; self->artDirty = true; self->repaint(); });
-        tube ({ { x, y + 12.0f }, { x + w, y + 12.0f } }, ct, 0.6f, true);
-        y += 46.0f;
-        tabContent (x, y, w);
-        y += 250.0f;
-        if (v.last.isNotEmpty()) small (v.last, x, y + 4.0f, juce::Colour (0xffb8bac0), Neon::Align::left, 11.5f);
+        small (v.storing ? "Now pick a lamp to keep this look in." : "Click store, then a lamp, to keep a look. Click a lit lamp to bring it back.", x, y + 112.0f, dim);
+    }
+
+    //==========================================================================
+    // Routing
+
+    // A strip of recent hits or levels with a line you drag: only what reaches the line gets through.
+    // which: 0 loudest lows, 1 transients, 2 low, 3 mid, 4 high
+    void gateStrip (int which, float x, float y, float w, float h, juce::Colour c)
+    {
+        static const int keys[] = { F::gate, F::tgate, F::lgate, F::mgate, F::hgate };
+        static const char* const names[] = { "loudest lows", "transients", "low", "mid", "high" };
+        static const char* const notes[] = { "low hits", "every sharp hit", "level", "level", "level" };
+        const int key = keys[which];
+        const float val = S().v[(size_t) key];
+        const float lw = word (names[which], x, y - 8.0f, 16.0f, c, true);
+        small (notes[which], x + lw + 12.0f, y - 9.0f, dim);
+        valTxt (key, x + w, y - 9.0f);
+        glassBox ({ x, y, w, h }, 8.0f, juce::Colour (0x8008080a));
+        const float ly = y + h - 4.0f - (h - 8.0f) * val;
+        tube ({ { x + 4.0f, ly }, { x + w - 4.0f, ly } }, c, 0.5f);
+        Neon::bulb (g, x + w - 8.0f, ly, c, 1.0f, 5.0f);
+        hit ({ x, y - 8.0f, w, h + 16.0f }, [set = setter (key), y, h] (float, float py) { set ((y + h - 4.0f - py) / (h - 8.0f)); }, {}, resetOf (key));
+        dyn ({ x + 2.0f, y + 2.0f, w - 4.0f, h - 4.0f }, [=, r = &v.readout] (juce::Graphics& gg)
+        {
+            const double now = r->clock.load();
+            const auto lit = c.interpolatedWith (juce::Colours::white, 0.45f);
+            const float base = y + h - 4.0f, span = w - 24.0f;
+            const juce::SpinLock::ScopedLockType lock (r->lock);
+            if (which < 2)
+            {
+                const auto* list = which == 0 ? r->kicks.data() : r->sharps.data();
+                const int count = which == 0 ? r->numKicks : r->numSharps;
+                for (int i = 0; i < count; ++i)
+                {
+                    const float age = (float) (now - list[i].time);
+                    if (age > 5.0f) continue;
+                    const float bx = x + w - 14.0f - age / 5.0f * span, bh = juce::jmax (3.0f, (h - 8.0f) * list[i].rel);
+                    gg.setColour (list[i].rel >= val - 0.001f ? lit : juce::Colour (0xff55585f));
+                    gg.fillRoundedRectangle (bx - 1.5f, base - bh, 3.0f, bh, 1.5f);
+                }
+            }
+            else
+                for (int i = 0; i < r->numLevels; ++i)
+                {
+                    const auto& q = r->levels[(size_t) i];
+                    const float age = (float) (now - q.time), lv = q.v[which - 2];
+                    if (age > 5.0f) continue;
+                    const float bx = x + w - 14.0f - age / 5.0f * span, bh = juce::jmax (1.0f, (h - 8.0f) * juce::jmin (1.0f, lv));
+                    gg.setColour (lv >= val ? lit : juce::Colour (0xff4a4d55));
+                    gg.fillRect (bx - 1.0f, base - bh, 2.0f, bh);
+                }
+        });
+    }
+
+    void gates (float x, float y, float w)
+    {
+        heading ("what counts", x, y + 28.0f, "drag a line up to let only the bigger ones through");
+        for (int i = 0; i < 5; ++i) gateStrip (i, x, y + 70.0f + (float) i * 76.0f, w, 42.0f, nc());
+    }
+
+    // Listening bands: the live spectrum, with a tube for low, mid and high whose ends you drag
+    void bands (float x, float y, float w)
+    {
+        auto* self = &v;
+        heading ("listening bands", x, y + 28.0f);
+        const float sx = x + 50.0f, sw = w - 58.0f, sy = y + 46.0f, sh = 112.0f;
+        const std::array<juce::Colour, 3> bc { nc(), nc(), nc() };
+        glassBox ({ sx - 8.0f, sy, sw + 16.0f, sh }, 8.0f, juce::Colour (0x8008080a));
+        static const std::pair<float, const char*> ticks[] = { { 50.0f, "50" }, { 100.0f, "100" }, { 200.0f, "200" }, { 500.0f, "500" }, { 1000.0f, "1k" }, { 2000.0f, "2k" }, { 5000.0f, "5k" }, { 10000.0f, "10k" } };
+        for (auto& t : ticks) small (t.second, sx + sw * hzToT (t.first), sy + sh + 14.0f, dim, Neon::Align::centre);
+        dyn ({ sx - 6.0f, sy + 2.0f, sw + 12.0f, sh - 4.0f }, [=, range = S().bandHz] (juce::Graphics& gg)
+        {
+            const int n = VisListener::spectrumBars;
+            const float bar = juce::jmax (2.0f, sw / (float) n - 3.0f);
+            for (int i = 0; i < n; ++i)
+            {
+                const float fc = tToHz (((float) i + 0.5f) / (float) n);
+                auto& shown = self->spectrumShown[(size_t) i];
+                shown = juce::jmax (self->ctx.engine.visListener.spectrum[(size_t) i].load (std::memory_order_relaxed), shown * 0.86f);
+                auto colour = juce::Colour (0xff4a4d55);
+                for (size_t k = 0; k < 3; ++k)
+                    if (fc >= range[k][0] && fc <= range[k][1]) colour = bc[k].interpolatedWith (juce::Colours::white, 0.3f);
+                const float bx = sx + sw * ((float) i + 0.5f) / (float) n, bh = juce::jmax (bar, shown * (sh - 16.0f));
+                gg.setColour (colour);
+                gg.fillRoundedRectangle (bx - bar * 0.5f, sy + sh - 6.0f - bh, bar, bh, bar * 0.5f);
+            }
+        });
+        static const char* const names[] = { "low", "mid", "high" };
+        for (int k = 0; k < 3; ++k)
+        {
+            const float yy = sy + sh + 50.0f + (float) k * 42.0f;
+            const auto cl = bc[(size_t) k];
+            const float a = S().bandHz[(size_t) k][0], b = S().bandHz[(size_t) k][1], ta = hzToT (a), tb = hzToT (b), xa = sx + sw * ta, xb = sx + sw * tb;
+            word (names[k], x, yy + 5.0f, 16.0f, cl, true);
+            tube ({ { sx, yy }, { sx + sw, yy } }, cl, 0.6f, true);
+            tube ({ { xa, yy }, { xb, yy } }, cl);
+            Neon::bulb (g, xa, yy, cl, 1.0f, 5.5f);
+            Neon::bulb (g, xb, yy, cl, 1.0f, 5.5f);
+            small (hzText (a) + " to " + hzText (b), sx + sw, yy - 13.0f, dim, Neon::Align::right);
+            auto moved = [self, k]
+            {
+                const auto& o = self->settings.bandHz[(size_t) k];
+                self->last = juce::String (names[k]) + " listens to " + hzText (o[0]) + " to " + hzText (o[1]);
+                self->edited = true;
+                self->changed();
+            };
+            hit ({ xa - 12.0f, yy - 14.0f, 24.0f, 28.0f }, [self, k, sx, sw, moved] (float px, float)
+            {
+                auto& o = self->settings.bandHz[(size_t) k];
+                o[0] = juce::jlimit (Settings::lowestHz, o[1] / 1.25f, tToHz ((px - sx) / sw));
+                moved();
+            });
+            hit ({ xb - 12.0f, yy - 14.0f, 24.0f, 28.0f }, [self, k, sx, sw, moved] (float px, float)
+            {
+                auto& o = self->settings.bandHz[(size_t) k];
+                o[1] = juce::jlimit (o[0] * 1.25f, Settings::highestHz, tToHz ((px - sx) / sw));
+                moved();
+            });
+            // The middle slides the whole band, keeping its width
+            if (xb - xa > 24.0f)
+                hit ({ xa + 12.0f, yy - 14.0f, xb - xa - 24.0f, 28.0f }, [self, k, sx, sw, ta, tb, moved, grab = std::optional<float>()] (float px, float) mutable
+                {
+                    const float t = (px - sx) / sw;
+                    if (! grab.has_value()) grab = ta - t;
+                    const float t0 = juce::jlimit (0.0f, 1.0f - (tb - ta), t + *grab);
+                    self->settings.bandHz[(size_t) k] = { tToHz (t0), tToHz (t0 + tb - ta) };
+                    moved();
+                });
+        }
+        small ("Drag the ends of a tube to set what that band listens to,", x, sy + sh + 50.0f + 3.0f * 42.0f - 10.0f, dim);
+        small ("or the middle to slide it.", x, sy + sh + 50.0f + 3.0f * 42.0f + 5.0f, dim);
+        sfader (F::nudge, x, y + 418.0f, w, nc(), plain, "sync nudge");
+    }
+
+    // The matrix: sounds down the side, reactions along the top, a socket where they meet
+    void matrix (float x, float y, float w)
+    {
+        auto* self = &v;
+        auto* r = &v.readout;
+        heading ("routing", x, y + 28.0f);
+        const auto rc = nc();
+        const float rw = word ("reset wiring", x + w, y + 30.0f, 15.0f, rc, false, Neon::Align::right);
+        ui ({ x + w - rw - 6.0f, y + 12.0f, rw + 12.0f, 26.0f }, [self]
+        {
+            Settings defaults;
+            self->settings.resetWiring();
+            self->settings.resetBands();
+            for (int k : { F::gate, F::tgate, F::lgate, F::mgate, F::hgate, F::nudge }) self->settings.v[(size_t) k] = defaults.v[(size_t) k];
+            self->last = "wiring reset";
+            self->edited = true;
+            self->changed();
+        });
+
+        std::array<juce::Colour, numSources> sc;
+        for (auto& c : sc) c = nc();
+        const auto dc = Theme::get().isRainbow() ? juce::Colour (0xffd8dae0) : Theme::get().themeColour();
+        const float lx = x + 124.0f, cw = (w - 124.0f) / (float) numDests, rh = 34.5f, ty = y + 70.0f;
+        for (int d = 0; d < numDests; ++d)
+        {
+            const float cx = lx + cw * ((float) d + 0.5f);
+            word (destNames[d], cx, ty, 17.0f, dc, true, Neon::Align::centre);
+            dyn ({ cx - 5.0f, ty + 8.0f, 10.0f, 10.0f }, [=] (juce::Graphics& gg) { Neon::bulb (gg, cx, ty + 13.0f, dc, 0.1f + 0.75f * juce::jmin (1.0f, r->reaction[(size_t) d].load()), 3.0f); });
+        }
+        for (int s = 0; s < numSources; ++s)
+        {
+            const float yy = ty + 46.0f + (float) s * rh;
+            const auto col = sc[(size_t) s];
+            word (sourceNames[s], lx - 24.0f, yy + 5.0f, 15.0f, col, true, Neon::Align::right);
+            dyn ({ lx - 16.0f, yy - 5.0f, 10.0f, 10.0f }, [=] (juce::Graphics& gg) { Neon::bulb (gg, lx - 11.0f, yy, col, 0.12f + 0.9f * juce::jmin (1.0f, r->signal[(size_t) s].load()), 3.4f); });
+            g.setColour (juce::Colours::white.withAlpha (0.045f));
+            g.drawLine (lx, yy, x + w, yy, 1.0f);
+            for (int d = 0; d < numDests; ++d)
+            {
+                const float cx = lx + cw * ((float) d + 0.5f), a = S().route[(size_t) s][(size_t) d];
+                g.setColour (juce::Colour (0xff101012));
+                g.fillEllipse (cx - 10.0f, yy - 10.0f, 20.0f, 20.0f);
+                g.setColour (juce::Colour (a > 0.0f ? 0xff55585f : 0xff3a3c42));
+                g.drawEllipse (cx - 10.0f, yy - 10.0f, 20.0f, 20.0f, 1.2f);
+                if (a > 0.0f)
+                {
+                    // The ring round the socket is the strength; the lamp inside flickers with the sound
+                    Line p;
+                    const int n = juce::jmax (2, juce::roundToInt (40.0f * a));
+                    for (int q = 0; q <= n; ++q)
+                    {
+                        const float an = -juce::MathConstants<float>::halfPi + a * juce::MathConstants<float>::twoPi * (float) q / (float) n;
+                        p.push_back ({ cx + std::cos (an) * 14.5f, yy + std::sin (an) * 14.5f });
+                    }
+                    tube (p, col, 0.6f);
+                    const float lamp = 3.0f + a * 3.5f;
+                    Neon::bulb (g, cx, yy, col, 0.3f + a * 0.5f, lamp);
+                    dyn ({ cx - lamp - 1.0f, yy - lamp - 1.0f, lamp * 2.0f + 2.0f, lamp * 2.0f + 2.0f }, [=] (juce::Graphics& gg)
+                    {
+                        const float lv = juce::jmin (1.0f, r->signal[(size_t) s].load()) * a;
+                        if (lv > 0.3f + a * 0.5f) Neon::bulb (gg, cx, yy, col, lv, lamp);
+                    });
+                }
+                // Click an empty socket to plug it in, drag up or down for strength, click a lit one to unplug
+                auto say = [self, s, d]
+                {
+                    const float now = self->settings.route[(size_t) s][(size_t) d];
+                    self->last = sourceNames[s] + " to " + destNames[d] + (now > 0.0f ? "  " + juce::String (juce::roundToInt (now * 100.0f)) + "%" : juce::String ("  unplugged"));
+                    self->edited = true;
+                    self->changed();
+                };
+                hit ({ cx - cw * 0.5f, yy - rh * 0.5f, cw, rh },
+                     [self, s, d, say] (float, float py)
+                     {
+                         auto& c = self->cell;
+                         if (! c.started) { c.started = true; c.y = py; return; }
+                         if (std::abs (c.y - py) > 3.0f) c.moved = true;
+                         if (! c.moved) return;
+                         const float to = juce::jlimit (0.0f, 1.0f, c.from + (c.y - py) / 70.0f);
+                         self->settings.route[(size_t) s][(size_t) d] = to < 0.02f ? 0.0f : to;
+                         say();
+                     },
+                     [self, s, d, say]
+                     {
+                         float& now = self->settings.route[(size_t) s][(size_t) d];
+                         self->cell = { now > 0.0f ? now : 1.0f, 0.0f, now > 0.0f, false, false };
+                         if (now <= 0.0f) { now = 1.0f; say(); }
+                     },
+                     {},
+                     [self, s, d, say]
+                     {
+                         if (self->cell.was && ! self->cell.moved) { self->settings.route[(size_t) s][(size_t) d] = 0.0f; say(); }
+                     });
+            }
+        }
+        small ("Click a socket to plug a sound into a reaction. Drag up or down on it for strength. Click a lit one to unplug.", x, ty + 46.0f + (float) numSources * rh, dim);
+    }
+
+    //==========================================================================
+    // One card: its glass, then its contents in their own coordinates (392 wide less the margins)
+    void drawCard()
+    {
+        const auto box = piece.box;
+        const float K = cardScale (card, box), w = juce::jmin (box.getWidth() / K - 32.0f, cardSpread[card]);
+        const float ox = box.getX() + (box.getWidth() - (w + 32.0f) * K) * 0.5f + 16.0f * K;
+        const float oy = box.getY() + juce::jmin ((box.getHeight() - cardHeight[card] * K) * 0.5f, box.getHeight() * 0.06f);
+        setPlace ({});
+        g.setColour (juce::Colour (0xc20d0d0f));
+        g.fillRoundedRectangle (box, 14.0f);
+        g.setColour (juce::Colour (0xff34363c));
+        g.drawRoundedRectangle (box.reduced (0.5f), 14.0f, 1.0f);
+        {
+            juce::Graphics::ScopedSaveState state (g);
+            g.reduceClipRegion (box.getSmallestIntegerContainer());
+            const auto t = juce::AffineTransform::scale (K).translated (ox, oy);
+            g.addTransform (t);
+            setPlace (t);
+            switch (card)
+            {
+                case cHead:    head (0.0f, 0.0f, w); break;
+                case cPics:    pictures (0.0f, 0.0f, w); break;
+                case cScenes:  sceneLamps (0.0f, 0.0f, w); break;
+                case cShape:   section (0, 0.0f, 0.0f, w); break;
+                case cColour:  section (1, 0.0f, 0.0f, w); break;
+                case cMotion:  section (2, 0.0f, 0.0f, w); break;
+                case cTrails:  section (3, 0.0f, 0.0f, w); break;
+                case cSpecial: special (0.0f, 0.0f, w); break;
+                case cBands:   bands (0.0f, 0.0f, w); break;
+                case cGates:   gates (0.0f, 0.0f, w); break;
+                case cRoute:   matrix (0.0f, 0.0f, w); break;
+                default: break;
+            }
+        }
+        setPlace ({});
+        block (box);
+    }
+
+    // The word over the picture that gives it the whole window, or brings the controls back
+    void drawChrome (float Z)
+    {
+        auto* self = &v;
+        setPlace ({});
+        const auto box = piece.box;
+        const auto col = Theme::get().themeColour();
+        if (v.maximised) word ("show controls", box.getRight() - 6.0f, box.getY() + 24.0f, 19.0f, col, true, Neon::Align::right);
+        else             word ("fill window", box.getRight() - 6.0f * Z, box.getBottom() - 8.0f * Z, 15.0f * Z, col, false, Neon::Align::right);
+        ui (box, [self] { self->toggleMaximised(); });
     }
 };
+
+void Visualiser::rebuild (int n, const Layout& l, float scale)
+{
+    auto& p = pieces[(size_t) n];
+    p.dirty = false;
+    p.area = p.box.getSmallestIntegerContainer().expanded (n == cChrome ? 16 : 8).getIntersection (getLocalBounds());
+    if (p.area.isEmpty()) { p.art = {}; p.hits.clear(); p.live.clear(); return; }
+    if (p.glow == nullptr) p.glow = std::make_unique<Neon::GlowLayer>();
+
+    auto steady = [&] (juce::Graphics& gg)
+    {
+        p.hits.clear();
+        p.live.clear();
+        Draw d { *this, gg, p, n, n * 3 };
+        if (n == cChrome) d.drawChrome (l.Z);
+        else              d.drawCard();
+        Neon::glow().base = Neon::glow().current = {};
+    };
+
+    // Once with nothing drawn, to gather the lit shapes for the glow
+    auto& glow = Neon::glow();
+    glow.sources.clear();
+    glow.collecting = true;
+    glow.alpha = 1.0f;
+    {
+        juce::Image none (juce::Image::ARGB, 1, 1, true);
+        juce::Graphics dg (none);
+        dg.reduceClipRegion (juce::Rectangle<int>());
+        steady (dg);
+    }
+    glow.collecting = false;
+    p.glow->build (p.area.getWidth(), p.area.getHeight(), n == cChrome ? l.Z : cardScale (n, p.box));
+
+    // Then for real, into a picture (a new picture each time: one drawn over in place can show stale on the Mac)
+    juce::Image image (juce::Image::ARGB, juce::jmax (1, juce::roundToInt ((float) p.area.getWidth() * scale)), juce::jmax (1, juce::roundToInt ((float) p.area.getHeight() * scale)), true);
+    {
+        juce::Graphics ig (image);
+        ig.addTransform (juce::AffineTransform::translation ((float) -p.area.getX(), (float) -p.area.getY()).scaled (scale));
+        p.glow->draw (ig, p.area.toFloat());
+        steady (ig);
+    }
+    p.art = image;
+}
+
+void Visualiser::markAll()
+{
+    for (auto& p : pieces) p.dirty = true;
+}
+
+void Visualiser::relayout()
+{
+    wholePanel = true;
+    changed();
+    wholePanel = false;
+}
 
 void Visualiser::paint (juce::Graphics& g)
 {
@@ -994,123 +1528,101 @@ void Visualiser::paint (juce::Graphics& g)
         const juce::SpinLock::ScopedLockType lock (readout.lock);
         error = readout.error;
     }
+
+    const auto l = layout();
+    const float scale = (float) g.getInternalContext().getPhysicalPixelScaleFactor();
+    const auto look = Theme::get().themeColour().getARGB() ^ (Theme::get().isRainbow() ? 0x5a5a5a5au : 0u);
+    if (std::abs (scale - artScale) > 0.001f || look != artLook)
+    {
+        artScale = scale;
+        artLook = look;
+        markAll();
+    }
+
+    // The dark surround, with a rounded window in it for the picture the graphics card draws underneath
+    if (! maximised)
+    {
+        juce::Path surround;
+        surround.addRectangle (getLocalBounds().toFloat());
+        surround.addRoundedRectangle (l.screen, 12.0f * l.Z);
+        surround.setUsingNonZeroWinding (false);
+        g.setColour (juce::Colour (0xff141416));
+        g.fillPath (surround);
+        g.setColour (juce::Colour (0xff3a3c42));
+        g.drawRoundedRectangle (l.screen.expanded (0.5f), 12.0f * l.Z, 1.0f);
+        g.setColour (juce::Colour (0xff26282d));
+        g.drawRoundedRectangle (l.screen.expanded (5.5f), 16.0f * l.Z, 1.0f);
+    }
     if (error.isNotEmpty())
     {
         g.setColour (juce::Colours::white.withAlpha (0.8f));
         g.setFont (Theme::get().body (13.0f));
-        g.drawFittedText ("The visualiser could not start on this graphics card:\n" + error, getLocalBounds().reduced (40), juce::Justification::centred, 12);
+        g.drawFittedText ("The visualiser could not start on this graphics card:\n" + error, l.screen.toNearestInt().reduced (40), juce::Justification::centred, 12);
     }
 
-    // The steady part of the panel (glass, tubes, words, their glow) is kept as a picture and only
-    // drawn again when something on it changes. Each frame just lays it down and adds the moving parts.
-    const auto l = layout();
-    const float scale = (float) g.getInternalContext().getPhysicalPixelScaleFactor();
-    const auto look = Theme::get().themeColour().getARGB() ^ (Theme::get().isRainbow() ? 0x5a5a5a5au : 0u);
-    if (artDirty || arts.empty() || std::abs (scale - artScale) > 0.001f || getLocalBounds() != artBounds || look != artLook)
+    // The steady part of each card (glass, tubes, words, their glow) is kept as a picture and only drawn
+    // again when something on that card changes. Each frame lays the pictures down and adds the moving parts.
+    for (int n = 0; n < numPieces; ++n)
     {
-        artDirty = false;
-        artLook = look;
-        artScale = scale;
-        artBounds = getLocalBounds();
-        auto drawSteady = [&] (juce::Graphics& gg)
+        auto& p = pieces[(size_t) n];
+        if (p.shown != l.shown[(size_t) n] || p.box != l.box[(size_t) n])
         {
-            hits.clear();
-            live.clear();
-            liveAreas.clear();
-            const auto pane = juce::Colour (0xc20d0d0f);
-            Draw d { *this, gg, {} };
-
-            // The look and the form float along the bottom of the picture when there is room
-            if (l.strip != 0)
-            {
-                d.setPlace ({});
-                gg.setColour (pane);
-                gg.fillRoundedRectangle (l.stripBox, 14.0f);
-                gg.setColour (juce::Colour (0xff34363c));
-                gg.drawRoundedRectangle (l.stripBox, 14.0f, 1.0f);
-                const bool two = l.strip == 2;
-                const float sx = 24.0f, sy = (float) getHeight() - 48.0f;
-                const auto col = Theme::get().themeColour();
-                d.iconRow (0, sx, two ? sy - 56.0f : sy, 128.0f, col, false);
-                d.iconRow (1, two ? sx : sx + 3.0f * 128.0f + 24.0f, sy, 128.0f, col, false);
-                d.block (l.stripBox);
-                liveAreas.push_back (l.stripBox.getSmallestIntegerContainer());
-            }
-            if (panelShown)
-            {
-                d.setPlace ({});
-                gg.setColour (pane);
-                gg.fillRoundedRectangle (l.panel, 14.0f);
-                gg.setColour (juce::Colour (0xff34363c));
-                gg.drawRoundedRectangle (l.panel.reduced (0.5f), 14.0f, 1.0f);
-                const auto col = Theme::get().themeColour();
-                const float hw = Neon::textWidth ("hide", 15.0f * l.K);
-                d.word ("hide", l.panel.getRight() - 16.0f, l.panel.getY() + 12.0f + 18.0f * l.K, 15.0f * l.K, col, false, Neon::Align::right);
-                d.hit ({ l.panel.getRight() - 20.0f - hw, l.panel.getY() + 4.0f, hw + 10.0f, 14.0f + 18.0f * l.K }, {}, [this] { panelShown = false; artDirty = true; repaint(); });
-                {
-                    juce::Graphics::ScopedSaveState state (gg);
-                    gg.reduceClipRegion (l.panel.getSmallestIntegerContainer());
-                    gg.addTransform (l.column);
-                    d.setPlace (l.column);
-                    d.column (l.strip != 0);
-                }
-                d.setPlace ({});
-                d.block (l.panel);
-                liveAreas.push_back (l.panel.getSmallestIntegerContainer());
-            }
-            else
-            {
-                d.setPlace ({});
-                const auto col = Theme::get().themeColour();
-                const float w = Neon::textWidth ("show controls", 19.0f);
-                d.word ("show controls", (float) getWidth() - 20.0f, 34.0f, 19.0f, col, true, Neon::Align::right);
-                d.hit ({ (float) getWidth() - 26.0f - w, 10.0f, w + 12.0f, 34.0f }, {}, [this] { panelShown = true; artDirty = true; repaint(); });
-            }
-            Neon::glow().base = Neon::glow().current = {};
-        };
-
-        // Once with nothing drawn, to gather the lit shapes for the glow and find where the pieces are
-        auto& glow = Neon::glow();
-        glow.sources.clear();
-        glow.collecting = true;
-        glow.alpha = 1.0f;
-        {
-            juce::Image none (juce::Image::ARGB, 1, 1, true);
-            juce::Graphics dg (none);
-            dg.reduceClipRegion (juce::Rectangle<int>());
-            drawSteady (dg);
+            p.shown = l.shown[(size_t) n];
+            p.box = l.box[(size_t) n];
+            p.dirty = true;
         }
-        glow.collecting = false;
-        glowLayer.build (getWidth(), getHeight(), l.K);
-
-        // Then for real, into a picture for each piece (a new picture each time: one drawn over in place can show stale on the Mac)
-        auto areas = liveAreas;
-        if (! panelShown) areas.push_back ({ getWidth() - 280, 0, 280, 56 });
-        arts.clear();
-        for (auto area : areas)
+        if (! p.shown) { p.hits.clear(); p.live.clear(); p.art = {}; continue; }
+        if (p.dirty || ! p.art.isValid()) rebuild (n, l, scale);
+        if (n == cChrome && maximised && ! chromeShown) continue;
+        if (p.art.isValid() && g.clipRegionIntersects (p.area))
+            g.drawImage (p.art, p.area.toFloat());
+        for (auto& part : p.live)
         {
-            area = area.expanded (8).getIntersection (getLocalBounds());
-            if (area.isEmpty()) continue;
-            juce::Image image (juce::Image::ARGB, juce::jmax (1, juce::roundToInt ((float) area.getWidth() * scale)), juce::jmax (1, juce::roundToInt ((float) area.getHeight() * scale)), true);
-            {
-                juce::Graphics ig (image);
-                ig.addTransform (juce::AffineTransform::translation ((float) -area.getX(), (float) -area.getY()).scaled (scale));
-                glowLayer.draw (ig, getLocalBounds().toFloat());
-                drawSteady (ig);
-            }
-            arts.push_back ({ area, image });
+            if (! g.clipRegionIntersects (part.box)) continue;
+            juce::Graphics::ScopedSaveState state (g);
+            g.addTransform (part.place);
+            part.draw (g);
         }
     }
-    for (auto& piece : arts)
-        g.drawImage (piece.second, piece.first.toFloat());
+}
 
-    // The parts that move with the music are drawn on top and leave the steady glow alone
-    for (auto& part : live)
+//==============================================================================
+// Scenes
+
+void Visualiser::sceneClicked (int i)
+{
+    if (i < 0 || i >= (int) scenes.size()) return;
+    if (storing)
     {
-        juce::Graphics::ScopedSaveState state (g);
-        g.addTransform (part.place);
-        part.draw (g);
+        scenes[(size_t) i] = settings;
+        storing = false;
+        scene = i;
+        last = "stored in scene " + juce::String (i + 1);
+        edited = true;
+        relayout();
     }
+    else if (scenes[(size_t) i].has_value())
+    {
+        // A scene is a look: the mode and everything that shapes and colours it. What the picture
+        // listens to (wiring, lines, bands, sync) and the backdrop stay as they are.
+        const auto& from = *scenes[(size_t) i];
+        const auto keep = settings;
+        settings.style = from.style;
+        settings.v = from.v;
+        settings.w = from.w;
+        for (int k : { F::gate, F::tgate, F::lgate, F::mgate, F::hgate, F::nudge, F::back }) settings.v[(size_t) k] = keep.v[(size_t) k];
+        scene = i;
+        last = "scene " + juce::String (i + 1);
+        edited = true;
+        relayout();
+    }
+}
+
+juce::var Visualiser::scenesVar() const
+{
+    juce::Array<juce::var> list;
+    for (auto& s : scenes) list.add (s.has_value() ? s->toVar() : juce::var());
+    return list;
 }
 
 //==============================================================================
@@ -1118,8 +1630,13 @@ void Visualiser::paint (juce::Graphics& g)
 
 const Visualiser::Hit* Visualiser::hitAt (juce::Point<float> p) const
 {
-    for (auto& h : hits)
-        if (h.box.contains (p)) return &h;
+    for (int n = numPieces - 1; n >= 0; --n)          // the word over the picture first
+    {
+        auto& piece = pieces[(size_t) n];
+        if (! piece.shown) continue;
+        for (auto& h : piece.hits)
+            if (h.box.contains (p)) return &h;
+    }
     return nullptr;
 }
 
@@ -1129,26 +1646,29 @@ void Visualiser::mouseDown (const juce::MouseEvent& e)
     {
         const auto hitCopy = *h;
         if (e.mods.isAltDown() && probeLane (hitCopy, e.position))
-            return;            // the list is rebuilt by the repaint a click can cause
+            return;            // the lists are rebuilt by the repaint a click can cause
         if (hitCopy.click != nullptr) hitCopy.click();
+        activeCard = hitCopy.card;
         activeDrag = hitCopy.drag;
         activeUp = hitCopy.up;
         if (activeDrag != nullptr) activeDrag (e.position.x, e.position.y);
-        repaint();
         return;
     }
     // Anywhere on the picture: stir it by hand
-    draggingPicture = true;
-    dragX = e.position.x / (float) getWidth();
-    dragY = e.position.y / (float) getHeight();
+    if (screenBox.contains (e.position) && ! screenBox.isEmpty())
+    {
+        draggingPicture = true;
+        dragX = (e.position.x - screenBox.getX()) / screenBox.getWidth();
+        dragY = (e.position.y - screenBox.getY()) / screenBox.getHeight();
+    }
 }
 
 void Visualiser::mouseDrag (const juce::MouseEvent& e)
 {
     if (draggingPicture)
     {
-        dragX = juce::jlimit (0.0f, 1.0f, e.position.x / (float) getWidth());
-        dragY = juce::jlimit (0.0f, 1.0f, e.position.y / (float) getHeight());
+        dragX = juce::jlimit (0.0f, 1.0f, (e.position.x - screenBox.getX()) / screenBox.getWidth());
+        dragY = juce::jlimit (0.0f, 1.0f, (e.position.y - screenBox.getY()) / screenBox.getHeight());
     }
     else if (activeDrag != nullptr)
         activeDrag (e.position.x, e.position.y);
@@ -1157,15 +1677,15 @@ void Visualiser::mouseDrag (const juce::MouseEvent& e)
 void Visualiser::mouseUp (const juce::MouseEvent&)
 {
     if (draggingPicture) { draggingPicture = false; dragX = -1.0f; dragY = -1.0f; }
-    if (activeUp != nullptr) { const auto up = activeUp; up(); }
     activeDrag = nullptr;
-    activeUp = nullptr;
+    if (activeUp != nullptr) { const auto up = activeUp; activeUp = nullptr; up(); }
+    activeCard = -1;
     saveDue = true;
-    repaint();
 }
 
 void Visualiser::mouseMove (const juce::MouseEvent& e)
 {
+    lastPointerMove = juce::Time::getMillisecondCounter();
     auto* h = hitAt (e.position);
     setMouseCursor (h != nullptr && (h->drag != nullptr || h->click != nullptr) ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
 }
@@ -1177,9 +1697,7 @@ void Visualiser::mouseDoubleClick (const juce::MouseEvent& e)
         if (h->reset != nullptr) { const auto reset = h->reset; reset(); }       // back to where it started
         return;
     }
-    panelShown = ! panelShown;
-    artDirty = true;
-    repaint();
+    if (screenBox.contains (e.position)) toggleMaximised();                      // the picture takes the window, or gives it back
 }
 
 void Visualiser::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) {}
@@ -1237,21 +1755,22 @@ std::vector<AppContext::ParamInfo> Visualiser::automatableParams() const
         out.push_back (p);
     }
     for (int k : { F::react, F::pulse, F::stir, F::flash, F::speed, F::back, F::gate, F::nudge }) fader ("visualiser", k);
-    for (int k : { F::hue, F::tint, F::psy, F::trip, F::seg, F::depth, F::spin, F::idle, F::scale, F::swirl, F::idetail, F::chaos, F::vort, F::trails, F::drops, F::fade })
+    for (int k : { F::tgate, F::lgate, F::mgate, F::hgate }) { fader ("visualiser", k); out.back().name << " line"; }
+    for (int k : { F::hue, F::tint, F::psy, F::trip, F::seg, F::depth, F::spin, F::idle, F::scale, F::swirl, F::idetail, F::chaos, F::vort, F::trails, F::drops, F::fade, F::breathe, F::marble, F::bleed })
         fader ("ink", k);
-    choice ("ink", "look", C::surface, 3); choice ("ink", "form", C::form, 4); choice ("ink", "mirror", C::mirror, 3);
+    choice ("ink", "look", C::surface, 3); choice ("ink", "form", C::form, 4); choice ("ink", "mirror", C::mirror, 5);
     choice ("ink", "tones", C::tones, 4); choice ("ink", "trail kind", C::trails, 2);
-    for (int k : { F::lhue, F::ltint, F::lpsy, F::lcount, F::lsize, F::lwob, F::ldrops, F::ldepth, F::lspin, F::lidle, F::lflow, F::lswell, F::ltrails })
+    for (int k : { F::lhue, F::ltint, F::lpsy, F::lcount, F::lsize, F::lwob, F::ldrops, F::ldepth, F::lspin, F::lidle, F::lflow, F::lswell, F::ltrails, F::lheat, F::lmerge, F::lshim })
         fader ("liquid", k);
-    choice ("liquid", "look", C::lsurface, 3); choice ("liquid", "form", C::lform, 4);
+    choice ("liquid", "look", C::lsurface, 3); choice ("liquid", "form", C::lform, 4); choice ("liquid", "mirror", C::lmirror, 5);
     choice ("liquid", "tones", C::ltones, 4); choice ("liquid", "trail kind", C::ltrails, 2);
-    for (int k : { F::shue, F::stint, F::spsy, F::sgrain, F::scomp, F::ssharp, F::sscatter, F::schange, F::sspin, F::sidle, F::strails })
+    for (int k : { F::shue, F::stint, F::spsy, F::sgrain, F::scomp, F::ssharp, F::sscatter, F::schange, F::sspin, F::sidle, F::strails, F::sdens, F::sdrift, F::sres })
         fader ("sand", k);
-    choice ("sand", "look", C::ssurface, 3); choice ("sand", "plate", C::sform, 3);
+    choice ("sand", "look", C::ssurface, 3); choice ("sand", "plate", C::sform, 3); choice ("sand", "mirror", C::smirror, 5);
     choice ("sand", "tones", C::stones, 4); choice ("sand", "trail kind", C::strails, 2);
-    for (int k : { F::bhue, F::btint, F::bpsy, F::bspeed, F::bcover, F::bseeds, F::bfresh, F::bspin, F::bidle, F::btrails })
+    for (int k : { F::bhue, F::btint, F::bpsy, F::bspeed, F::bcover, F::bseeds, F::bfresh, F::bspin, F::bidle, F::btrails, F::bbranch, F::brings, F::bhalo })
         fader ("bloom", k);
-    choice ("bloom", "look", C::bsurface, 3); choice ("bloom", "kind", C::btype, 3); choice ("bloom", "mirror", C::bmirror, 3);
+    choice ("bloom", "look", C::bsurface, 3); choice ("bloom", "kind", C::btype, 3); choice ("bloom", "mirror", C::bmirror, 5);
     choice ("bloom", "tones", C::btones, 4); choice ("bloom", "trail kind", C::btrails, 2);
     for (int s = 0; s < numSources; ++s)
         for (int d = 0; d < numDests; ++d)
@@ -1283,7 +1802,7 @@ void Visualiser::applyAutomation()
         const juce::SpinLock::ScopedLockType lock (sharedLock);
         shared = settings;
     }
-    artDirty = true;
+    markAll();
     if (view == full) repaint();
 }
 
@@ -1306,7 +1825,7 @@ void Visualiser::reportTouches()
 
 bool Visualiser::probeLane (const Hit& h, juce::Point<float> at)
 {
-    if (h.drag == nullptr && h.click == nullptr) return false;
+    if (! h.setting || (h.drag == nullptr && h.click == nullptr)) return false;
     // Run the control on marked values, see which one it wrote, then put everything back
     const auto before = settings;
     const auto lastBefore = last;
@@ -1327,6 +1846,7 @@ bool Visualiser::probeLane (const Hit& h, juce::Point<float> at)
     if (! found.valid() && settings.style != before.style) found = { AutoTarget::vis, 3, 0 };
     settings = before;
     last = lastBefore;
+    cell = {};
     {
         const juce::SpinLock::ScopedLockType lock (sharedLock);
         shared = settings;
