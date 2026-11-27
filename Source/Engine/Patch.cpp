@@ -31,6 +31,7 @@ namespace
             e.push_back ({ n + " Destination", rows[i][1], rows[i][1] });
             e.push_back ({ n + " Amount", 0.0f, 0.0f });
         }
+        e.push_back ({ "Osc Blend", 0.5f, 0.5f });
         return e;
     }
 
@@ -46,6 +47,8 @@ namespace
             { "Warp", 0.0f, 0.0f } };
         for (int i = 0; i < Param::Sampler::maxMarkers; ++i)
             e.push_back ({ "Marker " + juce::String (i + 1), -1.0f, -1.0f });
+        e.push_back ({ "Scratch", 0.0f, 0.0f });
+        e.push_back ({ "Scratch Position", 0.0f, 0.0f });
         return e;
     }
 

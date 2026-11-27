@@ -23,6 +23,7 @@ namespace Param
             L1Rate, L2Rate, Glide, Unison, Spread, VelAmp,
             FMode, Link, Sync, L1Shape, L2Shape, VMode,
             MxSrc0, MxDst0, MxAmt0, MxSrc1, MxDst1, MxAmt1, MxSrc2, MxDst2, MxAmt2, MxSrc3, MxDst3, MxAmt3,
+            Blend,          // how much of A and B: 0.5 is both at full
             Count
         };
         enum FilterMode { LP24, LP12, BP, HP };
@@ -39,7 +40,8 @@ namespace Param
             Start, Length, Pitch, Attack, Release, Gain,
             Sens, XFade, Fine, Root, Hold, Decay, Sustain, Cutoff, Res, Drive, Tape, Crush, Pan, VelGain,
             Mode, Slicer, Grid, Reverse, FMode, Voices, LoopA, LoopB, Warp,
-            Marker0, Count = Marker0 + 15
+            Marker0, Scrub = Marker0 + 15, ScrubPos,    // the crank's scratch: on, and where the hand has the film
+            Count
         };
         enum PlayMode { Classic, OneShot, Slice, Loop };
         enum SliceBy { Transient, GridSlices, Manual };

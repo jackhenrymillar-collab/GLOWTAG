@@ -216,6 +216,8 @@ namespace
             const int uni = 1 + juce::jlimit (0, 4, juce::roundToInt (raw (Unison) * 4.0f));
             const float spread = raw (Spread) * 50.0f, uniGain = 1.0f / std::sqrt ((float) uni);
             const bool sync = on (Sync);
+            const float blend = juce::jlimit (0.0f, 1.0f, raw (Blend));
+            const float levelA = juce::jmin (1.0f, 2.0f * (1.0f - blend)), levelB = juce::jmin (1.0f, 2.0f * blend);
             const int fmode = juce::jlimit (0, 3, choice (FMode));
             const float glide = raw (Glide) * 0.8f;
             const float glideCoef = glide > 0.01f ? 1.0f - std::exp (-(float) n / (glide / 3.0f * (float) sr)) : 1.0f;
@@ -278,9 +280,9 @@ namespace
                     float x = 0.0f;
                     for (int u = 0; u < uni; ++u)
                     {
-                        x += v.a[(size_t) u].process (shapeA, pw);
+                        x += v.a[(size_t) u].process (shapeA, pw) * levelA;
                         if (sync && v.a[(size_t) u].wrapped) v.b[(size_t) u].phase = v.a[(size_t) u].phase;
-                        x += v.b[(size_t) u].process (shapeB);
+                        x += v.b[(size_t) u].process (shapeB) * levelB;
                     }
                     x *= 0.5f * uniGain;
                     x += v.sub.process (1.0f) * subAmt * 0.6f;
@@ -338,6 +340,11 @@ namespace
             bool active = false, oneShot = false, loop = false, stretch = false;
         };
         std::array<Voice, 16> voices;
+        // The crank's scratch: a read head that chases where the hand has put the film, so winding
+        // fast plays fast and winding back plays backwards, like a record under a hand
+        double scratchPos = 0.0;
+        float scratchLevel = 0.0f;
+        bool scratching = false;
         SVF fl, fr;
         DCBlock dcl, dcr;
 
@@ -525,6 +532,25 @@ namespace
                 view.released = v.released < 0.0 ? -1.0f : (float) (v.released / sr);
             }
             display = (float) playing;
+
+            if (on (Scrub) || scratchLevel > 0.0001f)
+            {
+                const double target = juce::jlimit (0.0, 1.0, (double) raw (ScrubPos)) * (len - 2);
+                if (! scratching && on (Scrub)) { scratchPos = target; scratching = true; }
+                if (! on (Scrub)) scratching = false;
+                const double chase = 1.0 - std::exp (-1.0 / (0.03 * sr));
+                const float fade = (float) (1.0 - std::exp (-1.0 / (0.01 * sr)));
+                for (int i = 0; i < n; ++i)
+                {
+                    const double before = scratchPos;
+                    if (scratching) scratchPos += (target - scratchPos) * chase;
+                    const float speed = (float) std::abs (scratchPos - before) / (float) juce::jmax (1e-9, rate);
+                    scratchLevel += ((scratching ? juce::jmin (1.0f, speed * 3.0f) : 0.0f) - scratchLevel) * fade;
+                    const float g = scratchLevel * gain;
+                    l[i] += read (sl, scratchPos, len) * g;
+                    r[i] += read (srr, scratchPos, len) * g;
+                }
+            }
 
             // Colour after the voices: filter, drive, tape, crush, pan
             const float cut = raw (Cutoff), res = raw (Res), drive = raw (Drive), tape = raw (Tape), crush = raw (Crush);
