@@ -26,6 +26,14 @@ public:
 
     std::atomic<bool> enabled { false };
 
+    // What the low, middle and high levels listen to, in Hz. Set from the panel at any time.
+    void setBand (int band, float lowHz, float highHz);
+
+    // The sound as a row of bars from 30 Hz to 16 kHz, evenly spaced by pitch (0..1 each), for the panel
+    static constexpr int spectrumBars = 56;
+    static constexpr double spectrumLow = 30.0, spectrumHigh = 16000.0;
+    std::array<std::atomic<float>, spectrumBars> spectrum {};
+
 private:
     void analyse();
     static constexpr int order = 10, size = 1 << order;
@@ -48,6 +56,8 @@ private:
     std::array<Det, 4> det;
     struct Pending { int kind; double t0, stamp; float e, ek, eh, es; bool used; };
     std::array<Pending, 8> pending {};
+    std::array<int, spectrumBars> barFrom {}, barTo {};
+    std::array<std::atomic<float>, 3> bandLow { 35.0f, 200.0f, 3000.0f }, bandHigh { 140.0f, 2000.0f, 12000.0f };
 
     juce::AbstractFifo hitFifo { 256 }, bandFifo { 1024 };
     std::array<Hit, 256> hits {};

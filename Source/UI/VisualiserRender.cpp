@@ -65,12 +65,18 @@ void Settings::resetWiring()
     route[sBig][dBurst] = 1.0f;
 }
 
+void Settings::resetBands()
+{
+    bandHz = { { { 35.0f, 140.0f }, { 200.0f, 2000.0f }, { 3000.0f, 12000.0f } } };
+}
+
 void Settings::reset()
 {
     for (int i = 0; i < F::count; ++i) v[(size_t) i] = faderDefaults[i];
     for (int i = 0; i < C::count; ++i) w[(size_t) i] = choiceDefaults[i];
     style = ink;
     resetWiring();
+    resetBands();
 }
 
 juce::var Settings::toVar() const
@@ -93,6 +99,9 @@ juce::var Settings::toVar() const
     o->setProperty ("faders", juce::var (fv));
     o->setProperty ("choices", juce::var (cv));
     o->setProperty ("wires", wires);
+    juce::Array<juce::var> ranges;
+    for (auto& b : bandHz) { juce::Array<juce::var> r; r.add (b[0]); r.add (b[1]); ranges.add (r); }
+    o->setProperty ("bands", ranges);
     return juce::var (o);
 }
 
@@ -105,7 +114,7 @@ void Settings::fromVar (const juce::var& var)
     for (int i = 0; i < F::count; ++i)
         if (var["faders"].hasProperty (faderNames[i])) v[(size_t) i] = clamp01 ((float) var["faders"][faderNames[i]]);
     for (int i = 0; i < C::count; ++i)
-        if (var["choices"].hasProperty (choiceNames[i])) w[(size_t) i] = juce::jlimit (0, 3, (int) var["choices"][choiceNames[i]]);
+        if (var["choices"].hasProperty (choiceNames[i])) w[(size_t) i] = juce::jlimit (0, 4, (int) var["choices"][choiceNames[i]]);
     if (auto* wires = var["wires"].getArray())
     {
         for (auto& row : route) row.fill (0.0f);
@@ -116,6 +125,14 @@ void Settings::fromVar (const juce::var& var)
                 if (s >= 0 && s < numSources && d >= 0 && d < numDests) route[(size_t) s][(size_t) d] = clamp01 ((float) wire[2]);
             }
     }
+    if (auto* ranges = var["bands"].getArray())
+        for (int k = 0; k < 3 && k < ranges->size(); ++k)
+        {
+            const auto& r = ranges->getReference (k);
+            if (r.size() != 2) continue;
+            const float a = juce::jlimit (lowestHz, highestHz / 1.25f, (float) r[0]);
+            bandHz[(size_t) k] = { a, juce::jlimit (a * 1.25f, highestHz, (float) r[1]) };
+        }
 }
 
 int Settings::hueKey() const       { static const int k[] = { F::hue, F::lhue, F::shue, F::bhue };             return k[style]; }
@@ -127,6 +144,7 @@ int Settings::idleKey() const      { static const int k[] = { F::idle, F::lidle,
 int Settings::tonesKey() const     { static const int k[] = { C::tones, C::ltones, C::stones, C::btones };     return k[style]; }
 int Settings::trailModeKey() const { static const int k[] = { C::trails, C::ltrails, C::strails, C::btrails }; return k[style]; }
 int Settings::surfaceKey() const   { static const int k[] = { C::surface, C::lsurface, C::ssurface, C::bsurface }; return k[style]; }
+int Settings::mirrorKey() const    { static const int k[] = { C::mirror, C::lmirror, C::smirror, C::bmirror }; return k[style]; }
 int Settings::formKey() const      { static const int k[] = { C::form, C::lform, C::sform, C::btype };         return k[style]; }
 
 static juce::Colour hsl (float h, float s, float l)
@@ -303,7 +321,7 @@ void Renderer::burst (float strength, const Settings& S)
         const int m = S.w[C::mirror];
         const float a = (float) sim[0].w / (float) sim[0].h;
         const float x = m > 0 ? random.nextFloat() * a * 0.35f : a * (0.3f + random.nextFloat() * 0.4f);
-        const float y = m == 2 ? random.nextFloat() * 0.35f : 0.3f + random.nextFloat() * 0.4f;
+        const float y = m >= 2 ? random.nextFloat() * 0.35f : 0.3f + random.nextFloat() * 0.4f;
         const int ch = random.nextInt (2);
         splats.push_back ({ x, y, 0.09f + 0.12f * strength, (0.5f + strength) * (0.35f + S.v[F::drops]), { ch == 0 ? 1.0f : 0.0f, ch == 1 ? 1.0f : 0.0f, 0.0f } });
         if (strength > 0.5f) splats.push_back ({ x + 0.05f, y + 0.05f, 0.04f, 0.6f * S.v[F::drops] + 0.2f, { 0.0f, 0.0f, 1.0f } });
@@ -338,10 +356,21 @@ void Renderer::fire (int kind, float rel, const Settings& S, Readout& readout)
         }
         readout.kicks[(size_t) readout.numKicks++] = { T, rel, big };
     }
+    // Every sharp hit is a transient; only those at or above its line get through
+    const bool sharp = rel >= S.v[F::tgate] - 0.001f;
+    {
+        const juce::SpinLock::ScopedLockType lock (readout.lock);
+        if (readout.numSharps == (int) readout.sharps.size())
+        {
+            std::move (readout.sharps.begin() + 1, readout.sharps.end(), readout.sharps.begin());
+            --readout.numSharps;
+        }
+        readout.sharps[(size_t) readout.numSharps++] = { T, rel, sharp };
+    }
     static const int sourceOf[] = { sKick, sSnare, sHat };
     if (kind != VisListener::tone) hitSignal (sourceOf[kind], strength, S);
     if (big) hitSignal (sBig, strength, S);
-    if (T - lastTransient > 0.05 || strength > signal[sTrans]) hitSignal (sTrans, strength, S);
+    if (sharp && (T - lastTransient > 0.05 || strength > signal[sTrans])) hitSignal (sTrans, strength, S);
 }
 
 void Renderer::analyse (float dt, const Settings& S, VisListener& ear, double latency, Readout& readout)
@@ -385,7 +414,22 @@ void Renderer::analyse (float dt, const Settings& S, VisListener& ear, double la
         }
         else ++i;
     }
-    signal[sLow] = band[0]; signal[sMid] = band[1]; signal[sHigh] = band[2]; signal[sLevel] = level;
+    // A level only reaches the wiring while it is at or above its line (the meters and the picture's own
+    // use of low, mid and high are not held back)
+    static const int lines[] = { F::lgate, F::mgate, F::hgate };
+    for (int k = 0; k < 3; ++k) signal[(size_t) (sLow + k)] = band[k] >= S.v[(size_t) lines[k]] ? band[k] : 0.0f;
+    signal[sLevel] = level;
+    if (T - levelTime > 0.033)
+    {
+        levelTime = T;
+        const juce::SpinLock::ScopedLockType lock (readout.lock);
+        if (readout.numLevels == (int) readout.levels.size())
+        {
+            std::move (readout.levels.begin() + 1, readout.levels.end(), readout.levels.begin());
+            --readout.numLevels;
+        }
+        readout.levels[(size_t) readout.numLevels++] = { T, { band[0], band[1], band[2] } };
+    }
 
     reaction.fill (0.0f);
     for (int s = 0; s < numSources; ++s)
@@ -529,7 +573,21 @@ void Renderer::frame (const Settings& S, VisListener& ear, double latency, const
             if (b > 0.15f) splats.push_back ({ x, y, 0.04f + 0.07f * b, d * b * (i == 0 ? 2.2f : 1.5f), { i == 0 ? 1.0f : 0.0f, i == 1 ? 1.0f : 0.0f, i == 2 ? 1.0f : 0.0f } });
         }
         if (dragging)
-            splats.push_back ({ (m > 0 ? std::abs (2.0f * (drag.x - 0.5f)) : drag.x) * sw, m == 2 ? std::abs (2.0f * (drag.y - 0.5f)) : drag.y, 0.05f, dt * 6.0f, { 0.0f, 1.0f, 0.0f } });
+        {
+            // The pointer is folded the way the picture is, so the ink lands under it
+            float rx = (drag.x - 0.5f) * aspect, ry = drag.y - 0.5f;
+            if (m > 0) rx = std::abs (rx);
+            if (m == 2) ry = std::abs (ry);
+            if (m > 2)
+            {
+                const float seg = juce::MathConstants<float>::twoPi / (m == 3 ? 3.0f : 4.0f), len = std::hypot (rx, ry);
+                float an = std::fmod (std::atan2 (rx, ry) + seg * 0.5f, seg);
+                if (an < 0.0f) an += seg;
+                an = std::abs (an - seg * 0.5f);
+                rx = len * std::sin (an); ry = len * std::cos (an);
+            }
+            splats.push_back ({ m > 0 ? rx * 2.0f / aspect * sw : drag.x * sw, m >= 2 ? ry * 2.0f : drag.y, 0.05f, dt * 6.0f, { 0.0f, 1.0f, 0.0f } });
+        }
 
         float sp[32] = {}, sc[24] = {};
         const int use = juce::jmin (8, (int) splats.size());
@@ -559,7 +617,7 @@ void Renderer::frame (const Settings& S, VisListener& ear, double latency, const
         }
         glUniform1f (p.u ("swl"), 0.0f);
         glUniform1f (p.u ("cf"), juce::jmin (spinRate * spinRate * 0.02f, 0.12f) / 0.11f);
-        glUniform2f (p.u ("ctr"), m > 0 ? 0.0f : sw * 0.5f, m == 2 ? 0.0f : 0.5f);
+        glUniform2f (p.u ("ctr"), m > 0 ? 0.0f : sw * 0.5f, m >= 2 ? 0.0f : 0.5f);
         glUniform1f (p.u ("comp"), S.w[C::tones] == 0 ? 0.0f : 0.07f);
         glUniform3fv (p.u ("vx"), 6, vx);
         glUniform1i (p.u ("nv"), nv);
@@ -596,6 +654,9 @@ void Renderer::frame (const Settings& S, VisListener& ear, double latency, const
         glUniform1f (s.u ("tw"), twist);
         glUniform1f (s.u ("psy"), psy);
         glUniform1f (s.u ("trip"), S.v[F::trip]);
+        glUniform1f (s.u ("marble"), S.v[F::marble]);
+        glUniform1f (s.u ("bleed"), S.v[F::bleed]);
+        glUniform1f (s.u ("breathe"), S.v[F::breathe]);
         glDrawArrays (GL_TRIANGLES, 0, 3);
         trailOut (W, H, dt, aspect, trailAmount, echo, psy, 1.0f, o);
     }
@@ -633,6 +694,7 @@ void Renderer::frame (const Settings& S, VisListener& ear, double latency, const
                 bx = aspect * 0.78f * std::sin (lp * 0.11f * (1.0f + (float) (i % 5) * 0.13f) + a * 1.3f) + 0.2f * std::sin (t * 0.21f + fi);
                 by = 0.78f * std::cos (lp * 0.09f * (1.0f + (float) (i % 4) * 0.17f) + a * 2.1f) + 0.12f * std::cos (t * 0.17f + fi * 2.0f);
             }
+            by += S.v[F::lheat] * 0.6f * std::sin (lp * 0.34f * (1.0f + (float) (i % 3) * 0.35f) + fi * 2.3f);    // heat: they rise and fall faster
             bl[n * 3] = bx; bl[n * 3 + 1] = by;
             bl[n * 3 + 2] = (0.17f + 0.11f * (float) ((i * 7) % 5) / 5.0f) * size * (1.0f + (band[0] * 0.3f + reaction[dPulse] * (i % 2 ? 0.45f : 0.25f)) * swell);
         }
@@ -658,6 +720,9 @@ void Renderer::frame (const Settings& S, VisListener& ear, double latency, const
         glUniform1i (p.u ("form"), form);
         glUniform1f (p.u ("wob"), S.v[F::lwob]);
         glUniform1f (p.u ("lay"), S.v[F::ldepth]);
+        glUniform1i (p.u ("mir"), S.w[C::lmirror]);
+        glUniform1f (p.u ("TH"), 1.01f * std::pow (1.9f, (0.5f - S.v[F::lmerge]) * 2.0f));
+        glUniform1f (p.u ("shim"), S.v[F::lshim]);
         glDrawArrays (GL_TRIANGLES, 0, 3);
         trailOut (W, H, dt, aspect, trailAmount, echo, psy, 1.6f, o);
     }
@@ -675,7 +740,10 @@ void Renderer::frame (const Settings& S, VisListener& ear, double latency, const
         glUniform1f (p.u ("rot"), theta);
         glUniform1f (p.u ("psy"), psy);
         glUniform1f (p.u ("grain"), S.v[F::sgrain]);
-        glUniform1f (p.u ("shake"), clamp01 ((reaction[dPulse] * 0.55f + reaction[dStir] * 0.12f) * S.v[F::sscatter] * 2.0f));
+        glUniform1f (p.u ("shake"), clamp01 ((reaction[dPulse] * 0.55f + reaction[dStir] * 0.12f) * S.v[F::sscatter] * 2.0f + S.v[F::sres] * band[2] * 0.9f));
+        glUniform1f (p.u ("dnk"), 0.3f + S.v[F::sdens] * 1.4f);
+        glUniform1f (p.u ("drift"), S.v[F::sdrift]);
+        glUniform1i (p.u ("mir"), S.w[C::smirror]);
         glUniform1f (p.u ("sharp"), S.v[F::ssharp]);
         glUniform1i (p.u ("surf"), S.w[C::ssurface]);
         glUniform1i (p.u ("form"), S.w[C::sform]);
@@ -687,7 +755,7 @@ void Renderer::frame (const Settings& S, VisListener& ear, double latency, const
         // Bloom: growth that forms, glows, dims and dissolves. Big hits plant new growth.
         ensureSim (aspect);
         const float sw = (float) sim[0].w / (float) sim[0].h;
-        const int kind = S.w[C::btype];
+        const int kind = juce::jlimit (0, 2, S.w[C::btype]);
         auto seedSize = [&] { return (kind == 1 ? 0.038f : 0.02f) + rnd() * 0.016f; };
         bool clear = false;
         if (seed)
@@ -714,7 +782,7 @@ void Renderer::frame (const Settings& S, VisListener& ear, double latency, const
         glUniform1f (p.u ("asp"), sw);
         glUniform2f (p.u ("px"), 1.0f / (float) sim[0].w, 1.0f / (float) sim[0].h);
         glUniform1f (p.u ("fd"), types[kind][0] + (level - 0.4f) * 0.0025f);
-        glUniform1f (p.u ("kl"), types[kind][1]);
+        glUniform1f (p.u ("kl"), types[kind][1] - (S.v[F::bbranch] - 0.5f) * 0.005f);
         glViewport (0, 0, sim[0].w, sim[0].h);
         glActiveTexture (GL_TEXTURE0);
         glUniform1i (p.u ("prev"), 0);
@@ -756,6 +824,11 @@ void Renderer::frame (const Settings& S, VisListener& ear, double latency, const
         glUniform1f (s.u ("fresh"), S.v[F::bfresh]);
         glUniform1i (s.u ("surf"), S.w[C::bsurface]);
         glUniform1i (s.u ("mir"), S.w[C::bmirror]);
+        glUniform1f (s.u ("halo"), S.v[F::bhalo]);
+        glUniform1f (s.u ("ringk"), S.v[F::brings]);
+        float ages[6] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        for (size_t i = 0; i < onsets.size() && i < 6; ++i) ages[i] = (float) (T - onsets[i].time);
+        glUniform1fv (s.u ("ons"), 6, ages);
         glDrawArrays (GL_TRIANGLES, 0, 3);
         trailOut (W, H, dt, aspect, trailAmount, echo, psy, 1.0f, o);
     }

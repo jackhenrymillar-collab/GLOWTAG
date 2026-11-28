@@ -52,7 +52,7 @@ private:
     int simIndex = 0, trailIndex = 0;
     unsigned int vao = 0, vbo = 0;
 
-    double T = 0.0, lastTime = 0.0, lastTransient = -9.0, sandTime = -9.0, bloomTime = 0.0;
+    double T = 0.0, lastTime = 0.0, lastTransient = -9.0, sandTime = -9.0, bloomTime = 0.0, levelTime = 0.0;
     float ph = 0.0f, theta = 0.0f, omega = 0.0f, spinRate = 0.0f, fluidRate = 0.0f, twist = 0.0f, echoTime = 0.0f;
     float liquidPhase = 0.0f, liquidLast = -1.0f, bloomSteps = 0.0f;
     int sandA = 0, sandB = 1, sandCount = 0, lastStyle = -1;

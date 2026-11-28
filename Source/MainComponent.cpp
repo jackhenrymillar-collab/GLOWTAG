@@ -4,7 +4,7 @@
 namespace
 {
     enum MenuIds { menuNew = 1, menuOpen, menuSave, menuSaveAs, menuClearRecent, menuArrange, menuMix, menuEdit, menuPlay, menuRecord,
-                   menuMetronome, menuPalette, menuWall, menuVisFull, menuVisBehind, menuVisOff, menuLanes, menuSettings, menuVisTrack, menuRecentBase = 100 };
+                   menuMetronome, menuPalette, menuWall, menuVisFull, menuVisBehind, menuVisOff, menuLanes, menuSettings, menuVisTrack, menuVisMax, menuRecentBase = 100 };
 }
 
 MainComponent::MainComponent()
@@ -153,6 +153,7 @@ void MainComponent::setMode (Mode m)
     editor.setVisible (m == Mode::Edit);
     devices.setVisible (true);
     sequencer.setVisible (rackShown && m != Mode::Mix);
+    topBar.setVisible (! visualiser.isMaximised());
     if (visualiser.getView() == Vis::full)
         for (auto* c : std::initializer_list<juce::Component*> { &browser, &trackList, &arranger, &devices, &mixer, &editor, &sequencer, &status })
             c->setVisible (false);
@@ -182,6 +183,7 @@ void MainComponent::showVisualMenu()
     m.addItem (1, "Full window", true, v == Vis::full);
     m.addItem (2, "Behind the app", true, v == Vis::behind);
     m.addItem (3, "Off", true, v == Vis::off);
+    m.addItem (4, "Picture only, whole window     V", true, visualiser.isMaximised());
     m.addItem (30, "Automation track", true, project.visTrack);
     m.addSectionHeader ("Follows");
     const int feed = visualiser.getFeed();
@@ -202,6 +204,7 @@ void MainComponent::showVisualMenu()
                      [this] (int result)
                      {
                          if (result >= 1 && result <= 3) visualiser.setView (result == 1 ? Vis::full : result == 2 ? Vis::behind : Vis::off);
+                         else if (result == 4) visualiser.toggleMaximised();
                          else if (result == 10) visualiser.setFeed (-1);
                          else if (result == 30)
                          {
@@ -339,10 +342,11 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (settingsPanel.keyUsed (key) || laneChooser.keyUsed (key))
         return true;
 
-    // Esc leaves the full-window visualiser
+    // Esc leaves the full-window visualiser. If the picture had the whole window (V), it goes back to where it was.
     if (key.isKeyCode (juce::KeyPress::escapeKey) && visualiser.getView() == Vis::full && ! expanded.isOpen() && ! wall.isOpen())
     {
-        visualiser.setView (Vis::off);
+        if (visualiser.isMaximised()) visualiser.toggleMaximised();
+        else                          visualiser.setView (Vis::off);
         return true;
     }
 
@@ -404,6 +408,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (ch == 'z' || ch == 'Z') { keyboardOctave = juce::jmax (1, keyboardOctave - 1); return true; }
     if (ch == 'x' || ch == 'X') { keyboardOctave = juce::jmin (8, keyboardOctave + 1); return true; }
     if (ch == 'r' || ch == 'R') { engine.recordArmed = ! engine.recordArmed.load(); return true; }
+    if (ch == 'v' || ch == 'V') { visualiser.toggleMaximised(); return true; }    // the picture takes the whole window, and gives it back
 
     // Note keys: play on press, ignore auto-repeat
     const int semi = keyToSemitone (ch);
@@ -764,8 +769,10 @@ void MainComponent::resized()
     expanded.setBounds (r);
     laneChooser.setBounds (r);
     settingsPanel.setBounds (r);
+    // V gives the visualiser's picture the whole window, top bar and all
+    if (visualiser.isMaximised()) visualiser.setBounds (r);
     topBar.setBounds (r.removeFromTop (56));
-    visualiser.setBounds (r);
+    if (! visualiser.isMaximised()) visualiser.setBounds (r);
     status.setBounds (r.removeFromBottom (26));
     browser.setBounds (r.removeFromLeft (260));
 
@@ -1010,6 +1017,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
         m.addItem (item (menuVisFull, "Visualiser: Full Window", "", visualiser.getView() == Vis::full));
         m.addItem (item (menuVisBehind, "Visualiser: Behind the App", "", visualiser.getView() == Vis::behind));
         m.addItem (item (menuVisOff, "Visualiser: Off", "", visualiser.getView() == Vis::off));
+        m.addItem (item (menuVisMax, "Visualiser: Picture Only, Whole Window", "V", visualiser.isMaximised()));
     }
     else
     {
@@ -1040,6 +1048,7 @@ void MainComponent::menuItemSelected (int id, int)
         case menuVisFull:   visualiser.setView (Vis::full); break;
         case menuVisBehind: visualiser.setView (Vis::behind); break;
         case menuVisOff:    visualiser.setView (Vis::off); break;
+        case menuVisMax:    visualiser.toggleMaximised(); break;
         case menuLanes:     toggleLanes(); break;
         case menuSettings:  settingsPanel.open(); break;
         case menuVisTrack:  project.visTrack = ! project.visTrack; ctx.automationChanged(); break;
