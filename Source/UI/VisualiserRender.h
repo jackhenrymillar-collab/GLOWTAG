@@ -79,7 +79,7 @@ private:
         float sb[3] = {}, level = 0.0f, hit = 0.0f, hitEased = 0.0f;
         float lfo = 0.0f, psyNow = 0.0f, psyPhase = 0.0f;
         float swaps = 0.0f, swapEased = 0.0f, flow = 0.0f;
-        void follow (float dt, const float* band, float levelNow);
+        void follow (float dt, const float* bandsNow, float levelNow);
         float psy (float dt, float base, float lfoDepth, float rate, float sway, int swayWith);
         void colours (float dt, float wash);
     };

@@ -335,10 +335,10 @@ void Renderer::usePicture (const std::shared_ptr<const Picture>& p)
     glBindTexture (GL_TEXTURE_2D, 0);
 }
 
-void Renderer::Slow::follow (float dt, const float* band, float levelNow)
+void Renderer::Slow::follow (float dt, const float* bandsNow, float levelNow)
 {
     auto ease = [dt] (float a, float b, float up, float down) { return a + (b - a) * (1.0f - std::exp (-dt * (b > a ? up : down))); };
-    for (int i = 0; i < 3; ++i) sb[i] = ease (sb[i], band[i], 2.2f, 0.8f);
+    for (int i = 0; i < 3; ++i) sb[i] = ease (sb[i], bandsNow[i], 2.2f, 0.8f);
     level = ease (level, levelNow, 2.0f, 0.8f);
     hit *= std::exp (-dt * 1.1f);
     hitEased = ease (hitEased, hit, 3.0f, 1.2f);
