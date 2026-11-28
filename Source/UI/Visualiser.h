@@ -184,6 +184,8 @@ private:
     juce::Rectangle<int> sharedArea;            // where the picture goes, in window points
     bool sharedOwnWindow = false, sharedBehind = false;
     double statSince = 0.0, statLast = 0.0, statWorst = 0.0, statWork = 0.0;    // drawing thread: the frame-rate readout
+    std::atomic<double> statPanel { 0.0 }, statPanelWorst { 0.0 };     // time spent drawing the panel, for the same printout
+    std::atomic<int> statPanels { 0 };
     int statFrames = 0;
     std::atomic<double> latency { 0.02 };
     std::atomic<float> dragX { -1.0f }, dragY { -1.0f };

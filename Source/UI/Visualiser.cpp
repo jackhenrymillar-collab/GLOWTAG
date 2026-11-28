@@ -391,10 +391,12 @@ void Visualiser::renderOpenGL()
         ++statFrames;
         if (frameStart - statSince >= 2000.0)
         {
-            std::fprintf (stderr, "visualiser: %s, %.1f frames a second, longest gap %.0f ms, picture takes %.2f ms a frame, %d x %d\n",
+            const int panels = statPanels.exchange (0);
+            std::fprintf (stderr, "visualiser: %s, %.1f frames a second, longest gap %.0f ms, picture takes %.2f ms a frame, %d x %d, panel redrawn %d times at %.2f ms each (slowest %.1f)\n",
                           isBehind ? (ownWindow ? "behind (own window)" : "behind (one window)") : "full window",
                           statFrames * 1000.0 / (frameStart - statSince), statWorst, statWork / statFrames,
-                          juce::roundToInt ((float) area.getWidth() * (float) gl.getRenderingScale()), juce::roundToInt ((float) area.getHeight() * (float) gl.getRenderingScale()));
+                          juce::roundToInt ((float) area.getWidth() * (float) gl.getRenderingScale()), juce::roundToInt ((float) area.getHeight() * (float) gl.getRenderingScale()),
+                          panels, statPanel.exchange (0.0) / juce::jmax (1, panels), statPanelWorst.exchange (0.0));
             statSince = frameStart; statFrames = 0; statWorst = 0.0; statWork = 0.0;
         }
     }
@@ -1189,6 +1191,18 @@ struct Visualiser::Draw
 
     // A strip of recent hits or levels with a line you drag: only what reaches the line gets through.
     // which: 0 loudest lows, 1 transients, 2 low, 3 mid, 4 high
+    // An upright bar with round ends, for the parts that move. Its body is a plain rectangle, which costs one
+    // quad, and its two ends join `caps`, filled once for all the bars: a whole bar as a shape is cut into rows.
+    static void pill (juce::Graphics& gg, juce::Path& caps, float x, float y, float w, float h)
+    {
+        if (h > w)
+        {
+            gg.fillRect (x, y + w * 0.5f, w, h - w);
+            caps.addEllipse (x, y + h - w, w, w);
+        }
+        caps.addEllipse (x, y, w, w);
+    }
+
     void gateStrip (int which, float x, float y, float w, float h, juce::Colour c)
     {
         static const int keys[] = { F::gate, F::tgate, F::lgate, F::mgate, F::hgate };
@@ -1212,6 +1226,7 @@ struct Visualiser::Draw
             const juce::SpinLock::ScopedLockType lock (r->lock);
             if (which < 2)
             {
+                juce::Path over, under;         // the round ends of every bar of one colour, as a single shape
                 const auto* list = which == 0 ? r->kicks.data() : r->sharps.data();
                 const int count = which == 0 ? r->numKicks : r->numSharps;
                 for (int i = 0; i < count; ++i)
@@ -1219,11 +1234,18 @@ struct Visualiser::Draw
                     const float age = (float) (now - list[i].time);
                     if (age > 5.0f) continue;
                     const float bx = x + w - 14.0f - age / 5.0f * span, bh = juce::jmax (3.0f, (h - 8.0f) * list[i].rel);
-                    gg.setColour (list[i].rel >= val - 0.001f ? lit : juce::Colour (0xff55585f));
-                    gg.fillRoundedRectangle (bx - 1.5f, base - bh, 3.0f, bh, 1.5f);
+                    const bool counts = list[i].rel >= val - 0.001f;
+                    gg.setColour (counts ? lit : juce::Colour (0xff55585f));
+                    pill (gg, counts ? over : under, bx - 1.5f, base - bh, 3.0f, bh);
                 }
+                gg.setColour (juce::Colour (0xff55585f));
+                gg.fillPath (under);
+                gg.setColour (lit);
+                gg.fillPath (over);
             }
             else
+            {
+                // Plain rectangles one at a time: each is a single quad, where a list of them is cut into rows
                 for (int i = 0; i < r->numLevels; ++i)
                 {
                     const auto& q = r->levels[(size_t) i];
@@ -1233,6 +1255,7 @@ struct Visualiser::Draw
                     gg.setColour (lv >= val ? lit : juce::Colour (0xff4a4d55));
                     gg.fillRect (bx - 1.0f, base - bh, 2.0f, bh);
                 }
+            }
         });
     }
 
@@ -1256,17 +1279,25 @@ struct Visualiser::Draw
         {
             const int n = VisListener::spectrumBars;
             const float bar = juce::jmax (2.0f, sw / (float) n - 3.0f);
+            std::array<juce::Path, 4> bars;         // the bars' round ends, one shape a colour: outside every band, then low, mid and high
+            const std::array<juce::Colour, 4> colours { juce::Colour (0xff4a4d55), bc[0].interpolatedWith (juce::Colours::white, 0.3f),
+                                                        bc[1].interpolatedWith (juce::Colours::white, 0.3f), bc[2].interpolatedWith (juce::Colours::white, 0.3f) };
             for (int i = 0; i < n; ++i)
             {
                 const float fc = tToHz (((float) i + 0.5f) / (float) n);
                 auto& shown = self->spectrumShown[(size_t) i];
                 shown = juce::jmax (self->ctx.engine.visListener.spectrum[(size_t) i].load (std::memory_order_relaxed), shown * 0.86f);
-                auto colour = juce::Colour (0xff4a4d55);
+                size_t in = 0;
                 for (size_t k = 0; k < 3; ++k)
-                    if (fc >= range[k][0] && fc <= range[k][1]) colour = bc[k].interpolatedWith (juce::Colours::white, 0.3f);
+                    if (fc >= range[k][0] && fc <= range[k][1]) in = k + 1;
                 const float bx = sx + sw * ((float) i + 0.5f) / (float) n, bh = juce::jmax (bar, shown * (sh - 16.0f));
-                gg.setColour (colour);
-                gg.fillRoundedRectangle (bx - bar * 0.5f, sy + sh - 6.0f - bh, bar, bh, bar * 0.5f);
+                gg.setColour (colours[in]);
+                pill (gg, bars[in], bx - bar * 0.5f, sy + sh - 6.0f - bh, bar, bh);
+            }
+            for (size_t k = 0; k < bars.size(); ++k)
+            {
+                gg.setColour (colours[k]);
+                gg.fillPath (bars[k]);
             }
         });
         static const char* const names[] = { "low", "mid", "high" };
@@ -1523,6 +1554,18 @@ void Visualiser::relayout()
 
 void Visualiser::paint (juce::Graphics& g)
 {
+    struct Timed          // GLOWTAG_VIS_STATS=1 also prints how long the panel takes to draw
+    {
+        Visualiser& v;
+        const double from = juce::Time::getMillisecondCounterHiRes();
+        ~Timed()
+        {
+            const double took = juce::Time::getMillisecondCounterHiRes() - from;
+            v.statPanel = v.statPanel.load() + took;
+            v.statPanelWorst = juce::jmax (v.statPanelWorst.load(), took);
+            ++v.statPanels;
+        }
+    } timed { *this };
     juce::String error;
     {
         const juce::SpinLock::ScopedLockType lock (readout.lock);
@@ -1540,18 +1583,29 @@ void Visualiser::paint (juce::Graphics& g)
     }
 
     // The dark surround, with a rounded window in it for the picture the graphics card draws underneath
+    // A shape is worked out against everything being drawn again, so the plain part of the surround is laid
+    // as rectangles, and the screen's frame (its round corners and two outlines) only when it needs drawing.
     if (! maximised)
     {
-        juce::Path surround;
-        surround.addRectangle (getLocalBounds().toFloat());
-        surround.addRoundedRectangle (l.screen, 12.0f * l.Z);
-        surround.setUsingNonZeroWinding (false);
+        const auto frame = l.screen.expanded (7.0f).getSmallestIntegerContainer();
         g.setColour (juce::Colour (0xff141416));
-        g.fillPath (surround);
-        g.setColour (juce::Colour (0xff3a3c42));
-        g.drawRoundedRectangle (l.screen.expanded (0.5f), 12.0f * l.Z, 1.0f);
-        g.setColour (juce::Colour (0xff26282d));
-        g.drawRoundedRectangle (l.screen.expanded (5.5f), 16.0f * l.Z, 1.0f);
+        juce::RectangleList<int> outside (getLocalBounds());
+        outside.subtract (frame);
+        g.fillRectList (outside);
+        if (g.clipRegionIntersects (frame))
+        {
+            juce::Graphics::ScopedSaveState state (g);
+            g.reduceClipRegion (frame);
+            juce::Path surround;
+            surround.addRectangle (frame.toFloat());
+            surround.addRoundedRectangle (l.screen, 12.0f * l.Z);
+            surround.setUsingNonZeroWinding (false);
+            g.fillPath (surround);
+            g.setColour (juce::Colour (0xff3a3c42));
+            g.drawRoundedRectangle (l.screen.expanded (0.5f), 12.0f * l.Z, 1.0f);
+            g.setColour (juce::Colour (0xff26282d));
+            g.drawRoundedRectangle (l.screen.expanded (5.5f), 16.0f * l.Z, 1.0f);
+        }
     }
     if (error.isNotEmpty())
     {
@@ -1580,6 +1634,7 @@ void Visualiser::paint (juce::Graphics& g)
         {
             if (! g.clipRegionIntersects (part.box)) continue;
             juce::Graphics::ScopedSaveState state (g);
+            g.reduceClipRegion (part.box);          // so each lamp and bar is worked out against its own box, not the whole panel
             g.addTransform (part.place);
             part.draw (g);
         }
@@ -1717,7 +1772,7 @@ bool Visualiser::readSetting (const Settings& s, const AutoTarget& t, float& out
     {
         case 0: if (t.param < 0 || t.param >= F::count) return false; out = s.v[(size_t) t.param]; return true;
         case 1: if (t.param < 0 || t.param >= C::count) return false; out = (float) s.w[(size_t) t.param]; return true;
-        case 2: if (t.param < 0 || t.param >= numSources * numDests) return false; out = s.route[(size_t) (t.param / numDests)][(size_t) (t.param % numDests)]; return true;
+        case 2: if (t.param < 0 || t.param >= (int) numSources * (int) numDests) return false; out = s.route[(size_t) (t.param / numDests)][(size_t) (t.param % numDests)]; return true;
         case 3: out = (float) s.style; return true;
         default: return false;
     }
@@ -1730,7 +1785,7 @@ void Visualiser::writeSetting (Settings& s, const AutoTarget& t, float raw)
     {
         case 0: if (t.param >= 0 && t.param < F::count) s.v[(size_t) t.param] = juce::jlimit (0.0f, 1.0f, raw); break;
         case 1: if (t.param >= 0 && t.param < C::count) s.w[(size_t) t.param] = juce::jmax (0, juce::roundToInt (raw)); break;
-        case 2: if (t.param >= 0 && t.param < numSources * numDests) s.route[(size_t) (t.param / numDests)][(size_t) (t.param % numDests)] = juce::jlimit (0.0f, 1.0f, raw); break;
+        case 2: if (t.param >= 0 && t.param < (int) numSources * (int) numDests) s.route[(size_t) (t.param / numDests)][(size_t) (t.param % numDests)] = juce::jlimit (0.0f, 1.0f, raw); break;
         case 3: s.style = juce::jlimit (0, numStyles - 1, juce::roundToInt (raw)); break;
         default: break;
     }
