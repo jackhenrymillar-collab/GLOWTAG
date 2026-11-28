@@ -129,7 +129,10 @@ void main(){vec2 p=(uv-.5)*vec2(asp,1.)*2.*(1.-pz*.6);float ca=cos(rot),sa=sin(r
   col+=((c1*.13+c3*.05)*m2+c2*exp(-abs(f2-1.)/max(length(g1+g2)*PX*1.45,1e-4)*.12)*.16*smoothstep(3.5,1.6,f2))*lay*1.6;}
  vec3 A=look(fa,ga,c1,c2,c2,cell),B=look(fb,gb,c3,c1,c3,cell);
  col=col*(1.-.75*max(ma,mb))+A*(1.-.4*mb)+B*(1.-.45*ma)+(surf==0?c2*ma*mb*.12:vec3(0.));
- if(shim>0.)col+=mix(c2,vec3(1.),.55)*shim*smoothstep(.5,.78,vn(p*64.+vec2(ph*.9,-ph*.7))*vn(p*41.-vec2(ph*.5,ph*.8)+4.))*.8*max(ma,mb)*(.6+high*1.6);
+ /* shimmer is caustics: a web of light that ripples through the oil and bends with it, brighter on highs */
+ if(shim>0.){vec2 q=p*11.+vec2(fa,fb)*.7;float tt=ph*.22;
+  float d1=abs(vn(q+vec2(tt,-tt*.7))-vn(q*1.31+vec2(-tt*.6,tt*.9)+5.)),d2=abs(vn(q*.83+vec2(tt*.5,tt*.4)+11.)-vn(q*1.07-vec2(tt*.7,tt*.3)+2.));
+  col+=mix(mix(c2,c3,mb/(ma+mb+1e-4)),vec3(1.),.3)*(exp(-d1*d1*420.)+exp(-d2*d2*420.)*.7+exp(-min(d1,d2)*11.)*.22)*shim*.55*max(ma,mb)*(.6+high*1.6);}
  if(psy>0.)col=max(hrot(col,psy*(min(fa+fb,4.5)*.7+sin(t*.5)*1.5)),0.);
  col*=(.85+.3*lvl)*(1.+flash*.7);
  o=vec4(col,1.);})GLSL";

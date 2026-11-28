@@ -1090,7 +1090,7 @@ struct Visualiser::Draw
             const float rx = x + 84.0f, rw = w - 84.0f;
             mergeBlobs (F::lmerge, rx, y + 74.0f, rw, nc());
             sfader (F::lshim, rx, y + 156.0f, rw, nc(), jag);
-            small ("sparkle on the oil, brighter on highs", rx, y + 178.0f, dim);
+            small ("light rippling through the oil, brighter on highs", rx, y + 178.0f, dim);
         }
         else if (S().style == sand)
         {
