@@ -49,9 +49,10 @@ kbd{font-family:var(--sans);font-size:10px;border:1px solid var(--line2);border-
 <div class="stage" id="stage"><canvas id="cv" aria-label="Visualiser. The picture shows the music; words and tubes are controls."></canvas></div>
 <div class="foot">
   <span id="hint">Click <b>play</b> in the bar to hear a loop, or <b>load track</b> to use your own audio.</span>
-  <span>Pick a routing layout at the top. Drag on the picture to play with it. Double-click it to fill the window and again to bring the controls back. <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> switch modes. Space plays or stops.</span>
+  <span>Pick a routing layout at the top. Drag on the picture to play with it. Double-click it to fill the window and again to bring the controls back. <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd> <kbd>6</kbd> <kbd>7</kbd> switch modes. Space plays or stops.</span>
 </div>
 <input type="file" class="file" id="file" accept="audio/*" aria-label="Load an audio file">
+<input type="file" class="file" id="picfile" accept="image/*" aria-label="Choose a picture">
 
 <script>
 /* ================= helpers ================= */
@@ -64,7 +65,7 @@ const $=s=>document.querySelector(s);
 const GRAF='"Sedgwick Ave Display","Marker Felt","Comic Sans MS",cursive';
 const SANS='Manrope,system-ui,sans-serif';
 const THEMES=['#4ade80','#4cc9f0','#8fa2ff','#a78bfa','#ff6b8f','#ffa94d','#ffd27a'];
-const STYLES=['ink','liquid','sand','bloom'];
+const STYLES=['ink','liquid','sand','bloom','kaleido','lotus','picture'];
 /* rainbow palettes per style: body, highlight, accent */
 const RAIN={ink:['#4c3bff','#4ade80','#bfeaff'],fractal:['#a78bfa','#4cc9f0','#ffd27a'],tunnel:['#ff6b8f','#4cc9f0','#ffd27a']};
 
@@ -82,27 +83,44 @@ const P={ /* fader definitions: [default, label, format] */
   bhue:[.45,'Hue','hue'],btint:[.45,'Tint','pct'],bpsy:[0,'Psychedelic','pct'],btrails:[.3,'Trails','pct'],bspin:[.3,'Spin','pct'],bidle:[0,'Idle spin','pct'],
   back:[.55,'Backdrop','pct'],gate:[.5,'Loudest lows','pct'],nudge:[.5,'Sync nudge','ms'],
   /* added with the persistent UI; new ones go at the end so saved automation keeps pointing at the right control */
-  marble:[0,'Marble','pct'],bleed:[0,'Bleed','pct'],breathe:[0,'Breathe','pct'],lheat:[0,'Heat','pct'],lmerge:[.5,'Merge','pct'],lshim:[0,'Shimmer','pct'],sdens:[.5,'Density','pct'],sdrift:[0,'Drift','pct'],sres:[0,'Resonance','pct'],bbranch:[.5,'Branching','pct'],brings:[0,'Rings','pct'],bhalo:[0,'Halo','pct'],tgate:[0,'Transients','pct'],lgate:[0,'Low','pct'],mgate:[0,'Mid','pct'],hgate:[0,'High','pct']
+  marble:[0,'Marble','pct'],bleed:[0,'Bleed','pct'],breathe:[0,'Breathe','pct'],lheat:[0,'Heat','pct'],lmerge:[.5,'Merge','pct'],lshim:[0,'Shimmer','pct'],sdens:[.5,'Density','pct'],sdrift:[0,'Drift','pct'],sres:[0,'Resonance','pct'],bbranch:[.5,'Branching','pct'],brings:[0,'Rings','pct'],bhalo:[0,'Halo','pct'],tgate:[0,'Transients','pct'],lgate:[0,'Low','pct'],mgate:[0,'Mid','pct'],hgate:[0,'High','pct'],
+  /* kaleidoscope */
+  kseg:[.34,'Segments','seg'],ksize:[.5,'Shards','pct'],kjag:[.7,'Shatter','pct'],klead:[.4,'Lead','pct'],ktumble:[.45,'Tumble','pct'],klight:[.6,'Light','pct'],kfrost:[.45,'Frost','pct'],kspark:[.2,'Sparkle','pct'],
+  khue:[.58,'Hue','hue'],ktint:[.45,'Tint','pct'],kpsy:[0,'Psychedelic','pct'],ktrails:[0,'Trails','pct'],kspin:[.35,'Spin','pct'],kidle:[.06,'Idle spin','pct'],
+  kbreathe:[.15,'Breathe','pct'],kswell:[.4,'Swell','pct'],kwash:[.45,'Colour wash','pct'],kripple:[.35,'Ripple','pct'],kpsway:[.25,'Sway','pct'],kplfo:[0,'LFO','pct'],kprate:[.5,'LFO rate','lfo'],ktwist:[0,'Twist','pct'],kbulge:[0,'Bulge','pct'],klayer:[0,'Layers','pct'],
+  /* lotus */
+  zspeed:[.4,'Zoom','pct'],zlunge:[.45,'Lunge','pct'],zpetals:[.5,'Petals','cnt'],ztwist:[.3,'Twist','pct'],zpoint:[.5,'Point','pct'],zopen:[.5,'Open','pct'],
+  zlight:[.6,'Light','pct'],zfrost:[.45,'Frost','pct'],zlead:[.4,'Lead','pct'],
+  zhue:[.72,'Hue','hue'],ztint:[.5,'Tint','pct'],zpsy:[0,'Psychedelic','pct'],zplfo:[0,'LFO','pct'],zprate:[.5,'LFO rate','lfo'],zpsway:[.25,'Sway','pct'],zwash:[.45,'Colour wash','pct'],
+  ztrails:[0,'Trails','pct'],zspin:[.2,'Spin','pct'],zidle:[.04,'Idle spin','pct'],
+  /* picture */
+  psize:[.5,'Size','pct'],pamt:[.5,'Amount','pct'],pvis:[.85,'Picture','pct'],phaze:[.3,'Haze','pct'],
+  psmoke:[.45,'Smoke','pct'],pfeed:[.6,'Feed','pct'],ppuff:[.5,'Puff','pct'],prise:[.45,'Rise','pct'],pswirl:[.45,'Swirl','pct'],pwisp:[.4,'Wisps','pct'],pwind:[.2,'Wind','pct'],phang:[.6,'Hang','pct'],
+  phue:[.72,'Hue','hue'],ptint:[.5,'Tint','pct'],ppsy:[0,'Psychedelic','pct'],pplfo:[0,'LFO','pct'],pprate:[.5,'LFO rate','lfo'],ppsway:[0,'Sway','pct'],pash:[.2,'Ash','pct'],
+  ptrails:[0,'Trails','pct'],pspin:[0,'Spin','pct'],pidle:[0,'Idle spin','pct'],poff:[.5,'Offset','pct'],pdent:[.5,'Depth','pct'],preach:[.25,'Reach','pct']
 };
 const OWN={ink:['hue','tint','psy','trip','trails','spin','idle','fade','swirl','drops','scale','idetail','chaos','vort','seg'],fractal:['sym','detail','zoom'],tunnel:['spacing','twist','stars']};
 const TT=[{key:'tones',opts:['one','complement','split','triad']},{key:'trails',opts:['smooth','echo']}];
 const TN=['one','complement','split','triad'],TRL=['smooth','echo'],MIR=['off','2-way','4-way','6-way','8-way'];
 const WORDS={liquid:[{key:'lform',opts:['drift','lava','orbit','mirror']},{key:'ltones',opts:TN},{key:'ltrails',opts:TRL},{key:'lsurface',opts:['lamp','glass','neon']},{key:'lmirror',opts:MIR}],
+  picture:[{key:'pform',opts:['pours','beats','parts','melts']},{key:'ptones',opts:TN},{key:'ptrails',opts:TRL},{key:'psurface',opts:['smoke','oil','neon']},{key:'pcolour',opts:['picture','ring']},{key:'ppsyon',opts:['lows','mids','highs','hits']},{key:'pdir',opts:['rise','spread','fall']},{key:'psrc',opts:['shape','edges','lights']},{key:'pmirror',opts:MIR}],
+  lotus:[{key:'zform',opts:['petals','scales','spikes']},{key:'ztones',opts:TN},{key:'ztrails',opts:TRL},{key:'zsurface',opts:['soft','glass','neon']},{key:'zcolour',opts:['ring','swap','flow','bands']},{key:'zpsyon',opts:['lows','mids','highs','hits']}],
+  kaleido:[{key:'kform',opts:['wheel','tiles','facets']},{key:'ktones',opts:TN},{key:'ktrails',opts:TRL},{key:'ksurface',opts:['glass','jewels','neon']},{key:'kcolour',opts:['ring','swap','flow','bands']},{key:'kpsyon',opts:['lows','mids','highs','hits']},{key:'kcut',opts:['shards','diamonds','scales','rose']}],
   sand:[{key:'sform',opts:['square','round','ripple']},{key:'stones',opts:TN},{key:'strails',opts:TRL},{key:'ssurface',opts:['grains','dust','bulbs']},{key:'smirror',opts:MIR}],
   bloom:[{key:'btype',opts:['coral','cells','maze']},{key:'bmirror',opts:MIR},{key:'btones',opts:TN},{key:'btrails',opts:TRL},{key:'bsurface',opts:['glow','lines','relief']}],ink:[{key:'form',opts:['blot','petals','rays','tiles']},{key:'mirror',opts:MIR},{key:'tones',opts:['one','complement','split','triad']},{key:'trails',opts:['smooth','echo']},{key:'surface',opts:['smoke','oil','neon']}],fractal:[{key:'shape',opts:['julia','kali','mandala']}],tunnel:[{key:'tform',opts:['rings','spiral','lattice','ribbons']},{key:'sides',opts:['circle','tri','square','hex']},{key:'ttones',opts:['one','complement','split','triad']},{key:'ttrails',opts:['smooth','echo']},{key:'tsurface',opts:['neon','bulbs','glass']}]};
 const INKSEC={shape:{words:['mirror'],faders:['seg','trip','depth']},colour:{words:['tones'],faders:['hue','tint','psy']},motion:{words:[],faders:['swirl','scale','idetail','chaos','vort','spin','idle']},trails:{words:['trails'],faders:['drops','fade','trails']}};
 const SRC0=['kick','snare','hat','big','trans','low','mid','high','level'],DST0=['pulse','flash','spin','stir','burst','hue'];
 const ROUTE0=[['big','pulse',1],['low','pulse',.4],['big','flash',1],['snare','flash',.6],['big','spin',1],['big','stir',1],['low','stir',1],['big','burst',1]];
-const S={lay:'monitor',rstyle:'matrix',focus:{kind:'src',i:3},pick:-1,band:{low:[35,140],mid:[200,2000],high:[3000,12000]},scenes:[],scene:-1,storing:false,panel:true,feed:0,page:'controls',route:ROUTE0.map(r=>r.slice()),tab:'shape',view:'full',style:'ink',theme:THEMES[0],rainbow:false,glow:1,full:false,v:{},w:{surface:0,form:0,mirror:2,tones:0,trails:0,shape:0,sides:3,tform:0,ttones:0,ttrails:0,tsurface:0,btype:0,ltones:2,ltrails:0,lsurface:0,lform:0,stones:0,strails:0,ssurface:0,sform:0,btones:0,btrails:0,bsurface:0,bmirror:0,lmirror:0,smirror:0},last:''};
+const S={lay:'monitor',rstyle:'matrix',focus:{kind:'src',i:3},pick:-1,band:{low:[35,140],mid:[200,2000],high:[3000,12000]},scenes:[],scene:-1,storing:false,panel:true,feed:0,page:'controls',route:ROUTE0.map(r=>r.slice()),tab:'shape',view:'full',style:'ink',theme:THEMES[0],rainbow:false,glow:1,full:false,v:{},w:{surface:0,form:0,mirror:2,tones:0,trails:0,shape:0,sides:3,tform:0,ttones:0,ttrails:0,tsurface:0,btype:0,ltones:2,ltrails:0,lsurface:0,lform:0,stones:0,strails:0,ssurface:0,sform:0,btones:0,btrails:0,bsurface:0,bmirror:0,lmirror:0,smirror:0,ktones:3,ktrails:0,ksurface:0,kform:0,kcolour:0,kpsyon:0,kcut:0,ztones:3,ztrails:0,zsurface:0,zform:0,zcolour:0,zpsyon:0,ptones:3,ptrails:0,psurface:0,pform:0,pcolour:0,ppsyon:0,pdir:0,psrc:0,pmirror:0},last:''};
 for(const k in P)S.v[k]=P[k][0];
 try{const s=JSON.parse(localStorage.getItem('gt-vis3')||'{}');for(const k of['style','theme','rainbow','glow','view','rstyle','page'])if(k in s)S[k]=s[k];if(!['full','behind','off'].includes(S.view))S.view='full';if(!STYLES.includes(S.style))S.style='ink';if(!['matrix','focus','lanes'].includes(S.rstyle))S.rstyle='matrix';if(s.band)for(const k of['low','mid','high'])if(Array.isArray(s.band[k])&&s.band[k][0]>0&&s.band[k][1]>s.band[k][0])S.band[k]=[+s.band[k][0],+s.band[k][1]];if(Array.isArray(s.scenes))S.scenes=s.scenes;if(s.v)Object.assign(S.v,s.v);if(s.w)Object.assign(S.w,s.w);if(Array.isArray(s.route))S.route=s.route.filter(r=>SRC0.includes(r[0])&&DST0.includes(r[1])).map(r=>[r[0],r[1],+r[2]||0])}catch(_){}
 const save=()=>{try{localStorage.setItem('gt-vis3',JSON.stringify({rstyle:S.rstyle,page:S.page,band:S.band,scenes:S.scenes,style:S.style,theme:S.theme,rainbow:S.rainbow,glow:S.glow,view:S.view,v:S.v,w:S.w,route:S.route}))}catch(_){}};
-const fmt=(k)=>{const v=S.v[k],f=P[k][2];if(f==='sym')return symN()+'-fold';if(f==='hue')return Math.round(v*360)+'°';if(f==='seg')return Math.round(3+v*9)+'';if(f==='vort')return Math.round(v*6)+'';if(f==='cnt')return 4+Math.round(v*8)+'';if(f==='ms'){const m=Math.round((v-.5)*160);return(m>0?'+':'')+m+' ms'}return Math.round(v*100)+'%'};
+const fmt=(k)=>{const v=S.v[k],f=P[k][2];if(f==='sym')return symN()+'-fold';if(f==='hue')return Math.round(v*360)+'°';if(f==='seg')return Math.round(3+v*9)+'';if(f==='vort')return Math.round(v*6)+'';if(f==='cnt')return 4+Math.round(v*8)+'';if(f==='lfo'){const s=kalLfo(v);return(s<10?s.toFixed(1):Math.round(s))+' s'}if(f==='ms'){const m=Math.round((v-.5)*160);return(m>0?'+':'')+m+' ms'}return Math.round(v*100)+'%'};
 const symN=()=>Math.round(3+S.v.sym*9);
 /* ink colours: always a harmony built from one hue, so mixes stay complementary */
 function hsl(h,s,l){h=((h%360)+360)%360/360;const f=n=>{const k=(n+h*12)%12,a=s*Math.min(l,1-l);return l-a*Math.max(-1,Math.min(k-3,9-k,1))};return'#'+[f(0),f(8),f(4)].map(v=>Math.round(v*255).toString(16).padStart(2,'0')).join('')}
 /* tunnel keeps its own copies of the settings it shares with ink (hue, trails, spin and so on) */
-const TK={hue:1,tint:1,psy:1,trip:1,trails:1,spin:1,idle:1,depth:1,tones:1,surface:1,form:1,mirror:1},PREF={tunnel:'t',liquid:'l',sand:'s',bloom:'b'};
+const TK={hue:1,tint:1,psy:1,trip:1,trails:1,spin:1,idle:1,depth:1,tones:1,surface:1,form:1,mirror:1},PREF={tunnel:'t',liquid:'l',sand:'s',bloom:'b',kaleido:'k',lotus:'z',picture:'p'};
 /* each mode keeps its own colour, spin, trails and look settings: this maps a setting's name to the current mode's copy of it */
 const KK=k=>{const pf=PREF[S.style];if(!pf||!TK[k])return k;if(S.style==='bloom'&&k==='form')return'btype';const kk=pf+k;return kk in P||kk in S.w?kk:k};
 function inkPal(sh=0){const h=S.v[KK('hue')]*360+sh,m=S.w[KK('tones')],t=S.v[KK('tint')];
@@ -216,7 +234,7 @@ function poll(){if(!playing||!an)return;const now=AC.currentTime;if(now===poll.t
   if(ok.snare)pend=pend.filter(p=>p.k!=='hat');
   if(ok.tone&&(ok.kick||ok.snare||now-DET.kick.last<.05||now-DET.snare.last<.05))ok.tone=false;
   for(const k in BANDS)if(ok[k]){DET[k].last=now;pend.push({k,t0:now,hear:hear+EST-ESTK[k],e:en[k]})}}
-function burst(str){if(str<.05)return;if(S.style==='sand')sandNext();onsets.unshift({t:T,s:str,ph:ph,k:0});if(onsets.length>6)onsets.length=6;inkBurst(str)}
+function burst(str){if(str<.05)return;if(S.style==='sand')sandNext();if(S.style==='kaleido')kalTurn(str);if(S.style==='picture'){KP.ht=Math.min(1,KP.ht+.45+str*.4);KP.pf=Math.min(1.6,KP.pf+.4+str);KP.bv+=(.4+str)*11}if(S.style==='lotus'){KZ.vt+=str*S.v.zlunge*1.2;KZ.cn++;KZ.ht=Math.min(1,KZ.ht+.45+str*.4)}onsets.unshift({t:T,s:str,ph:ph,k:0});if(onsets.length>6)onsets.length=6;inkBurst(str)}
 function hitSig(type,str){SIG[type]=Math.max(SIG[type],str);lampT[type]=T;lampS[type]=str;
   for(const c of S.route)if(c[0]===type){if(c[1]==='spin'&&S.style!=='fractal')omega+=S.v[KK('spin')]*(.4+str)*2.6*c[2];if(c[1]==='burst')burst(str*c[2])}}
 /* one found hit can feed several sounds at once: kick, loudest lows and transients are separate, all wireable together */
@@ -407,7 +425,10 @@ void main(){vec2 p=(uv-.5)*vec2(asp,1.)*2.*(1.-pz*.6);float ca=cos(rot),sa=sin(r
   col+=((c1*.13+c3*.05)*m2+c2*exp(-abs(f2-1.)/max(length(g1+g2)*PX*1.45,1e-4)*.12)*.16*smoothstep(3.5,1.6,f2))*lay*1.6;}
  vec3 A=look(fa,ga,c1,c2,c2,cell),B=look(fb,gb,c3,c1,c3,cell);
  col=col*(1.-.75*max(ma,mb))+A*(1.-.4*mb)+B*(1.-.45*ma)+(surf==0?c2*ma*mb*.12:vec3(0.));
- if(shim>0.)col+=mix(c2,vec3(1.),.55)*shim*smoothstep(.5,.78,vn(p*64.+vec2(ph*.9,-ph*.7))*vn(p*41.-vec2(ph*.5,ph*.8)+4.))*.8*max(ma,mb)*(.6+high*1.6);
+ /* shimmer is caustics: a web of light that ripples through the oil and bends with it, brighter on highs */
+ if(shim>0.){vec2 q=p*11.+vec2(fa,fb)*.7;float tt=ph*.22;
+  float d1=abs(vn(q+vec2(tt,-tt*.7))-vn(q*1.31+vec2(-tt*.6,tt*.9)+5.)),d2=abs(vn(q*.83+vec2(tt*.5,tt*.4)+11.)-vn(q*1.07-vec2(tt*.7,tt*.3)+2.));
+  col+=mix(mix(c2,c3,mb/(ma+mb+1e-4)),vec3(1.),.3)*(exp(-d1*d1*420.)+exp(-d2*d2*420.)*.7+exp(-min(d1,d2)*11.)*.22)*shim*.55*max(ma,mb)*(.6+high*1.6);}
  if(psy>0.)col=max(hrot(col,psy*(min(fa+fb,4.5)*.7+sin(t*.5)*1.5)),0.);
  col*=(.85+.3*lvl)*(1.+flash*.7);
  o=vec4(col,1.);}`;
@@ -433,6 +454,225 @@ void main(){vec2 p=(uv-.5)*vec2(asp,1.)*2.*(1.-pz*.5);float ca=cos(rot),sa=sin(r
   col=pal(h*2.+s*.6)*dt_*(.75+1.1*dens+high*1.4*step(.9,h2))+c1*.03+c1*dens*dens*(surf==1?.3:.12);}
  if(psy>0.)col=max(hrot(col,psy*(s*3.+length(p)*2.-t*.5)),0.);
  col*=(.85+.3*lvl)*(1.+flash*.8);
+ o=vec4(col,1.);}`;
+/* lotus: a flower that never stops opening. Rings of petals are drawn on a spiral map, where distance from the middle is read as a logarithm,
+   so every ring is the ring inside it, only bigger, and you can fall in forever. Inner petals lie over outer ones.
+   The light is steady. The music pushes the fall, opens the petals and changes their colours. sb = low, mid, high, slowed right down */
+const LOTUS=HEAD+`uniform float rot,psy,pph,zf,zr,zw,zc,fa,fb,fc,fo,lead,frost,light,wash,cstep,cflow;uniform vec3 sb;uniform int surf,form,colm;uniform float ons[6];
+void main(){float pxl=2.*(1.-pz*.5)*fwidth(uv.y);vec2 p=(uv-.5)*vec2(asp,1.)*2.*(1.-pz*.5);float r0=length(p),ca=cos(rot),sa=sin(rot);p=mat2(ca,-sa,sa,ca)*p;
+ /* each hit sends one slow, wide ring out from the middle; it carries a change of colour, not light */
+ float wave=0.;for(int i=0;i<6;i++){float ag=ons[i];if(ag<0.)continue;wave+=exp(-pow((r0-ag*.75)*2.4,2.))*exp(-ag*.65)*smoothstep(0.,.3,ag);}wave=min(wave,1.4);
+ float r=max(r0,1e-5),N=4.+floor(fa*8.+.5),K=N/6.2831853,y=log(r)*K-zf,x=atan(p.y,p.x)*K+fb*.6*log(r)*K-zr,fw=K*pxl/r;
+ /* the petal's outline. petals: round at the base, drawn in to a point. scales: short and round, like roof tiles. spikes: narrow stars that show the ring beneath */
+ float R=.54+fo*.16+.07*sb.x,wb=form==2?1.6:1.,wp=form==1?.5:form==2?4.:2.4,ys=form==1?1.3:1.,bo=8.,bi=8.,tl=0.,dxo=0.,jo=0.,io=0.;bool got=false;
+ for(int a=-1;a<=2;a++){float jj=floor(y*2.)+float(a),off=.5*mod(jj,2.),ii=floor(x-off+.5),dx=x-off-ii,dy=y-jj*.5,wd=wb+fc*wp*max(dy,0.),dd=length(vec2(dx*wd,dy>0.?dy*ys:dy));
+  if(dd<R){bo=min(R-dd,(.5-abs(dx))*1.4);tl=dy/R;dxo=dx*wd;jo=jj;io=ii;got=true;break;}
+  bi=min(bi,dd-R);}
+ vec3 core=mix(c3,vec3(1.),.4)*(surf==1?.5+.6*light:1.05),col;float hp=0.;
+ if(!got)col=vec3(.012);
+ else{vec2 pid=vec2(mod(io,N),mod(jo-zw,128.));hp=h21(pid);float h2=h21(pid+31.7),h3=h21(pid+57.3),band=h3<.34?sb.x:(h3<.67?sb.y:sb.z);
+  /* how the music changes the colours. ring: each hit sends a ring of new colour outward. swap: on each hit a share of the petals trade to their next colour, one after another.
+     flow: the colours drift through the palette, faster when the music is louder. bands: each petal shifts with its own part of the sound */
+  float cs=colm==1?step(h3,wash)*(floor(cstep)+smoothstep(h2*.6,h2*.6+.4,fract(cstep))):colm==2?cflow+.3*sin(h3*6.2832+cflow*1.7):colm==3?wash*band*2.:wash*wave*1.3;
+  vec3 pc=pal(jo*.23+zc+.3*(hp-.5)+cs+wash*sb.z*.35*sin(h3*6.2832+t*.3));
+  if(surf==1){/* glass: every petal is a pane of stained glass, leaded along its edges, with a steady lamp behind that is brightest in the middle */
+   float eb=min(bo,bi),lw=.008+lead*.045,aa=fw*1.3,pane=smoothstep(lw,lw+aa,eb);vec2 q=vec2(dxo,tl);
+   float tex=1.-frost*.6+frost*(.6*fbm(q*3.1+hp*37.)+.35*vn(q*11.+hp*9.)+.13*sin(dot(q,vec2(cos(hp*6.2832),sin(hp*6.2832)))*14.+h2*6.)+.2);
+   float back=.28+light*(.32+.42*exp(-r0*r0*.6));
+   pc=pc*pc*(.75+.5*h3)+pc*.12;pc=mix(pc,vec3(1.),step(.92,h2)*.45);
+   col=pc*back*tex*pane*1.35*(.62+.38*smoothstep(lw,lw+.3,eb))+mix(pc,vec3(1.),.35)*smoothstep(lw+.08,lw+aa,eb)*pane*(.16+.16*light)+vec3(.022,.022,.026)*(1.-pane);}
+  else if(surf==2){pc=pc*pc*.85+pc*.15;col=pc*(exp(-bo/(fw*1.5+.012))*1.1+exp(-bo/.1)*.3*glow)+pc*.05;}
+  else{/* soft: each petal darkens toward its hidden base, carries the shadow of the petal lying over it, and catches light along its rim and its vein */
+   pc=pc*pc*.85+pc*.15;col=pc*(.3+.75*smoothstep(-.6,.9,tl))*(.35+.65*smoothstep(0.,.3,bi));
+   col+=mix(pc,vec3(1.),.5)*(exp(-bo*13.)*.3+exp(-abs(dxo)*24.)*.16*smoothstep(-.3,.4,tl));
+   col*=smoothstep(0.,fw*1.6+.004,bo);}}
+ /* the very middle, where the petals are too small to draw, is a small steady glow */
+ col=mix(col,core,smoothstep(.12,.4,fw));
+ col*=mix(1.,.6,smoothstep(.6,2.,r0));
+ /* psychedelic turns every petal's hue by its own amount; it can swing below zero (the LFO). pph is the slow drift, counted up outside so moving the control never jumps the colours */
+ if(psy!=0.)col=max(hrot(col,psy*(hp*5.+r0*2.+9.)-pph),0.);
+ o=vec4(col,1.);}`;
+/* picture: drop a picture in and its shape works on the smoke. The picture is read once, when it is dropped: wherever it differs from its own edge is the
+   shape (kept in the picture's fourth channel), and a second small picture holds how far every point is from the shape's outline.
+   The smoke is the same kind of flowing dye as ink, but it is kept close to the shape: smoke that strays further than Reach thins away, so the screen stays dark.
+   The shape itself is lit as a rounded 3D form. It can pour smoke, beat a puff of cloud that sits on it, part one stream of smoke, or be made of smoke itself.
+   The light is steady. The music pours, lifts, curls and puffs the smoke, and beats the shape */
+const PICLIB=`uniform sampler2D pic,pic2;uniform float psz,pasp,plain,amt,lifted,reach;uniform int src,act;uniform vec2 pctr;
+float plum(vec3 c){return dot(c,vec3(.3,.59,.11));}
+/* where a point of the screen falls on the picture, 0 to 1 across it */
+vec2 picUV(vec2 q){vec2 e=pasp>=1.?vec2(psz,psz/pasp):vec2(psz*pasp,psz);return (q-vec2(asp*.5,.5)-pctr)/e+.5;}
+float inPic(vec2 u,float f){vec2 m=min(u,1.-u);return smoothstep(0.,f,min(m.x,m.y));}
+/* a colour bright enough to see as smoke: the dark parts of a picture give pale grey smoke */
+vec3 lift(vec3 c){float b=max(c.r,max(c.g,c.b));return mix(vec3(.7,.74,.8),c*max(1.,.7/max(b,.08)),smoothstep(.05,.2,b));}
+/* how strongly each point of the picture gives off smoke. shape: everything that stands out from the picture's edge. edges: only its outlines. lights: only its bright parts */
+float srcAt(vec2 u){float ins=inPic(u,.03);if(ins<=0.)return 0.;vec4 a=textureLod(pic,u,1.),b=textureLod(pic,u,4.);float lo=mix(.8,.04,amt),s;
+ if(src==1){float e=(1.-abs(textureLod(pic,u,3.).a*2.-1.))*mix(.25,1.,plain)+abs(plum(a.rgb)-plum(b.rgb))*2.2*b.a;s=smoothstep(lo,lo+.25,e)*2.2;}
+ else if(src==2)s=smoothstep(lo,lo+.2,plum(a.rgb)*mix(1.,a.a,plain));
+ else s=smoothstep(lo,lo+.25,a.a);
+ return s*ins;}
+/* how far a point is from the outline of the shape, in screen heights: above zero outside it, below zero inside. sdN points straight away from the shape */
+float sdAt(vec2 q){vec2 pu=picUV(q),cu=clamp(pu,0.,1.),t=texture(pic2,cu).rg,e=pasp>=1.?vec2(1.,1./pasp):vec2(pasp,1.);return (t.r-t.g+length((pu-cu)*e))*psz;}
+vec2 sdN(vec2 q){float g=.02;vec2 n=vec2(sdAt(q+vec2(g,0.))-sdAt(q-vec2(g,0.)),sdAt(q+vec2(0.,g))-sdAt(q-vec2(0.,g)));return n/max(length(n),1e-4);}
+/* the shape as a rounded 3D form, like a pressed pillow: nothing at its outline, rising quickly to a soft top inside */
+float dome(float sd){float t=clamp(-sd/(psz*.17),0.,1.);return sqrt(max(t*(2.-t),0.));}
+/* the outline that the 3D form is built on. A shape on a plain ground: the shape's own outline. A picture that fills its frame has no outline to round off, so its whole frame is the form */
+float sdForm(vec2 q){if(plain>.5)return sdAt(q);vec2 pu=picUV(q),e=pasp>=1.?vec2(1.,1./pasp):vec2(pasp,1.),m=min(pu,1.-pu)*e;return -min(m.x,m.y)*psz;}
+/* how much the picture's own detail raises the form, like a carving: its lights on a plain ground, or whatever stands out in a picture that fills its frame */
+float carve(vec2 q){vec4 a=textureLod(pic,clamp(picUV(q),0.,1.),2.8);return plain>.5?.8+.4*plum(a.rgb):.4+.75*a.a;}
+`;
+/* one step of the smoke: carried along by a curling flow, lifted (or spread, or dropped), blown about, pushed by the shape, fed, and thinned away once it strays */
+const PIC_STEP=HEAD+PICLIB+`uniform sampler2D prev;uniform float dt,fade,swirl,wisp,rise,wind,puff,emit,cph,bv,cloud,heal,ringk,blow;uniform int dir,colm;uniform vec4 dp;uniform vec3 k1,k2,k3;uniform float ons[6];
+vec2 curl(vec2 s){float e=.015;return vec2(fbm(s+vec2(0,e))-fbm(s-vec2(0,e)),-(fbm(s+vec2(e,0))-fbm(s-vec2(e,0))))/(2.*e);}
+/* the colour of smoke that does not come straight off the picture: slow patches in the picture's three main colours (a little greyed, so it stays calm), or the hue ring's */
+vec3 cloudCol(vec2 q){float n=fbm(q*1.6+vec2(ph*.03,-ph*.02)+7.3);
+ vec3 k=colm==1?pal(n*4.+cph):mix(mix(k1,k2,smoothstep(.3,.5,n)),k3,smoothstep(.48,.68,n));return mix(vec3(plum(k)),k,.82);}
+void main(){vec2 q=vec2(uv.x*asp,uv.y),pu=picUV(q);float sd=sdAt(q),so=max(sd,0.);vec2 n=sdN(q),fd=dir==2?vec2(0.,-1.):vec2(0.,1.);
+ vec2 v=curl(q*1.5+vec2(ph*.05,-ph*.07))*swirl+curl(q*4.7+vec2(-ph*.11,ph*.09))*wisp;
+ /* thick smoke moves a little faster than thin, so it gathers into plumes */
+ float dn=min(1.,plum(texture(prev,uv).rgb)*1.2),push=rise*(.82+.18*dn),thin=1.;
+ if(act==1){/* beats: the puff of cloud mostly hangs where it is. The shape pumps in and out like a drum skin, and each hit sends a short ring out through the puff */
+  v*=.45;v+=(dir==1?n:fd)*push*.18*smoothstep(0.,.05,sd);v+=n*bv*exp(-sd*sd*25.);
+  for(int i=0;i<6;i++){float ag=ons[i];if(ag<0.)continue;float x=(sd-ag*.5)*8.;v+=n*ringk*exp(-x*x)*exp(-ag*1.4);}}
+ else if(act==2){/* parts: one stream. It cannot pass through the shape, so it slides round it, and it is drawn back toward the shape so it wraps it instead of drifting off. spread: it circles the shape */
+  vec2 t=vec2(-n.y,n.x);v*=.5;v+=dir==1?t*push*.8:fd*push;
+  /* whatever the shape blocks is turned along its outline, so the stream slides round it quickly instead of piling up */
+  float w=smoothstep(.06,0.,sd),vn=min(dot(v,n),0.);v-=n*vn*w;v-=t*sign(dot(v,t))*vn*w*.8;v+=n*w*.05;v-=n*push*.5*smoothstep(reach*.15,reach*.7,so);}
+ /* pours and melts. spread: the smoke leaves the shape in every direction. It has more and more room to fill, so it thins as it goes */
+ else if(dir==0)v.y+=push;else if(dir==2)v.y-=push;else{float sp=push*(.35+.65/(1.+so*so*6.));v+=n*sp;thin=exp(-dt*.11*sp/(so+.5));}
+ v.x+=wind*sin(ph*.13+q.y*2.3+2.*sin(ph*.05));
+ /* each hit shoves the smoke off the outline of the shape */
+ v+=n*puff*(act==2?.3:1.)*exp(-sd*sd*60.);
+ /* melts: while the music is quiet the picture holds together and only frays at its edges; lows and hits blow right through it */
+ if(act==3)v*=mix(1.,blow,min(srcAt(pu),1.));
+ vec2 dd=q-dp.xy;v+=dp.zw*exp(-dot(dd,dd)*40.);
+ vec2 bk=uv-v*dt*vec2(1./asp,1.)*.11,mb=min(bk,1.-bk);vec2 tx=1.5/vec2(textureSize(prev,0));
+ /* a little of each neighbour is mixed in, so the smoke softens and spreads as it ages */
+ vec3 c=mix(texture(prev,bk).rgb,(texture(prev,bk+vec2(tx.x,0.)).rgb+texture(prev,bk-vec2(tx.x,0.)).rgb+texture(prev,bk+vec2(0.,tx.y)).rgb+texture(prev,bk-vec2(0.,tx.y)).rgb)*.25,.12)*thin;
+ /* Reach: smoke that strays this far from the shape thins away, so the smoke stays gathered round the shape and the rest of the screen stays dark */
+ float far=reach*(act==1?.5:act==3?.7:1.);c*=smoothstep(0.,.012,min(mb.x,mb.y))*exp(-dt*6.*smoothstep(far*.6,far*1.4,so));
+ if(act==1){/* beats: a puff of cloud that fills the shape and reaches a little way past its outline. It is always drifting back to rest, so whatever a beat does to it heals over */
+  float prof=exp(-so*so/(reach*reach*.09)),d=.45+.55*smoothstep(.25,.7,fbm(q*2.6+vec2(-ph*.05,ph*.04)));vec3 bc=cloudCol(q);
+  if(colm==0)bc=mix(bc,lift(textureLod(pic,clamp(pu,0.,1.),2.5).rgb),smoothstep(.01,-.02,sd)*inPic(pu,.02));
+  c=mix(c,bc*d*cloud*prof,1.-exp(-dt*heal));}
+ else if(act==2){/* parts: the stream starts in a band just upstream of the shape (all round it, for spread), in strands, and nothing gets inside the shape */
+  c*=fade*smoothstep(-.012,.02,sd);float up=dir==1?1.:smoothstep(.1,-.5,dot(n,fd)),x=(sd-reach*(dir==1?.3:.4))/(reach*.2);
+  c+=cloudCol(q)*up*exp(-x*x)*(.25+1.5*smoothstep(.3,.7,fbm(q*6.+vec2(ph*.21,-ph*.5))))*emit*dt*1.6;}
+ else{c*=fade;float s=srcAt(pu);
+  if(s>0.){vec3 pc=textureLod(pic,pu,act==3?0.:1.).rgb;
+   if(act==3){/* melts: the picture is made of smoke. The flow carries it away and it keeps re-forming */
+    pc=colm==1?pal(plum(pc)*1.6+pu.y*.9+cph):mix(pc,lift(pc),lifted);c=mix(c,pc,min(s,1.)*(1.-exp(-dt*heal)));}
+   else{/* pours: the shape does not smoke evenly. Patches of it take turns, so the smoke leaves in strands */
+    s*=.25+1.5*smoothstep(.3,.7,fbm(q*6.+vec2(ph*.21,-ph*.5)));c+=(colm==1?pal(plum(pc)*1.6+pu.y*.9+cph):lift(pc))*s*emit*dt;}}}
+ /* however much smoke piles up it keeps its colour and never burns out to white */
+ o=vec4(c*min(1.,2.2/max(max(c.r,max(c.g,c.b)),1e-4)),1.);}`;
+/* the picture on screen: the smoke and the steady picture it comes from, both lit softly from the upper left as one 3D form */
+const PIC_SHOW=HEAD+PICLIB+`uniform sampler2D dye;uniform vec2 px;uniform float rot,psy,pph,vis,haze,ash,bx,dent,ringk;uniform int surf,mir;uniform float ons[6];
+float dl(vec2 u){vec3 c=texture(dye,u).rgb;return (c.r+c.g+c.b)*.42;}
+/* how high the shape stands at a point: the rounded form, with the picture's own lights raised a little like a carving, on a low mound that falls away round it (so the smoke round the shape is lit as part of the same solid). beats: every hit punches the form in to a dent and it springs back out, and sends a short ring through the puff round it */
+float form(vec2 q){float sd=sdForm(q),so=max(sd,0.),h=(dome(sd)*carve(q)+.32*exp(-so*so/(reach*reach*.12)))*dent;
+ if(act==1){h*=.55-1.5*clamp(bx,-.5,1.1);float w=smoothstep(0.,.04,sd)*exp(-2.*max(sd,0.)/reach);
+  for(int i=0;i<6;i++){float ag=ons[i];if(ag<0.)continue;float x=(sd-ag*.5)*10.;h+=ringk*x*exp(-x*x)*exp(-ag*1.4)*w;}}
+ return h;}
+void main(){vec2 d=(uv-.5)*vec2(asp,1.)*(1.-pz);float r0=length(d),ca=cos(rot),sa=sin(rot);
+ /* spin turns the whole picture first, then the mirrors fold it. With 6 or 8 mirrors the fold sits at the foot of the smoke's field, so a whole wedge fits.
+    Past its edges the smoke's field repeats as a mirror image, so spin and wide mirrors never run out of picture */
+ d=kal(mat2(ca,-sa,sa,ca)*d,mir);vec2 q=d+(mir>2?vec2(asp*.5,0.):vec2(asp*.5,.5)),u=q/vec2(asp,1.);
+ vec3 c=texture(dye,u).rgb*.4+(texture(dye,u+px).rgb+texture(dye,u-px).rgb+texture(dye,u+vec2(px.x,-px.y)).rgb+texture(dye,u+vec2(-px.x,px.y)).rgb)*.15;
+ vec2 pk=px*1.6;float hx=dl(u+vec2(pk.x,0.))-dl(u-vec2(pk.x,0.)),hy=dl(u+vec2(0.,pk.y))-dl(u-vec2(0.,pk.y)),lm=c.r+c.g+c.b,edge=length(vec2(hx,hy)),ns=surf==1?8.:.9;
+ /* the slope of the form tilts the light on the smoke and on the picture alike, which is what makes the shape read as solid */
+ float g=.006,fh=form(q),gx=(form(q+vec2(g,0.))-form(q-vec2(g,0.)))/(2.*g),gy=(form(q+vec2(0.,g))-form(q-vec2(0.,g)))/(2.*g),sdq=sdForm(q);
+ vec3 n=normalize(vec3(-hx*ns-gx*.2,-hy*ns-gy*.2,1.)),n2=normalize(vec3(-gx*.2,-gy*.2,1.)),ld=normalize(vec3(-.4,.55,.75));
+ float dif=max(dot(n,ld),0.),dif2=max(dot(n2,ld),0.),mx=max(c.r,max(c.g,c.b));
+ vec3 hue=c/max(mx,.1);
+ /* ash: where the smoke thins out it loses its colour and goes grey */
+ hue=mix(hue,vec3(plum(hue))*vec3(.94,.97,1.06)+.12,ash*(1.-smoothstep(0.,1.1,lm))*(surf==1?.3:1.)*(act==3?0.:1.));
+ /* a picture made of smoke keeps its own lights and darks; other smoke just gets denser */
+ float dens0=act==3?min(mx,1.):1.-exp(-lm*.75);
+ vec3 col;float cov;
+ if(surf==2){/* neon: the smoke drawn as thin glowing contour lines, which climb the form like the lines on a map */
+  float lv=lm*1.7+fh*4.,f=abs(fract(lv)-.5),fw=max(fwidth(lv),1e-4),ln=smoothstep(fw*1.7,0.,f)+exp(-f/(fw*5.+.03))*.35*glow,sf=1.-exp(-lm*.8);col=hue*ln*.7*smoothstep(.02,.2,lm)+hue*sf*.05;cov=min(1.,sf*.5);}
+ else if(surf==1){/* oil: thick and rich, with a wet shine */
+  float dens=act==3?dens0:pow(1.-exp(-lm*2.6),.8),spec=pow(max(dot(reflect(-ld,n),vec3(0,0,1)),0.),40.);col=hue*hue*dens*(.24+.62*dif)+hue*dens*.08+vec3(1.)*spec*.35*smoothstep(0.,.04,edge+length(vec2(gx,gy))*.02)*min(dens*3.,1.);cov=dens;}
+ else{/* smoke: thin and soft. The form gives it a lit side and a shaded side; its own folds are lit only gently */
+  col=hue*dens0*(.32+.62*dif2+.3*(dif-dif2))*(act==3?mix(.8,1.2,smoothstep(.03,-.01,sdq)):1.);cov=dens0;}
+ /* the picture itself, steady, lit as the same 3D form, with a soft shine where it turns toward the light. pours and parts: it stands in front of the smoke, bent a little by it like heat haze.
+    beats: it sits on the puff and is punched in with it. melts: the smoke is the picture */
+ vec2 pu=picUV(q)+vec2(hx,hy)/(1.+edge*6.)*haze*.09;vec4 P=texture(pic,pu);float pa=mix(inPic(pu,.07),P.a*inPic(pu,.02),plain);
+ vec3 pc=mix(P.rgb,lift(P.rgb),lifted)*(.4+.8*dif2)+vec3(1.)*pow(max(dot(reflect(-ld,n2),vec3(0,0,1)),0.),18.)*.16;
+ if(act==1)col=mix(col,pc,pa*vis*.9);
+ else if(act!=3)col=mix(col,pc,pa*vis*(1.-cov*.15));
+ /* the form throws a soft shadow on the smoke behind it, on the side away from the light */
+ float up=dent*(act==1?max(.55-1.5*bx,0.):1.);col*=1.-.5*min(up*1.8,1.)*smoothstep(0.,-.025,sdForm(q+ld.xy*.05))*smoothstep(-.004,.012,sdq);
+ /* psychedelic turns the hues; pph is the slow drift, counted up outside so moving the control never jumps the colours */
+ if(psy!=0.)col=max(hrot(col,psy*(lm*2.+r0*2.+9.)-pph),0.);
+ o=vec4(max(col,0.),1.);}`;
+/* kaleidoscope: coloured glass shards tumble in a chamber and mirrors repeat them, like the toy. Every piece is leaded like stained glass.
+   The lamp behind the glass is steady. The music moves the glass instead: hits turn the tube and send a slow ring that bends and recolours the pieces,
+   lows swell the shards, mids jostle them, highs drift their colours. sb = low, mid, high, slowed right down */
+const KAL=HEAD+`uniform float rot,psy,segs,size,jag,lead,light,spark,frost,turn,tph,breathe,swell,wash,ripple,sfl,cstep,cflow,twist,bulge,layer,pph;uniform vec3 sb;uniform int surf,form,colm,cut;uniform float ons[6];
+vec2 KR;
+vec2 h22(vec2 p){return vec2(h21(p),h21(p+vec2(17.13,5.71)));}
+vec2 pt(vec2 c){vec2 o=h22(c);return .5+.5*jag*sin(tph*(.6+o.yx)+6.2831853*o);}
+/* the shards: x = distance to the nearest edge, y = distance from the middle of the piece; id names the piece */
+vec2 shards(vec2 q,out vec2 id){vec2 n=floor(q),f=fract(q),mg=vec2(0.),mr=vec2(0.);float md=8.;
+ for(int j=-1;j<=1;j++)for(int i=-1;i<=1;i++){vec2 g=vec2(float(i),float(j)),r=g+pt(n+g)-f;float d=dot(r,r);if(d<md){md=d;mr=r;mg=g;}}
+ float bd=8.;
+ for(int j=-2;j<=2;j++)for(int i=-2;i<=2;i++){vec2 g=mg+vec2(float(i),float(j)),r=g+pt(n+g)-f,dr=r-mr;if(dot(dr,dr)>1e-5)bd=min(bd,dot(.5*(mr+r),normalize(dr)));}
+ id=n+mg;KR=mr;return vec2(bd,sqrt(md));}
+/* the cut of the glass. shards: broken pieces. diamonds: a harlequin lattice whose rows slide. scales: overlapping rounds, like fish scales or roof tiles.
+   rose: rings of wedges round a hub, like a rose window, each ring turning its own way. Shatter loosens each of them */
+vec2 cutF(vec2 q,out vec2 id){
+ if(cut==1){vec2 r=mat2(.7071,-.7071,.7071,.7071)*q;r.x+=jag*.5*sin(tph*.4+floor(r.y)*2.4);id=floor(r);vec2 f=fract(r)-.5;KR=f;return vec2(.5-max(abs(f.x),abs(f.y)),length(f));}
+ if(cut==2){q.x+=jag*.22*sin(tph*.5+q.y*1.7);float R=.6,v=q.y*2.,bd=8.,md=0.;bool got=false;id=vec2(0.);KR=vec2(0.);
+  for(int a=2;a>=-1;a--){float jj=floor(v)+float(a),off=.5*mod(jj,2.),ii=floor(q.x-off+.5);vec2 cc=vec2(ii+off,jj*.5);float dd=length(q-cc);
+   if(dd<R){bd=min(bd,min(R-dd,.5-abs(q.x-off-ii)));md=dd;KR=q-cc;id=vec2(ii*2.+mod(jj,2.),jj);got=true;break;}bd=min(bd,dd-R);}
+  if(!got)bd=0.;return vec2(bd,md);}
+ if(cut==3){float rr=length(q),ri=floor(rr*1.1),n=max(3.,floor(6.2832*(ri+.5)/1.1)),sg=6.2832/n,aa=mod(atan(q.y,q.x)+h21(vec2(ri,3.))*6.2832+jag*tph*.12*(mod(ri,2.)*2.-1.),6.2832),si=floor(aa/sg),fa=fract(aa/sg),fr=fract(rr*1.1);
+  float am=atan(q.y,q.x)+(.5-fa)*sg;vec2 cc=(ri+.5)/1.1*vec2(cos(am),sin(am));id=vec2(ri,si);KR=q-cc;return vec2(min(min(fr,1.-fr)/1.1,min(fa,1.-fa)*sg*rr),length(KR));}
+ return shards(q,id);}
+/* the mirrors. wheel: two mirrors make a rosette. tiles: three make a field of triangles. facets: a cut lens repeats a small rosette.
+   sm = how far this point is from the nearest join between mirrors */
+vec2 wheelF(vec2 p,float n,out float sm){float sg=3.14159265/n,r=length(p),a=atan(p.y,p.x);a=abs(mod(a+sg,2.*sg)-sg);sm=min(a,sg-a)*r;return r*vec2(cos(a),sin(a));}
+vec2 triF(vec2 p,float ri,out float sm){for(int k=0;k<40;k++){bool inside=true;for(int i=0;i<3;i++){float an=1.5707963+2.0943951*float(i);vec2 nn=vec2(cos(an),sin(an));float d=dot(p,nn)-ri;if(d>0.){p-=2.*d*nn;inside=false;}}if(inside)break;}
+ sm=1e3;for(int i=0;i<3;i++){float an=1.5707963+2.0943951*float(i);sm=min(sm,ri-dot(p,vec2(cos(an),sin(an))));}return p;}
+vec2 hexF(vec2 p,float sz,out float sm,out vec2 hc){vec2 s=vec2(1.,1.7320508)*sz,a=mod(p,s)-s*.5,b=mod(p-s*.5,s)-s*.5,l=dot(a,a)<dot(b,b)?a:b;hc=p-l;vec2 al=abs(l);sm=sz*.5-max(al.x,al.x*.5+al.y*.8660254);return l;}
+void main(){float pxp=2.*(1.-pz*.5)*fwidth(uv.y);vec2 p=(uv-.5)*vec2(asp,1.)*2.*(1.-pz*.5);float r0=length(p),ca=cos(rot),sa=sin(rot);
+ /* each hit sends one slow, wide ring out from the middle */
+ float wave=0.;for(int i=0;i<6;i++){float ag=ons[i];if(ag<0.)continue;wave+=exp(-pow((r0-ag*.75)*2.4,2.))*exp(-ag*.65)*smoothstep(0.,.3,ag);}wave=min(wave,1.4);
+ p+=p/max(r0,1e-3)*wave*ripple*.1;p=mat2(ca,-sa,sa,ca)*p;
+ /* bulge: a lens over the middle makes the centre pieces bigger. twist: the mirrors wind into a spiral */
+ p*=1.-bulge*.6*exp(-r0*r0*1.3);{float ta=twist*3.2*r0/(1.+r0*.9),tc=cos(ta),ts=sin(ta);p=mat2(tc,-ts,ts,tc)*p;}
+ float sm,k=(3.+(1.-size)*8.)/(1.+swell*.34*sb.x);vec2 d;
+ if(form==1)d=triF(p,.62-segs*.035,sm);
+ else if(form==2){vec2 hc;float sz=1.5-segs*.085,s2;vec2 l=hexF(p,sz,sm,hc);d=wheelF(l*(2.2/sz),3.,s2)+hc*.37;sm=min(sm,s2*sz/2.2);k*=.5;pxp*=2.2/sz;sm*=2.2/sz;}
+ else d=wheelF(p,segs,sm);
+ float ct=cos(turn*.8),st=sin(turn*.8);vec2 q=mat2(ct,-st,st,ct)*d*k+vec2(sin(turn*.6),cos(turn*.47))*2.+vec2(tph*.11,-tph*.07);
+ vec2 id;vec2 sh=cutF(q,id);float bd=sh.x,md=sh.y,px=pxp*k;
+ float h=h21(id),h2=h21(id+31.7),h3=h21(id+57.3);
+ /* each piece takes one of the three colours; a few are pale, nearly clear glass */
+ float band=h3<.34?sb.x:(h3<.67?sb.y:sb.z);
+ /* how the music changes the colours. ring: each hit sends a ring of new colour outward. swap: on each hit a share of the pieces trade to their next colour, one after another.
+    flow: the colours drift through the palette, faster when the music is louder. bands: each piece shifts with its own part of the sound */
+ float cs=colm==1?step(h3,wash)*(floor(cstep)+smoothstep(h2*.6,h2*.6+.4,fract(cstep))):colm==2?cflow+.3*sin(h3*6.2832+cflow*1.7):colm==3?wash*band*2.:wash*wave*1.3;
+ vec3 pc=pal(floor(h*3.)+.3*(h2-.5)+cs+wash*sb.z*.35*sin(h3*6.2832+t*.3));pc=pc*pc*(.75+.5*h3)+pc*.12;pc=mix(pc,vec3(1.),step(.92,h2)*.45);
+ /* the lamp behind the glass is steady and brightest in the middle; breathe lets each piece swell a little, slowly, with its own part of the sound */
+ float back=.28+light*(.32+.42*exp(-r0*r0*.6))+breathe*band*.42+sfl*.1;
+ float tex=1.-frost*.6+frost*(.6*fbm(q*2.3+id*3.7)+.35*vn(q*9.+id)+.13*sin(dot(q,vec2(cos(h*6.2832),sin(h*6.2832)))*14.+h2*6.)+.2);
+ float lw=.02+lead*.1,aa=px*1.2,pane=smoothstep(lw,lw+aa,bd);vec3 col;
+ if(surf==1){float dome=smoothstep(lw,lw+.26,bd);vec2 hl=KR-vec2(.14,-.14);
+  col=pc*(.1+back*1.3*tex)*dome*(.5+.7*dome)+mix(pc,vec3(1.),.7)*exp(-dot(hl,hl)*42.)*pane*(.45+spark*.35+breathe*band*.3);}
+ else if(surf==2){float e=abs(bd-lw-.03);col=pc*(exp(-e/(aa+.006))*1.1+exp(-e/.07)*.3*glow)*(.45+back*1.1)+pc*.06*pane*back;}
+ else{col=pc*back*tex*pane*1.35*(.62+.38*smoothstep(lw,lw+.3,bd))+mix(pc,vec3(1.),.35)*smoothstep(lw+.08,lw+aa,bd)*pane*(.16+.16*light+.25*breathe*band)+vec3(.022,.022,.026)*(1.-pane);}
+ /* layers: a second sheet of bigger, paler glass lies over the first and turns the other way, so colours mix where they overlap */
+ if(layer>0.){vec2 kr=KR,id2;float lc=cos(1.-turn*.5),ls=sin(1.-turn*.5);vec2 s2=shards(mat2(lc,-ls,ls,lc)*d*k*.42+vec2(7.3-tph*.06,2.1+tph*.04),id2);KR=kr;
+  float g1=h21(id2+11.),p2=smoothstep(.03,.03+px*.6,s2.x);col*=mix(vec3(1.),mix(vec3(1.),pal(floor(g1*3.)+.5),.55)*1.3*(.3+.7*p2),layer);}
+ float tw=pow(max(sin(t*(.45+h*.8)+h2*40.),0.),6.)*spark*(.4+.35*sb.z);col+=vec3(1.)*tw*exp(-md*md*70.)*pane;
+ /* the joins between mirrors show as faint dark lines, and the cut edges of a faceted lens catch the light */
+ col*=mix(.35,1.,smoothstep(0.,pxp*1.5+.004,sm));if(form==2)col+=mix(c2,vec3(1.),.6)*exp(-sm/.05)*.1;
+ col*=mix(1.,.55,smoothstep(.4,1.9,r0));
+ /* psychedelic turns every piece's hue by its own amount. It can swing below zero (the LFO), which turns the hues the other way.
+    pph is the slow drift, counted up outside so that moving the control never jumps the colours */
+ if(psy!=0.)col=max(hrot(col,psy*(h*5.+r0*2.+9.)-pph),0.);
  o=vec4(col,1.);}`;
 /* bloom: a living pattern that grows, branches and heals (a reaction-diffusion simulation) */
 const BL_STEP=HEAD+`uniform sampler2D prev;uniform vec2 px;uniform float fd,kl,clr,up,dn;uniform vec4 sp[8];uniform int ns;
@@ -467,7 +707,7 @@ function prog(fs){const mk=(t,s)=>{const sh=gl.createShader(t);gl.shaderSource(s
   const p=gl.createProgram();gl.attachShader(p,mk(gl.VERTEX_SHADER,VS));gl.attachShader(p,mk(gl.FRAGMENT_SHADER,fs));gl.bindAttribLocation(p,0,'p');gl.linkProgram(p);
   if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));const U={};return{p,u:n=>U[n]!==undefined?U[n]:(U[n]=gl.getUniformLocation(p,n))}}
 let PR={},glOK=!!gl;
-if(gl){try{PR={step:prog(INK_STEP),show:prog(INK_SHOW),copy:prog(COPY),trail:prog(TRAIL),fr:prog(FRACT),tun:prog(TUN),liq:prog(LIQ),sand:prog(SAND),bstep:prog(BL_STEP),bshow:prog(BL_SHOW)};const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0)}catch(e){console.error(e);glOK=false}}
+if(gl){try{PR={step:prog(INK_STEP),show:prog(INK_SHOW),copy:prog(COPY),trail:prog(TRAIL),fr:prog(FRACT),tun:prog(TUN),liq:prog(LIQ),sand:prog(SAND),kal:prog(KAL),pstep:prog(PIC_STEP),pshow:prog(PIC_SHOW),lotus:prog(LOTUS),bstep:prog(BL_STEP),bshow:prog(BL_SHOW)};const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0)}catch(e){console.error(e);glOK=false}}
 /* ink sim targets */
 let sim={w:0,h:0,t:[],f:[],i:0};
 function mkTarget(w,h){const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);
@@ -488,6 +728,67 @@ function inkBurst(str){if(S.style!=='ink')return;const m=S.w.mirror,a=sim.w/sim.
   splat(x,y,.09+.12*str,(.5+str)*(.35+S.v.drops),CH[(R()*2)|0]);
   if(str>.5)splat(x+.05,y+.05,.04,.6*S.v.drops+.2,CH[2])}
 let ph=0,bclr=false,bT=0,lph=0,lph0=null;const BSPAN=[300,3000,900],bsz=()=>(S.w.btype===1?.038:.02)+R()*.016;
+/* lotus: how far in we are, counted in rings. Only the part of the depth that matters is kept (the rest repeats), so it can run for hours.
+   A hit raises vt, and the speed follows it up and falls back: a lunge, never a jump */
+const KZ={vt:0,vel:0,sb:[0,0,0],lz:0,lr:0,lw:0,lc:0,lv:0,ht:0,he:0,cn:0,cs:0,cf:0,lp:0,pe:0,pp:0};
+/* picture: the dropped picture is shrunk to 512 by 512 and read once. Its border tells us the ground: if the border is nearly one colour, the picture is a shape
+   on a plain ground and the ground is cut away. Otherwise (a photo that fills the frame) the shape is whatever differs most from the picture's overall colour.
+   How much each point belongs to the shape goes in the fourth channel, beside the colours */
+const PIC={cv:null,data:null,sdf:null,pal:null,tex:null,tex2:null,dirty:false,asp:1,plain:1,lifted:0,sample:0},PICS=['moon','flower','sunset'];
+/* bx and bv are the beat: the shape rides on a spring that every hit kicks and the lows lean on, so it thumps and settles */
+const KP={sb:[0,0,0],lv:0,ht:0,he:0,pf:0,lp:0,pe:0,pp:0,rot:0,t0:0,tl:-9,dq:null,bx:0,bv:0};
+function picSet(img,w,h){const n=512,cv=PIC.cv||(PIC.cv=document.createElement('canvas'));cv.width=cv.height=n;const x=cv.getContext('2d',{willReadFrequently:true});x.clearRect(0,0,n,n);x.drawImage(img,0,0,n,n);
+  const d=x.getImageData(0,0,n,n).data;let clear=0;for(let i=3;i<d.length;i+=4)if(d[i]<128)clear++;
+  const alpha=clear>n*n*.04,m=Math.round(n*.03),edge=[];let br=0,bg=0,bb=0;
+  for(let y=0;y<n;y+=2)for(let xx=0;xx<n;xx+=2)if(xx<m||y<m||xx>=n-m||y>=n-m){const i=(y*n+xx)*4;edge.push(i);br+=d[i];bg+=d[i+1];bb+=d[i+2]}
+  br/=edge.length;bg/=edge.length;bb/=edge.length;const dist=(i,r,g,b)=>Math.hypot(d[i]-r,d[i+1]-g,d[i+2]-b)/255;
+  const plain=alpha||edge.filter(i=>dist(i,br,bg,bb)<.14).length/edge.length>.8;
+  if(!plain){br=bg=bb=0;let k=0;for(let i=0;i<d.length;i+=16){br+=d[i];bg+=d[i+1];bb+=d[i+2];k++}br/=k;bg/=k;bb/=k}
+  const o=new Uint8Array(n*n*4),smp=[],all=[];let ls=0,ln=0;
+  for(let y=0;y<n;y++)for(let xx=0;xx<n;xx++){const i=(y*n+xx)*4,j=((n-1-y)*n+xx)*4,ds=dist(i,br,bg,bb),a=alpha?d[i+3]/255:plain?clamp((ds-.1)/.2):clamp((ds-.12)/.4);
+    if(a>.5){ls+=Math.max(d[i],d[i+1],d[i+2]);ln++}if(!(y&7)&&!(xx&7)){const p=[d[i],d[i+1],d[i+2]];all.push(p);if(a>.5)smp.push(p)}o[j]=d[i];o[j+1]=d[i+1];o[j+2]=d[i+2];o[j+3]=Math.round(a*255)}
+  PIC.data=o;PIC.asp=clamp(w/h,.4,2.5);PIC.plain=plain?1:0;PIC.lifted=plain&&ln&&ls/ln<76?1:0;
+  /* the three main colours of the shape (or of the whole picture, if it fills its frame) colour the cloud that the shape beats on or parts */
+  {const s=(plain&&smp.length>24?smp:all).sort((a,b)=>a[0]*3+a[1]*6+a[2]-b[0]*3-b[1]*6-b[2]),cen=[.17,.5,.83].map(f=>s[Math.floor(f*(s.length-1))].slice());
+    for(let it=0;it<8;it++){const sum=cen.map(()=>[0,0,0,0]);s.forEach(p=>{let b=0,bd=1e9;cen.forEach((q,k)=>{const dd=(p[0]-q[0])**2+(p[1]-q[1])**2+(p[2]-q[2])**2;if(dd<bd){bd=dd;b=k}});const t=sum[b];t[0]+=p[0];t[1]+=p[1];t[2]+=p[2];t[3]++});sum.forEach((t,k)=>{if(t[3])cen[k]=[t[0]/t[3],t[1]/t[3],t[2]/t[3]]})}
+    PIC.pal=cen.map(q=>{const c=q.map(v=>v/255),b=Math.max(...c),k=clamp((b-.05)/.15),mm=k*k*(3-2*k),g=Math.max(1,.7/Math.max(b,.08));return[.7,.74,.8].map((p,i)=>p+(c[i]*g-p)*mm)})}
+  /* how far every point is from the shape's outline, on a 256 grid, as fractions of the picture's longer side: red counts the distance outside the shape, green inside it. If nothing stands out, the whole picture is the shape */
+  {const m2=256,ins=new Uint8Array(m2*m2);let cnt=0;for(let i=0;i<m2*m2;i++){if(o[(((i>>8)*2)*n+(i&255)*2)*4+3]>127){ins[i]=1;cnt++}}if(cnt<m2*m2*.01)ins.fill(1);
+    const ax=PIC.asp>=1?1:PIC.asp,ay=PIC.asp>=1?1/PIC.asp:1,wx=ax/m2,wy=ay/m2,wd=Math.hypot(wx,wy);
+    const edt=(cls,brd)=>{const D=new Float32Array(m2*m2);for(let i=0;i<m2*m2;i++){const yy=i>>8,x2=i&255;D[i]=ins[i]===cls?0:brd?Math.min((x2+.5)*wx,(m2-x2-.5)*wx,(yy+.5)*wy,(m2-yy-.5)*wy):1e9}
+      for(let yy=0;yy<m2;yy++)for(let x2=0;x2<m2;x2++){const i=yy*m2+x2;let v=D[i];if(x2>0)v=Math.min(v,D[i-1]+wx);if(yy>0){v=Math.min(v,D[i-m2]+wy);if(x2>0)v=Math.min(v,D[i-m2-1]+wd);if(x2<m2-1)v=Math.min(v,D[i-m2+1]+wd)}D[i]=v}
+      for(let yy=m2-1;yy>=0;yy--)for(let x2=m2-1;x2>=0;x2--){const i=yy*m2+x2;let v=D[i];if(x2<m2-1)v=Math.min(v,D[i+1]+wx);if(yy<m2-1){v=Math.min(v,D[i+m2]+wy);if(x2<m2-1)v=Math.min(v,D[i+m2+1]+wd);if(x2>0)v=Math.min(v,D[i+m2-1]+wd)}D[i]=v}return D};
+    const dOut=edt(1,false),dIn=edt(0,true),sd=new Float32Array(m2*m2*2);let g=new Float32Array(m2*m2),t=new Float32Array(m2*m2);for(let i=0;i<m2*m2;i++)g[i]=Math.min(4,dOut[i])-Math.min(4,dIn[i]);
+    /* the grid's stair steps are smoothed away, or they show as a comb along the rim of the dent */
+    for(let it=0;it<4;it++){for(let i=0;i<m2*m2;i++){const x2=i&255;t[i]=(g[x2>0?i-1:i]+2*g[i]+g[x2<m2-1?i+1:i])/4}for(let i=0;i<m2*m2;i++){const yy=i>>8;g[i]=(t[yy>0?i-m2:i]+2*t[i]+t[yy<m2-1?i+m2:i])/4}}
+    for(let i=0;i<m2*m2;i++){sd[i*2]=Math.max(g[i],0);sd[i*2+1]=Math.max(-g[i],0)}PIC.sdf=sd}
+  PIC.dirty=true;dirty=true}
+function picTex(){const mk=mip=>{const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,mip?gl.LINEAR_MIPMAP_LINEAR:gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);return t};
+  if(!PIC.tex){PIC.tex=mk(true);PIC.tex2=mk(false)}
+  if(PIC.dirty){PIC.dirty=false;gl.bindTexture(gl.TEXTURE_2D,PIC.tex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,512,512,0,gl.RGBA,gl.UNSIGNED_BYTE,PIC.data);gl.generateMipmap(gl.TEXTURE_2D);gl.bindTexture(gl.TEXTURE_2D,PIC.tex2);gl.texImage2D(gl.TEXTURE_2D,0,gl.RG16F,256,256,0,gl.RG,gl.FLOAT,PIC.sdf)}}
+/* three pictures to try: two shapes on a plain ground and one that fills its frame */
+function picSample(k){const c=document.createElement('canvas');c.width=c.height=512;const x=c.getContext('2d'),circ=(cx,cy,r)=>{x.beginPath();x.arc(cx,cy,r,0,7);x.fill()};
+  if(k===0){x.fillStyle='#0c1236';x.fillRect(0,0,512,512);const g=x.createLinearGradient(140,110,330,420);g.addColorStop(0,'#fff3c4');g.addColorStop(1,'#f0a23a');x.fillStyle=g;circ(250,262,152);x.fillStyle='#0c1236';circ(318,220,130);
+    x.fillStyle='#bfe0ff';[[396,140,20],[436,306,12],[112,104,11],[372,410,9]].forEach(([sx,sy,r])=>{x.beginPath();for(let i=0;i<8;i++){const a=i*Math.PI/4,rr=i%2?r*.3:r;x.lineTo(sx+Math.sin(a)*rr,sy-Math.cos(a)*rr)}x.fill()})}
+  else if(k===1){x.fillStyle='#10262e';x.fillRect(0,0,512,512);const pet=(n,r0,len,wd,c0,c1,ph)=>{for(let i=0;i<n;i++){x.save();x.translate(256,256);x.rotate(ph+i*Math.PI*2/n);const g=x.createLinearGradient(0,-r0,0,-r0-len*2);g.addColorStop(0,c0);g.addColorStop(1,c1);x.fillStyle=g;x.beginPath();x.ellipse(0,-r0-len,wd,len,0,0,7);x.fill();x.restore()}};
+    pet(8,22,104,44,'#ffd27a','#ff3f86',0);pet(8,14,62,28,'#fff0a8','#ff8a2a',Math.PI/8);x.fillStyle='#55d6f2';circ(256,256,38)}
+  else{let g=x.createLinearGradient(0,0,0,336);g.addColorStop(0,'#23104f');g.addColorStop(.55,'#b83268');g.addColorStop(1,'#ffb347');x.fillStyle=g;x.fillRect(0,0,512,336);x.fillStyle='#fff1b8';circ(256,300,96);
+    g=x.createLinearGradient(0,336,0,512);g.addColorStop(0,'#3a1b5e');g.addColorStop(1,'#140c30');x.fillStyle=g;x.fillRect(0,336,512,176);x.fillStyle='#ffcf7a';[[352,150],[372,116],[394,86],[418,58],[446,34]].forEach(([y,w])=>{x.beginPath();x.roundRect(256-w/2,y,w,8,4);x.fill()})}
+  PIC.sample=k;picSet(c,512,512);try{localStorage.removeItem('gt-vis-pic')}catch(_){}}
+function picFile(f){if(!f||!/^image\//.test(f.type)){S.last='that file is not a picture';dirty=true;return}const u=URL.createObjectURL(f),im=new Image();
+  im.onload=()=>{PIC.sample=-1;picSet(im,im.naturalWidth||512,im.naturalHeight||512);URL.revokeObjectURL(u);if(S.style!=='picture')setStyle('picture');S.last='picture loaded';dirty=true;
+    try{localStorage.setItem('gt-vis-pic',JSON.stringify({a:PIC.asp,u:PIC.cv.toDataURL('image/webp',.85)}))}catch(_){}};
+  im.onerror=()=>{URL.revokeObjectURL(u);S.last='that picture could not be read';dirty=true};im.src=u}
+/* the last picture you dropped comes back when the page is opened again */
+function picInit(){picSample(0);try{const s=JSON.parse(localStorage.getItem('gt-vis-pic')||'null');if(s&&s.u){const im=new Image();im.onload=()=>{PIC.sample=-1;picSet(im,512*s.a,512);try{localStorage.setItem('gt-vis-pic',JSON.stringify(s))}catch(_){}};im.src=s.u}}catch(_){}}
+$('#picfile').addEventListener('change',e=>{picFile(e.target.files[0]);e.target.value=''});
+addEventListener('dragover',e=>e.preventDefault());
+addEventListener('drop',e=>{e.preventDefault();const f=[...(e.dataTransfer&&e.dataTransfer.files||[])].find(f=>/^image\//.test(f.type));if(f)picFile(f)});
+addEventListener('paste',e=>{const f=[...(e.clipboardData&&e.clipboardData.files||[])].find(f=>/^image\//.test(f.type));if(f)picFile(f)});
+/* kaleidoscope: every burst turns the tube a notch, so the shards tumble into a new picture; now and then it turns back the other way */
+const KT={cur:0,to:0,ph:0,dir:1,n:0,sb:[0,0,0],fl:0,ht:0,he:0,cn:0,cs:0,cf:0,lv:0,lp:0,pe:0,pp:0};
+const kalLfo=v=>60*Math.pow(1/30,v);
+function kalTurn(str){KT.n++;KT.cn++;KT.ht=Math.min(1,KT.ht+.45+str*.4);if(KT.n%7===0)KT.dir=-KT.dir;KT.to+=(.3+str*.9)*S.v.ktumble*1.5*KT.dir}
 /* sand figures: pairs of wave counts across the plate; a burst jumps to the next figure */
 const SMODES=[[1,2],[2,3],[1,4],[3,4],[2,5],[1,6],[3,5],[4,5],[2,7],[3,7],[5,6],[4,7]],SM={a:0,b:1,t0:-9,n:0};
 function sandNext(){SM.n++;if(SM.n%[4,3,2,1][Math.round(S.v.schange*3)])return;const max=2+Math.round(S.v.scomp*(SMODES.length-2));let nx;do{nx=Math.floor(R()*max)}while(nx===SM.b);SM.a=SM.b;SM.b=nx;SM.t0=T}
@@ -542,6 +843,60 @@ function renderGL(W,H,dt){if(!glOK)return;
     const a=SMODES[SM.a],b=SMODES[SM.b],k=clamp((T-SM.t0)/.45),blv=k*k*(3-2*k);
     gl.uniform4f(pr.u('md'),a[0],a[1],b[0],b[1]);gl.uniform1f(pr.u('bl'),blv);gl.uniform1f(pr.u('rot'),theta);gl.uniform1f(pr.u('psy'),S.v.spsy);gl.uniform1f(pr.u('grain'),S.v.sgrain);gl.uniform1f(pr.u('shake'),clamp((M.pulse*.55+M.stir*.12)*S.v.sscatter*2+S.v.sres*F.high*.9));gl.uniform1f(pr.u('dnk'),.3+S.v.sdens*1.4);gl.uniform1f(pr.u('drift'),S.v.sdrift);gl.uniform1i(pr.u('mir'),S.w.smirror);gl.uniform1f(pr.u('sharp'),S.v.ssharp);gl.uniform1i(pr.u('surf'),S.w.ssurface);gl.uniform1i(pr.u('form'),S.w.sform);gl.drawArrays(gl.TRIANGLES,0,3);
     trailOut(W,H,dt,asp,S.v.strails,S.w.strails===1,S.v.spsy,1);
+  }else if(S.style==='picture'){if(!PIC.data)picInit();ensureSim(asp);seed=false;ensureTrail(W,H);picTex();const sw=sim.w/sim.h,ds=Math.min(dt,.05),m=S.w.pmirror,act=S.w.pform;
+    /* the sound is slowed right down before it touches the smoke; pf is the short push each hit gives */
+    {const e=(a,b,up,dn)=>a+(b-a)*(1-Math.exp(-dt*(b>a?up:dn)));[F.low,F.mid,F.high].forEach((v,i)=>KP.sb[i]=e(KP.sb[i],v,2.2,.8));KP.lv=e(KP.lv,F.lvl,2,.8);KP.ht*=Math.exp(-dt*1.1);KP.he=e(KP.he,KP.ht,3,1.2);KP.pf*=Math.exp(-dt*2.4)}
+    /* the beat: a spring the lows lean on and every hit kicks */
+    {const w=13,z=.32,tg=KP.sb[0]*S.v.pfeed*.9;KP.bv+=(-w*w*(KP.bx-tg)-2*z*w*KP.bv)*dt;KP.bx+=KP.bv*dt}
+    KP.lp+=dt*6.2831853/kalLfo(S.v.pprate);const ppsy=clamp(S.v.ppsy+S.v.pplfo*Math.asin(Math.sin(KP.lp))*.63662+S.v.ppsway*[KP.sb[0],KP.sb[1],KP.sb[2],KP.he][S.w.ppsyon]*1.4,-1,1);KP.pe=ppsy;KP.pp+=dt*.5*ppsy;
+    /* the picture stands upright: it only turns if spin is given to it, and comes back level when spin is taken away */
+    if(T-KP.tl>.3)KP.t0=theta;KP.tl=T;KP.rot+=theta-KP.t0;KP.t0=theta;if(S.v.pspin<.005&&S.v.pidle<.005)KP.rot=Math.atan2(Math.sin(KP.rot),Math.cos(KP.rot))*Math.exp(-dt*2);
+    /* with mirrors on, Offset slides the picture off the fold toward the middle of its slice, so the mirrors show whole copies of it */
+    let pc=[0,0];{const o=S.v.poff;if(m===1)pc=[o*sw*.5,0];else if(m===2)pc=[o*sw*.5,o*.5];else if(m>2){const a=Math.PI*2/(m===3?3:4)/4,r=o*.9;pc=[Math.sin(a)*r,-.5+Math.cos(a)*r]}}
+    /* dragging on the picture pushes the smoke along with the pointer (found through the same spin and mirror fold as the screen) */
+    let dp=[0,0,0,0];if(drag&&drag.screen&&drag.u){let dx=(drag.u[0]-.5)*asp,dy=drag.u[1]-.5;const ca=Math.cos(KP.rot),sa=Math.sin(KP.rot);[dx,dy]=[ca*dx+sa*dy,-sa*dx+ca*dy];
+      if(m===1)dx=Math.abs(dx);else if(m===2){dx=Math.abs(dx);dy=Math.abs(dy)}else if(m>2){const sg=Math.PI*2/(m===3?3:4);let a=Math.atan2(dx,dy);a=Math.abs((((a+sg/2)%sg)+sg)%sg-sg/2);const l=Math.hypot(dx,dy);dx=l*Math.sin(a);dy=l*Math.cos(a)}
+      const qx=dx+sw*.5,qy=dy+(m>2?0:.5);if(KP.dq)dp=[qx,qy,clamp((qx-KP.dq[0])/ds*9,-45,45),clamp((qy-KP.dq[1])/ds*9,-45,45)];KP.dq=[qx,qy]}else KP.dq=null;
+    const ons=new Float32Array(6).fill(-1);onsets.forEach((o,i)=>ons[i]=T-o.t);
+    const picU=pr=>{gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,PIC.tex);gl.uniform1i(pr.u('pic'),1);gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,PIC.tex2);gl.uniform1i(pr.u('pic2'),2);gl.activeTexture(gl.TEXTURE0);
+      gl.uniform1f(pr.u('psz'),.3+.62*S.v.psize);gl.uniform1f(pr.u('pasp'),PIC.asp);gl.uniform1f(pr.u('plain'),PIC.plain);gl.uniform1f(pr.u('lifted'),PIC.lifted);gl.uniform1f(pr.u('amt'),S.v.pamt);gl.uniform1i(pr.u('src'),S.w.psrc);gl.uniform1i(pr.u('act'),act);gl.uniform2f(pr.u('pctr'),pc[0],pc[1]);gl.uniform1f(pr.u('reach'),.08+S.v.preach*.9);gl.uniform1fv(pr.u('ons'),ons)};
+    const pr=PR.pstep;common(pr);gl.uniform1f(pr.u('asp'),sw);picU(pr);gl.uniform1f(pr.u('dt'),ds);gl.uniform1f(pr.u('fade'),Math.pow(.5,ds/(.4*Math.pow(20,S.v.phang))));
+    gl.uniform1f(pr.u('swirl'),(.5+S.v.pswirl*4)*(.6+KP.sb[1]*1.1+M.stir*S.v.stir*1.2));gl.uniform1f(pr.u('wisp'),S.v.pwisp*3.6*(.5+KP.sb[2]*1.6));gl.uniform1f(pr.u('rise'),(.4+S.v.prise*4.6)*(.75+KP.sb[0]*(.3+S.v.pfeed*.7)));gl.uniform1f(pr.u('wind'),S.v.pwind*2.2);
+    gl.uniform1f(pr.u('puff'),KP.pf*S.v.ppuff*4);gl.uniform1f(pr.u('emit'),(S.v.psmoke*1.6+S.v.pfeed*KP.sb[0]*3.2+KP.pf*S.v.ppuff*1.1)*.45);gl.uniform1f(pr.u('cph'),T*.03);gl.uniform4fv(pr.u('dp'),dp);gl.uniform1i(pr.u('dir'),S.w.pdir);gl.uniform1i(pr.u('colm'),S.w.pcolour);
+    /* cloud: how thick the puff of cloud is (beats). heal: how fast the puff settles back (beats) or the picture re-forms (melts) */
+    gl.uniform1f(pr.u('bv'),clamp(KP.bv*.2,-3.5,3.5));gl.uniform1f(pr.u('cloud'),.3+S.v.psmoke);gl.uniform1f(pr.u('heal'),act===3?2+S.v.psmoke*12:1.5/(.8+S.v.phang*5));gl.uniform1f(pr.u('blow'),clamp(.05+KP.sb[0]*S.v.pfeed*.55+KP.pf*S.v.ppuff*.5,0,1));gl.uniform1f(pr.u('ringk'),S.v.ppuff*3);PIC.pal.forEach((k,i)=>gl.uniform3fv(pr.u('k'+(i+1)),k));
+    const a=sim.t[sim.i],b=sim.t[1-sim.i];gl.bindFramebuffer(gl.FRAMEBUFFER,b.f);gl.viewport(0,0,sim.w,sim.h);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,a.t);gl.uniform1i(pr.u('prev'),0);gl.drawArrays(gl.TRIANGLES,0,3);sim.i=1-sim.i;
+    const ps=PR.pshow;common(ps);picU(ps);gl.bindFramebuffer(gl.FRAMEBUFFER,tr.c.f);gl.viewport(0,0,W,H);gl.bindTexture(gl.TEXTURE_2D,b.t);gl.uniform1i(ps.u('dye'),0);gl.uniform2f(ps.u('px'),1.4/sim.w,1.4/sim.h);
+    gl.uniform1f(ps.u('rot'),KP.rot);gl.uniform1f(ps.u('psy'),ppsy);gl.uniform1f(ps.u('pph'),KP.pp);gl.uniform1f(ps.u('vis'),S.v.pvis);gl.uniform1f(ps.u('haze'),S.v.phaze);gl.uniform1f(ps.u('ash'),S.v.pash);gl.uniform1i(ps.u('surf'),S.w.psurface);
+    gl.uniform1i(ps.u('mir'),m);gl.uniform1f(ps.u('bx'),KP.bx);gl.uniform1f(ps.u('dent'),S.v.pdent*1.1);gl.uniform1f(ps.u('ringk'),S.v.ppuff*.35);gl.drawArrays(gl.TRIANGLES,0,3);
+    trailOut(W,H,dt,asp,S.v.ptrails,S.w.ptrails===1,Math.abs(ppsy),1);
+  }else if(S.style==='lotus'){const pr=PR.lotus;common(pr);ensureTrail(W,H);gl.bindFramebuffer(gl.FRAMEBUFFER,tr.c.f);gl.viewport(0,0,W,H);
+    /* the sound is slowed right down before it touches the flower: about half a second to rise, over a second to fall */
+    {const e=(a,b,up,dn)=>a+(b-a)*(1-Math.exp(-dt*(b>a?up:dn)));[F.low,F.mid,F.high].forEach((v,i)=>KZ.sb[i]=e(KZ.sb[i],v,2.2,.8));KZ.lv=e(KZ.lv,F.lvl,2,.8);KZ.ht*=Math.exp(-dt*1.1);KZ.he=e(KZ.he,KZ.ht,3,1.2)}
+    KZ.vt*=Math.exp(-dt*1.6);KZ.vel+=(KZ.vt-KZ.vel)*(1-Math.exp(-dt*5));
+    {const N=4+Math.round(S.v.zpetals*8),du=dt*((.03+S.v.zspeed*.75)*(.4+S.v.speed*1.4)+KZ.vel+M.stir*S.v.stir*.25)*N/6.2831853;KZ.lz+=du;KZ.lr=(KZ.lr+S.v.ztwist*.6*du*(1+KZ.sb[1]*.6))%N;while(KZ.lz>1){KZ.lz-=1;KZ.lw=(KZ.lw+2)%128;KZ.lc=((KZ.lc-.46)%3+3)%3}}
+    /* colour changes: swap counts the hits and eases from one to the next; flow drifts faster when the music is louder */
+    if(KZ.cn-KZ.cs>2)KZ.cn=Math.floor(KZ.cs)+2;KZ.cs+=Math.min(KZ.cn-KZ.cs,dt*1.5);KZ.cf+=dt*S.v.zwash*(.03+KZ.lv*.9);
+    /* psychedelic moves two ways: a slow triangle LFO swings it at a steady pace, evenly above and below the fader, and sway lets the chosen part of the music push it up */
+    KZ.lp+=dt*6.2831853/kalLfo(S.v.zprate);const zpsy=clamp(S.v.zpsy+S.v.zplfo*Math.asin(Math.sin(KZ.lp))*.63662+S.v.zpsway*[KZ.sb[0],KZ.sb[1],KZ.sb[2],KZ.he][S.w.zpsyon]*1.4,-1,1);KZ.pe=zpsy;KZ.pp+=dt*.5*zpsy;
+    gl.uniform1f(pr.u('rot'),theta);gl.uniform1f(pr.u('psy'),zpsy);gl.uniform1f(pr.u('pph'),KZ.pp);gl.uniform1f(pr.u('zf'),KZ.lz);gl.uniform1f(pr.u('zr'),KZ.lr);gl.uniform1f(pr.u('zw'),KZ.lw);gl.uniform1f(pr.u('zc'),KZ.lc);
+    gl.uniform1f(pr.u('fa'),S.v.zpetals);gl.uniform1f(pr.u('fb'),S.v.ztwist);gl.uniform1f(pr.u('fc'),S.v.zpoint);gl.uniform1f(pr.u('fo'),S.v.zopen);gl.uniform1f(pr.u('lead'),S.v.zlead);gl.uniform1f(pr.u('frost'),S.v.zfrost);gl.uniform1f(pr.u('light'),S.v.zlight);
+    gl.uniform1f(pr.u('wash'),S.v.zwash);gl.uniform1f(pr.u('cstep'),KZ.cs);gl.uniform1f(pr.u('cflow'),KZ.cf);gl.uniform3fv(pr.u('sb'),KZ.sb);gl.uniform1i(pr.u('surf'),S.w.zsurface);gl.uniform1i(pr.u('form'),S.w.zform);gl.uniform1i(pr.u('colm'),S.w.zcolour);
+    {const ons=new Float32Array(6).fill(-1);onsets.forEach((o,i)=>ons[i]=T-o.t);gl.uniform1fv(pr.u('ons'),ons)}gl.drawArrays(gl.TRIANGLES,0,3);
+    trailOut(W,H,dt,asp,S.v.ztrails,S.w.ztrails===1,Math.abs(zpsy),1);
+  }else if(S.style==='kaleido'){const pr=PR.kal;common(pr);ensureTrail(W,H);gl.bindFramebuffer(gl.FRAMEBUFFER,tr.c.f);gl.viewport(0,0,W,H);
+    KT.to+=M.stir*S.v.stir*S.v.ktumble*dt*.9*KT.dir;KT.cur+=(KT.to-KT.cur)*(1-Math.exp(-dt*3.5));
+    /* the sound is slowed right down before it touches the glass: about half a second to rise, over a second to fall */
+    {const e=(a,b,up,dn)=>a+(b-a)*(1-Math.exp(-dt*(b>a?up:dn)));KT.sb[0]=e(KT.sb[0],F.low,2.2,.8);KT.sb[1]=e(KT.sb[1],F.mid,2.2,.8);KT.sb[2]=e(KT.sb[2],F.high,2.2,.8);KT.fl=e(KT.fl,fl,1.8,.7);KT.lv=e(KT.lv,F.lvl,2,.8);KT.ht*=Math.exp(-dt*1.1);KT.he=e(KT.he,KT.ht,3,1.2)}
+    /* colour changes: swap counts the hits and eases from one to the next; flow drifts faster when the music is louder */
+    if(KT.cn-KT.cs>2)KT.cn=Math.floor(KT.cs)+2;KT.cs+=Math.min(KT.cn-KT.cs,dt*1.5);KT.cf+=dt*S.v.kwash*(.03+KT.lv*.9);
+    /* psychedelic moves two ways: a slow triangle LFO swings it at a steady pace, evenly above and below the fader (one cycle takes 60 seconds down to 2), and sway lets the chosen part of the music push it up */
+    KT.lp+=dt*6.2831853/kalLfo(S.v.kprate);const kpsy=clamp(S.v.kpsy+S.v.kplfo*Math.asin(Math.sin(KT.lp))*.63662+S.v.kpsway*[KT.sb[0],KT.sb[1],KT.sb[2],KT.he][S.w.kpsyon]*1.4,-1,1);KT.pe=kpsy;KT.pp+=dt*.5*kpsy;
+    KT.ph+=dt*S.v.ktumble*2.8*(.4+S.v.speed*1.4)*(1+KT.sb[1]*1.3);
+    gl.uniform1f(pr.u('rot'),theta);gl.uniform1f(pr.u('psy'),kpsy);gl.uniform1f(pr.u('segs'),Math.round(3+S.v.kseg*9));gl.uniform1f(pr.u('size'),S.v.ksize);gl.uniform1f(pr.u('jag'),S.v.kjag);gl.uniform1f(pr.u('lead'),S.v.klead);gl.uniform1f(pr.u('light'),S.v.klight);gl.uniform1f(pr.u('spark'),S.v.kspark);gl.uniform1f(pr.u('frost'),S.v.kfrost);gl.uniform1f(pr.u('turn'),KT.cur);gl.uniform1f(pr.u('tph'),KT.ph);gl.uniform1i(pr.u('surf'),S.w.ksurface);gl.uniform1i(pr.u('form'),S.w.kform);
+    gl.uniform1f(pr.u('breathe'),S.v.kbreathe);gl.uniform1f(pr.u('swell'),S.v.kswell);gl.uniform1f(pr.u('wash'),S.v.kwash);gl.uniform1f(pr.u('ripple'),S.v.kripple);gl.uniform1f(pr.u('sfl'),KT.fl);gl.uniform3fv(pr.u('sb'),KT.sb);gl.uniform1f(pr.u('cstep'),KT.cs);gl.uniform1f(pr.u('cflow'),KT.cf);gl.uniform1i(pr.u('colm'),S.w.kcolour);gl.uniform1i(pr.u('cut'),S.w.kcut);gl.uniform1f(pr.u('twist'),S.v.ktwist);gl.uniform1f(pr.u('bulge'),S.v.kbulge);gl.uniform1f(pr.u('layer'),S.v.klayer);gl.uniform1f(pr.u('pph'),KT.pp);
+    {const ons=new Float32Array(6).fill(-1);onsets.forEach((o,i)=>ons[i]=T-o.t);gl.uniform1fv(pr.u('ons'),ons)}gl.drawArrays(gl.TRIANGLES,0,3);
+    trailOut(W,H,dt,asp,S.v.ktrails,S.w.ktrails===1,Math.abs(kpsy),1);
   }else if(S.style==='bloom'){ensureSim(asp);const sw=sim.w/sim.h;
     if(seed){seed=false;bclr=true;bT=T;for(let i=0;i<4;i++)splat((.15+R()*.7)*sw,.15+R()*.7,bsz(),1)}
     /* the music keeps it forming: big hits plant new growth, highs sprinkle a little; old growth fades out on its own */
@@ -593,7 +948,9 @@ function layout(){let sw=stage.clientWidth,sh=stage.clientHeight;Z=S.view==='ful
   /* a row of section cards is only as tall as its cards need, so the screen gets the rest */
   const rowH=n=>routing?AH*.45:Math.min(AH*.44,(AW-g*(n-1))/n/392*306+6);
   if(S.lay==='monitor'){/* big screen top left, an L of controls round it */
-    const bh=rowH(5),sh=Math.round(AH-g-bh),rw=clamp(AW*.25,300,480);L.screen={x:X0,y:Y0,w:AW-rw-g,h:sh};stack(['head','pics','scenes'],X0+AW-rw,Y0,rw,sh);if(routing){const yy=Y0+sh+g,w1=Math.round(AW*.23),w2=Math.round(AW*.25);put('bands',X0,yy,w1,bh);put('gates',X0+w1+g,yy,w2,bh);put('route',X0+w1+w2+2*g,yy,AW-w1-w2-2*g,bh)}else rowOf(['shape','colour','motion','trails','special'],X0,Y0+sh+g,AW,bh)}
+    const bh=rowH(5),sh=Math.round(AH-g-bh),rw=clamp(AW*.25,300,480);L.screen={x:X0,y:Y0,w:AW-rw-g,h:sh};stack(['head','pics','scenes'],X0+AW-rw,Y0,rw,sh);if(routing){const yy=Y0+sh+g,w1=Math.round(AW*.23),w2=Math.round(AW*.25);put('bands',X0,yy,w1,bh);put('gates',X0+w1+g,yy,w2,bh);put('route',X0+w1+w2+2*g,yy,AW-w1-w2-2*g,bh)}else if(S.style==='kaleido'||S.style==='lotus'||S.style==='picture'){/* kaleidoscope and lotus have more shape and colour controls: those cards are wider, and trails gives up the room */
+      const wt=S.style==='picture'?[1.05,1.4,1.1,.42,1.03]:S.style==='lotus'?[1.08,1.45,1,.42,1.05]:[1.35,1.45,.9,.42,.88],un=(AW-4*g)/5;let xx=X0;['shape','colour','motion','trails','special'].forEach((n,i)=>{L.cards.push({n,x:xx,y:Y0+sh+g,w:un*wt[i],h:bh,vw:392*wt[i]});xx+=un*wt[i]+g})}
+    else rowOf(['shape','colour','motion','trails','special'],X0,Y0+sh+g,AW,bh)}
   else if(S.lay==='desk'){/* screen in the middle with a wing each side and a desk of sections below */
     const bh=rowH(4),sh=Math.round(AH-g-bh),sw=Math.round(Math.min(AW*.46,sh*16/9)),ww=(AW-sw-2*g)/2;L.screen={x:X0+ww+g,y:Y0,w:sw,h:sh};stack(['head','scenes'],X0,Y0,ww,sh);stack(['pics','special'],X0+ww+2*g+sw,Y0,ww,sh);rowOf(routing?['route']:['shape','colour','motion','trails'],X0,Y0+sh+g,AW,bh)}
   else{/* small screen in a side column, controls take the rest of the window */
@@ -624,6 +981,25 @@ const ICON={
   s_square:(cx,cy)=>[rrPts(cx-15,cy-15,30,30,3),[[cx-15,cy-15],[cx+15,cy+15]],[[cx+15,cy-15],[cx-15,cy+15]]],
   s_round:(cx,cy)=>[ring(cx,cy,()=>15),ring(cx,cy,()=>8),[[cx-15,cy],[cx+15,cy]],[[cx,cy-15],[cx,cy+15]]],
   s_ripple:(cx,cy)=>[ring(cx-7,cy,()=>5,20),ring(cx-7,cy,()=>10,28),ring(cx+7,cy,()=>5,20),ring(cx+7,cy,()=>10,28)],
+  p_smoke:(cx,cy)=>[-5,4].map((o,k)=>Array.from({length:17},(_,i)=>{const t=i/16;return[cx+o+Math.sin(t*5+k*2)*(2+4*t),cy+15-t*(k?24:30)]})),
+  p_oil:(cx,cy)=>[Array.from({length:33},(_,i)=>{const a=i/32*Math.PI*2;return[cx+10*Math.sin(a)*Math.pow(Math.abs(Math.sin(a/2)),1.3),cy+1-14*Math.cos(a)]})],
+  p_neon:(cx,cy)=>[ring(cx,cy,a=>14+2*Math.sin(a*3+1)),ring(cx,cy,a=>8+1.6*Math.sin(a*3+2)),ring(cx,cy,()=>2.5,10)],
+  p_pours:(cx,cy)=>[ring(cx,cy+5,a=>8+1.8*Math.sin(a*3+.6)),...[-4,3].map((o,k)=>Array.from({length:9},(_,i)=>[cx+o+Math.sin(i*.9+k*2)*2.5,cy-5-i*1.4]))],
+  p_beats:(cx,cy)=>[ring(cx,cy,a=>5.5+1.2*Math.sin(a*3+.6)),...[10.5,15.5].map(r=>[-1,1].map(s=>Array.from({length:9},(_,i)=>{const a=(s<0?Math.PI:0)-.75+i*.1875;return[cx+Math.cos(a)*r,cy+Math.sin(a)*r]}))).flat()],
+  p_parts:(cx,cy)=>[ring(cx,cy,()=>4.5,14),...[-1,1].map(s=>Array.from({length:17},(_,i)=>{const t=-16+i*2;return[cx+t,cy+s*(4+6.5*Math.exp(-t*t/60))]})),...[-1,1].map(s=>Array.from({length:17},(_,i)=>{const t=-16+i*2;return[cx+t,cy+s*(11+4*Math.exp(-t*t/90))]}))],
+  p_melts:(cx,cy)=>[[[cx-10,cy+1],[cx-10,cy+13],[cx+10,cy+13],[cx+10,cy+1]],...[-10,-3.3,3.3,10].map((o,k)=>Array.from({length:9},(_,i)=>[cx+o+Math.sin(i*.8+k)*(i*.45),cy+1-i*(1.5+.25*(k%2))]))],
+  z_soft:(cx,cy)=>[ring(cx,cy,a=>13+2.5*Math.sin(a*3)),ring(cx-2,cy+1,a=>6+1.5*Math.sin(a*2+1))],
+  z_glass:(cx,cy)=>[ring(cx,cy,()=>15),[[cx,cy-15],[cx,cy+15]],[[cx-13,cy-7.5],[cx+13,cy+7.5]],[[cx-13,cy+7.5],[cx+13,cy-7.5]]],
+  z_neon:(cx,cy)=>[ring(cx,cy,a=>9+7*Math.abs(Math.cos(a*2.5)))],
+  z_petals:(cx,cy)=>[ring(cx,cy,a=>7+9*Math.abs(Math.cos(a*2.5))),ring(cx,cy,a=>3+3.5*Math.abs(Math.sin(a*2.5)))],
+  z_scales:(cx,cy)=>[[-8,-11],[8,-11],[0,-2],[-16,-2],[16,-2],[-8,7],[8,7]].map(([ox,oy])=>Array.from({length:13},(_,i)=>{const a=Math.PI*i/12;return[cx+ox+Math.cos(a)*8,cy+oy+Math.sin(a)*8]}).filter(q=>Math.abs(q[0]-cx)<=17)),
+  z_spikes:(cx,cy)=>[Array.from({length:17},(_,i)=>{const a=-Math.PI/2+i*Math.PI/8,r=i%2?6:16;return[cx+Math.cos(a)*r,cy+Math.sin(a)*r]})],
+  k_glass:(cx,cy)=>[[[cx-14,cy-12],[cx+14,cy-14],[cx+12,cy+13],[cx-13,cy+12],[cx-14,cy-12]],[[cx-2,cy-13],[cx+3,cy+12.5]],[[cx-13.5,cy+1],[cx+13,cy-2]]],
+  k_jewels:(cx,cy)=>[hexP(cx-7,cy-5,7.5),hexP(cx+8,cy+1,6),hexP(cx-2,cy+10,4.5)],
+  k_neon:(cx,cy)=>[hexP(cx,cy+3,16,3),hexP(cx,cy+3,7.5,3,Math.PI/2)],
+  k_wheel:(cx,cy)=>[ring(cx,cy,()=>15),...[0,1,2].map(i=>{const a=i*Math.PI/3;return[[cx-Math.cos(a)*15,cy-Math.sin(a)*15],[cx+Math.cos(a)*15,cy+Math.sin(a)*15]]})],
+  k_tiles:(cx,cy)=>[hexP(cx,cy+4,17,3),hexP(cx,cy+4,8.5,3,Math.PI/2)],
+  k_facets:(cx,cy)=>[hexP(cx,cy-7.5,7.5),hexP(cx-7,cy+5,7.5),hexP(cx+7,cy+5,7.5)],
   b_glow:(cx,cy)=>[ring(cx,cy,a=>10.5+3.2*Math.sin(a*4)),ring(cx,cy,()=>3,12)],
   b_lines:(cx,cy)=>[ring(cx,cy,a=>13+2.6*Math.sin(a*4)),ring(cx,cy,a=>7+1.8*Math.sin(a*4))],
   b_relief:(cx,cy)=>{const h=[];for(let i=0;i<=8;i++){const a=-2.6+i/8*1.3;h.push([cx+Math.cos(a)*8,cy+Math.sin(a)*8])}return[ring(cx,cy,a=>13+2.6*Math.sin(a*4)),h]},
@@ -706,6 +1082,56 @@ function liqTab(c,tab,x,y,w,wrow){const hw=(w-28)/2;
   else if(tab==='colour')COLTAB(c,x,y,w,wrow);
   else if(tab==='motion'){wheel(c,'lidle',x+58,y+50,44,nc(),()=>-theta,'idle spin');const rx=x+172,rw=w-172;sfader(c,'lspin',rx,y+24,rw,nc(),'');sfader(c,'lflow',rx,y+80,rw,nc(),'wave');sfader(c,'lswell',x,y+166,w,nc(),'rings')}
   else{wrow('trails',x,nc());sfader(c,'ltrails',x,y+52,w,nc(),'comet')}}
+const ZCAP=[['each hit sends a ring of new','colour out through the petals'],['each hit, petals trade','to their next colour'],['colours drift round, faster','when the music is louder'],['lows, mids and highs each','shift their own petals']];
+function lotusTab(c,tab,x,y,w,wrow){const hw=(w-28)/2,x2=x+hw+28;
+  const row=(lbl,key,lx,yy)=>{const cc=nc(),kw=word(c,lbl,lx,yy,15,cc,false);words(c,WORDS.lotus.find(o=>o.key===key).opts,lx+kw+12,yy,17,cc,S.w[key],'opt',11,key)};
+  if(tab==='shape'){bulbCount(c,'zpetals',9,x,y+22,w,nc(),4);sfader(c,'ztwist',x,y+84,hw,nc(),'wave');cap(c,'winds the rings into a spiral',x,y+106);sfader(c,'zpoint',x2,y+84,hw,nc(),'jag');cap(c,'from round to pointed',x2,y+106);
+    sfader(c,'zopen',x,y+158,w,nc(),'rings');cap(c,'how far each ring of petals opens; lows open them wider',x,y+180)}
+  else if(tab==='colour'){wrow('tones',x,nc());hueWheel(c,x+56,y+98,48);cap(c,'round for hue,',x+12,y+172);cap(c,'in and out for tint',x+12,y+186);
+    const bx=x+140,cw=218,cx=x+w-cw,bw=cx-26-bx;
+    sfader(c,'zpsy',bx,y+56,bw,null,'rainbow');sfader(c,'zplfo',bx,y+110,bw,nc(),'wave');sfader(c,'zprate',bx,y+164,bw,nc(),'');cap(c,'a triangle, round the fader',bx,y+186);
+    /* a small ring rides the psychedelic fader to show where the LFO and sway have it right now */
+    dyn.push(cx2=>{if(Math.abs(KZ.pe-S.v.zpsy)<.004)return;cx2.save();cx2.strokeStyle='rgba(255,255,255,.8)';cx2.lineWidth=1.3;cx2.beginPath();cx2.arc(bx+Math.min(1,Math.abs(KZ.pe))*bw,y+56,6,0,6.2832);cx2.stroke();cx2.restore()});
+    sfader(c,'zpsway',cx,y+56,cw,nc(),'wave');row('with','zpsyon',cx,y+84);
+    row('colours','zcolour',cx,y+122);sfader(c,'zwash',cx,y+164,cw,nc(),'rings');ZCAP[S.w.zcolour].forEach((t,i)=>cap(c,t,cx,y+186+i*14))}
+  else if(tab==='motion'){wheel(c,'zidle',x+58,y+50,44,nc(),()=>-theta,'idle spin');const rx=x+172,rw=w-172;sfader(c,'zspin',rx,y+24,rw,nc(),'');sfader(c,'zspeed',rx,y+80,rw,nc(),'');cap(c,'how fast you fall inward',rx,y+102);
+    sfader(c,'zlunge',x,y+164,w,nc(),'rings');cap(c,'each hit pushes you deeper for a moment',x,y+186)}
+  else{words(c,TRL,x,y,17,nc(),S.w.ztrails,'opt',12,'ztrails');sfader(c,'ztrails',x,y+52,w,nc(),'comet')}}
+const PCAP=[['smoke takes the colours of the','picture, wherever it leaves it'],['smoke takes its colours from','the hue ring and tones here']];
+/* what the shape does to the smoke, and what Smoke and Feed mean for each */
+const PACT=[['smoke pours out from behind the 3D shape','how much pours','lows pour more'],['a puff of cloud sits on the shape, and every beat punches it in','how thick the puff is','lows make it throb'],['one stream of smoke wraps round the 3D shape','how thick the stream','lows feed the stream'],['the picture is 3D smoke, and blows away','how fast it re-forms','lows blow it harder']];
+function picTab(c,tab,x,y,w,wrow){const hw=(w-28)/2,x2=x+hw+28;
+  const row=(lbl,key,lx,yy)=>{const cc=nc(),kw=word(c,lbl,lx,yy,15,cc,false);words(c,WORDS.picture.find(o=>o.key===key).opts,lx+kw+12,yy,17,cc,S.w[key],'opt',11,key)};
+  if(tab==='shape'){wrow('mirror',x,nc());row('smoke from','psrc',x,y+34);
+    sfader(c,'psize',x,y+84,hw,nc(),'');cap(c,'how big the picture sits',x,y+106);sfader(c,'poff',x2,y+84,hw,nc(),'');cap(c,'slides it off the mirror fold',x2,y+106);
+    sfader(c,'pvis',x,y+146,hw,nc(),'');cap(c,'how clearly the picture shows',x,y+168);sfader(c,'phaze',x2,y+146,hw,nc(),'wave');cap(c,'smoke bends it like heat',x2,y+168);
+    sfader(c,'pamt',x,y+208,hw,nc(),'rings');cap(c,'how much of it smokes',x,y+230);sfader(c,'pdent',x2,y+208,hw,nc(),'rings');cap(c,'how far the shape stands out',x2,y+230)}
+  else if(tab==='colour'){wrow('tones',x,nc());hueWheel(c,x+56,y+98,48);cap(c,'round for hue,',x+12,y+172);cap(c,'in and out for tint',x+12,y+186);
+    const bx=x+140,cw=218,cx=x+w-cw,bw=cx-26-bx;
+    sfader(c,'ppsy',bx,y+56,bw,null,'rainbow');sfader(c,'pplfo',bx,y+110,bw,nc(),'wave');sfader(c,'pprate',bx,y+164,bw,nc(),'');cap(c,'a triangle, round the fader',bx,y+186);
+    dyn.push(cx2=>{if(Math.abs(KP.pe-S.v.ppsy)<.004)return;cx2.save();cx2.strokeStyle='rgba(255,255,255,.8)';cx2.lineWidth=1.3;cx2.beginPath();cx2.arc(bx+Math.min(1,Math.abs(KP.pe))*bw,y+56,6,0,6.2832);cx2.stroke();cx2.restore()});
+    sfader(c,'ppsway',cx,y+56,cw,nc(),'wave');row('with','ppsyon',cx,y+84);
+    row('smoke','pcolour',cx,y+122);sfader(c,'pash',cx,y+164,cw,nc(),'');cap(c,S.w.pcolour?PCAP[1][0]:PCAP[0][0],cx,y+186);cap(c,S.w.pcolour?PCAP[1][1]:PCAP[0][1],cx,y+200);cap(c,'Ash: thin smoke fades to grey.',cx,y+214)}
+  else if(tab==='motion'){const tw=(w-40)/3,xa=x+tw+20,xb=x+2*(tw+20);row('smoke will','pdir',x,y);
+    sfader(c,'prise',x,y+52,tw,nc(),'');cap(c,'how fast it travels',x,y+74);sfader(c,'pswirl',xa,y+52,tw,nc(),'wave');cap(c,'mids curl it more',xa,y+74);sfader(c,'pwisp',xb,y+52,tw,nc(),'jag');cap(c,'highs add threads',xb,y+74);
+    sfader(c,'pwind',x,y+116,tw,nc(),'wave');cap(c,'a slow side breeze',x,y+138);sfader(c,'pspin',xa,y+116,tw,nc(),'');cap(c,'hits turn it',xa,y+138);sfader(c,'pidle',xb,y+116,tw,nc(),'');cap(c,'a steady turn',xb,y+138);
+    sfader(c,'ppuff',x,y+180,w,nc(),'rings');cap(c,'each hit puffs smoke off the shape, or sends a ring through the puff',x,y+202)}
+  else{words(c,TRL,x,y,17,nc(),S.w.ptrails,'opt',12,'ptrails');sfader(c,'ptrails',x,y+52,w,nc(),'comet');sfader(c,'phang',x,y+122,w,nc(),'');cap(c,'how long smoke',x,y+144);cap(c,'hangs in the air',x,y+158)}}
+const KCAP=[['each hit sends a ring of new','colour out through the glass'],['each hit, pieces trade','to their next colour'],['colours drift round, faster','when the music is louder'],['lows, mids and highs each','shift their own pieces']];
+function kalTab(c,tab,x,y,w,wrow){const hw=(w-28)/2;
+  const row=(lbl,key,lx,yy)=>{const cc=nc(),kw=word(c,lbl,lx,yy,15,cc,false);words(c,WORDS.kaleido.find(o=>o.key===key).opts,lx+kw+12,yy,17,cc,S.w[key],'opt',11,key)};
+  if(tab==='shape'){const tw=(w-48)/3,x2=x+tw+24,x3=x+2*(tw+24);bulbCount(c,'kseg',10,x,y+22,w,nc(),3);row('cut','kcut',x,y+84);
+    sfader(c,'ksize',x,y+128,tw,nc(),'');sfader(c,'kjag',x2,y+128,tw,nc(),'jag');sfader(c,'klead',x3,y+128,tw,nc(),'');
+    sfader(c,'ktwist',x,y+182,tw,nc(),'wave');cap(c,'the mirrors wind into a spiral',x,y+204);sfader(c,'kbulge',x2,y+182,tw,nc(),'rings');cap(c,'a lens over the middle',x2,y+204);sfader(c,'klayer',x3,y+182,tw,nc(),'');cap(c,'a second sheet of glass',x3,y+204)}
+  else if(tab==='colour'){wrow('tones',x,nc());hueWheel(c,x+56,y+98,48);cap(c,'round for hue,',x+12,y+172);cap(c,'in and out for tint',x+12,y+186);
+    const bx=x+140,cw=218,cx=x+w-cw,bw=cx-26-bx;
+    sfader(c,'kpsy',bx,y+56,bw,null,'rainbow');sfader(c,'kplfo',bx,y+110,bw,nc(),'wave');sfader(c,'kprate',bx,y+164,bw,nc(),'');cap(c,'a triangle, round the fader',bx,y+186);
+    /* a small ring rides the psychedelic fader to show where the LFO and sway have it right now */
+    dyn.push(cx=>{if(Math.abs(KT.pe-S.v.kpsy)<.004)return;cx.save();cx.strokeStyle='rgba(255,255,255,.8)';cx.lineWidth=1.3;cx.beginPath();cx.arc(bx+Math.min(1,Math.abs(KT.pe))*bw,y+56,6,0,6.2832);cx.stroke();cx.restore()});
+    sfader(c,'kpsway',cx,y+56,cw,nc(),'wave');row('with','kpsyon',cx,y+84);
+    row('colours','kcolour',cx,y+122);sfader(c,'kwash',cx,y+164,cw,nc(),'rings');KCAP[S.w.kcolour].forEach((t,i)=>cap(c,t,cx,y+186+i*14))}
+  else if(tab==='motion'){wheel(c,'kidle',x+58,y+50,44,nc(),()=>-theta,'idle spin');const rx=x+172,rw=w-172;sfader(c,'kspin',rx,y+24,rw,nc(),'');sfader(c,'ktumble',rx,y+80,rw,nc(),'wave');sfader(c,'kswell',x,y+164,hw,nc(),'');sfader(c,'kripple',x+hw+28,y+164,hw,nc(),'rings');cap(c,'lows swell the shards',x,y+186);cap(c,'each hit bends the glass',x+hw+28,y+186)}
+  else{words(c,TRL,x,y,17,nc(),S.w.ktrails,'opt',12,'ktrails');sfader(c,'ktrails',x,y+52,w,nc(),'comet')}}
 function sandTab(c,tab,x,y,w,wrow){const hw=(w-28)/2;
   if(tab==='shape'){sfader(c,'sgrain',x,y+22,hw,nc(),'jag');sfader(c,'scomp',x+hw+28,y+22,hw,nc(),'wave');sfader(c,'ssharp',x,y+80,hw,nc(),'');sfader(c,'sscatter',x+hw+28,y+80,hw,nc(),'jag');sfader(c,'schange',x,y+138,w,nc(),'comet')}
   else if(tab==='colour')COLTAB(c,x,y,w,wrow);
@@ -764,30 +1190,39 @@ function branchW(c,k,x,y,w,col){const v=S.v[k],n=9;word(c,P[k][1],x,y-26,16,col,
 const SPECIAL={
   ink(c,x,y,w,wrow){breatheW(c,'breathe',x+58,y+50,44,nc());const rx=x+150,rw=w-150;sfader(c,'marble',rx,y+24,rw,nc(),'wave');cap(c,'veins run through the ink',rx,y+46);sfader(c,'bleed',rx,y+96,rw,nc(),'rings');cap(c,'colour soaks out past the edges',rx,y+118);
     cap(c,'Breathe: the whole blot slowly swells and shrinks.',x,y+170);cap(c,'Mirror now goes to 6 and 8, in the shape section.',x,y+188)},
-  liquid(c,x,y,w,wrow){wrow('mirror',x,nc());thermo(c,'lheat',x+26,y+40,92,nc());const rx=x+84,rw=w-84;mergeW(c,'lmerge',rx,y+74,rw,nc());sfader(c,'lshim',rx,y+156,rw,nc(),'jag');cap(c,'sparkle on the oil, brighter on highs',rx,y+178)},
+  liquid(c,x,y,w,wrow){wrow('mirror',x,nc());thermo(c,'lheat',x+26,y+40,92,nc());const rx=x+84,rw=w-84;mergeW(c,'lmerge',rx,y+74,rw,nc());sfader(c,'lshim',rx,y+156,rw,nc(),'jag');cap(c,'light rippling through the oil, brighter on highs',rx,y+178)},
   sand(c,x,y,w,wrow){wrow('mirror',x,nc());const gw=w-130;grainW(c,'sdens',x,y+46,gw,72,nc());wheel(c,'sdrift',x+w-50,y+76,38,nc(),()=>T*S.v.sdrift*2,'drift');sfader(c,'sres',x,y+176,w,nc(),'jag');cap(c,'hats and highs make the grains shiver',x,y+198)},
+  picture(c,x,y,w,wrow){const hw=(w-28)/2,x2=x+hw+28,ts=104,col=nc(),pa=PACT[S.w.pform];
+    /* the picture in use; click it, or the words beside it, to choose another */
+    c.save();rr(c,x,y-6,ts,ts,8);c.fillStyle='#0a0a0c';c.fill();c.clip();if(PIC.cv){const a=PIC.asp,dw=a>=1?ts:ts*a,dh=a>=1?ts/a:ts;c.drawImage(PIC.cv,x+(ts-dw)/2,y-6+(ts-dh)/2,dw,dh)}c.restore();tube(c,rrPts(x,y-6,ts,ts,8),col,{w:.6});hits.push({x,y:y-6,w:ts,h:ts,kind:'picpick'});
+    const rx=x+ts+22,cw=word(c,'choose picture',rx,y+14,20,col,true);hits.push({x:rx-4,y:y-8,w:cw+8,h:28,kind:'picpick'});cap(c,'or drop one anywhere on this page',rx,y+34);
+    const tw0=word(c,'try',rx,y+66,15,col,false);words(c,PICS,rx+tw0+12,y+66,17,col,PIC.sample,'picsample',11);cap(c,PIC.plain?'plain ground found: the shape is cut out':'fills its frame: what stands out is the shape',rx,y+86);
+    cap(c,'Now: '+pa[0]+'.',x,y+124);
+    const tw=(w-40)/3,xa=x+tw+20,xb=x+2*(tw+20);sfader(c,'psmoke',x,y+166,tw,nc(),'');cap(c,pa[1],x,y+188);sfader(c,'pfeed',xa,y+166,tw,nc(),'rings');cap(c,pa[2],xa,y+188);sfader(c,'preach',xb,y+166,tw,nc(),'');cap(c,'how far smoke strays',xb,y+188)},
+  lotus(c,x,y,w,wrow){const hw=(w-28)/2,x2=x+hw+28;cap(c,'These three shape the glass look.',x,y+10);sfader(c,'zlight',x,y+50,hw,nc(),'');cap(c,'a steady lamp',x,y+72);sfader(c,'zfrost',x2,y+50,hw,nc(),'wave');cap(c,'clear to seedy glass',x2,y+72);sfader(c,'zlead',x,y+124,hw,nc(),'');cap(c,'the lines between petals',x,y+146)},
+  kaleido(c,x,y,w,wrow){const hw=(w-28)/2,x2=x+hw+28;sfader(c,'klight',x,y+24,hw,nc(),'');cap(c,'a steady lamp',x,y+46);sfader(c,'kbreathe',x2,y+24,hw,nc(),'wave');cap(c,'a slow swell with the sound',x2,y+46);sfader(c,'kfrost',x,y+98,hw,nc(),'wave');cap(c,'clear to seedy glass',x,y+120);sfader(c,'kspark',x2,y+98,hw,nc(),'jag');cap(c,'slow glints',x2,y+120);},
   bloom(c,x,y,w,wrow){branchW(c,'bbranch',x,y+34,w,nc());cap(c,'from round spots to long branches',x,y+72);const rw=w-124;sfader(c,'brings',x,y+124,rw,nc(),'rings');cap(c,'each hit sends a ring of light',x,y+146);cap(c,'through the growth',x,y+160);wheel(c,'bhalo',x+w-48,y+130,36,nc(),()=>T*.4,'halo');
     cap(c,'Mirror now goes to 6 and 8, in the shape section.',x,y+206)}};
 /* ---------- the cards of the persistent UI ---------- */
 const CARDH={head:356,pics:250,shape:306,colour:306,motion:306,trails:306,special:306,scenes:128,route:556};
 const hd=(c,t,x,y,note)=>{c.save();c.font=`500 12.5px 'Cormorant Garamond',serif`;c.letterSpacing='3.5px';c.fillStyle='#a3a5ac';c.fillText(t.toUpperCase(),x,y);const tw=c.measureText(t.toUpperCase()).width;c.restore();if(note)cap(c,note,x+tw+10,y-1)};
-const wrowAt=(c,yy)=>(k,lx,cc)=>{const wd=WORDS[S.style].find(o=>o.key===KK(k));const kw=word(c,wd.key.replace(/^[tlsb](?=tones|trails|mirror)/,''),lx,yy,15,cc,false);const end=words(c,wd.opts,lx+kw+14,yy,17,cc,S.w[wd.key],'opt',12,wd.key);if(wd.key.endsWith('tones'))inkPal().forEach((h,i)=>bulb(c,end+4+i*16,yy-6,h,1,5))};
-const TABF=()=>({ink:inkTab,tunnel:tunTab,liquid:liqTab,sand:sandTab,bloom:bloomTab})[S.style];
+const wrowAt=(c,yy)=>(k,lx,cc)=>{const wd=WORDS[S.style].find(o=>o.key===KK(k));const kw=word(c,wd.key.replace(/^[tlsbkzp](?=tones|trails|mirror)/,''),lx,yy,15,cc,false);const end=words(c,wd.opts,lx+kw+14,yy,17,cc,S.w[wd.key],'opt',12,wd.key);if(wd.key.endsWith('tones'))inkPal().forEach((h,i)=>bulb(c,end+4+i*16,yy-6,h,1,5))};
+const TABF=()=>({ink:inkTab,tunnel:tunTab,liquid:liqTab,sand:sandTab,bloom:bloomTab,kaleido:kalTab,lotus:lotusTab,picture:picTab})[S.style];
 const sec=tab=>(c,x,y,w)=>{hd(c,tab,x,y+28);TABF()(c,tab,x,y+62,w,wrowAt(c,y+62))};
 const CARD={
-  head(c,x,y0,w){const col=S.rainbow?'#bfeaff':S.theme;let y=y0+40;words(c,STYLES,x,y,27,nc(),STYLES.indexOf(S.style),'style',22);
+  head(c,x,y0,w){const col=S.rainbow?'#bfeaff':S.theme;let y=y0+40;words(c,STYLES,x,y,19,nc(),STYLES.indexOf(S.style),'style',9);
     y+=34;L.meters={x,y,w};['low','mid','high'].forEach((b,i)=>{word(c,b,x,y+i*26+5,15,col,false)});dyn.push(cx=>drawMeters(cx));y+=3*26+28;
     words(c,['controls','routing'],x,y,20,nc(),S.page==='routing'?1:0,'page',20);
     const th2=84,ty=y+22,g=Math.min(64,(w-120)/4+8);vtube(c,'pulse',x+18,ty,th2,nc(),()=>M.pulse);vtube(c,'flash',x+18+g,ty,th2,nc(),()=>M.flash);vtube(c,'stir',x+18+g*2,ty,th2,nc(),()=>M.stir*.6);vtube(c,'react',x+18+g*3,ty,th2,nc(),()=>F.lvl,'gain');
     wheel(c,'speed',x+w-46,ty+th2*.46,38,nc(),()=>ph*1.3);if(S.last){c.save();c.font=`11.5px ${SANS}`;c.fillStyle='#b8bac0';c.fillText(S.last,x,ty+th2+56);c.restore()}},
-  pics(c,x,y,w){hd(c,'look',x,y+28);iconRow(c,'surface',x,y+66,Math.min(w/4,124),nc(),true);hd(c,S.style==='bloom'?'kind':S.style==='sand'?'plate':'form',x,y+146);iconRow(c,'form',x,y+184,Math.min(w/4,124),nc(),true)},
+  pics(c,x,y,w){hd(c,'look',x,y+28);iconRow(c,'surface',x,y+66,Math.min(w/4,124),nc(),true);hd(c,S.style==='bloom'?'kind':S.style==='sand'?'plate':S.style==='kaleido'?'mirrors':S.style==='lotus'?'petals':S.style==='picture'?'the shape':'form',x,y+146);iconRow(c,'form',x,y+184,Math.min(w/4,124),nc(),true)},
   shape:sec('shape'),colour:sec('colour'),motion:sec('motion'),trails:sec('trails'),
   special(c,x,y,w){hd(c,'only in '+S.style,x,y+28,'new');SPECIAL[S.style](c,x,y+62,w,wrowAt(c,y+62))},
   scenes(c,x,y,w){hd(c,'scenes',x,y+28);const sc=nc(),sw=word(c,'store',x+w,y+30,17,sc,S.storing,'right');hits.push({x:x+w-sw-6,y:y+10,w:sw+12,h:28,kind:'storing'});
     const gap=Math.min(46,(w-20)/7);for(let i=0;i<8;i++){const bx=x+12+i*gap,by=y+66,has=!!S.scenes[i];bulb(c,bx,by,sc,S.scene===i&&has?1:has?.45:0,8);c.save();c.font=`10.5px ${SANS}`;c.fillStyle=has?'#b8bac0':'#6d7078';c.textAlign='center';c.fillText(String(i+1),bx,by+24);c.restore();hits.push({x:bx-gap/2,y:by-16,w:gap,h:46,kind:'scene',i})}
     cap(c,S.storing?'Now pick a lamp to keep this look in.':'Click store, then a lamp, to keep a look. Click a lit lamp to bring it back.',x,y+112)},
 };
-function drawCard(c,cd){const vh=CARDH[cd.n],K=Math.min(cd.w/392,cd.h/vh),wv=Math.min(cd.w/K-32,cd.n==='route'?840:cd.n==='head'?470:560),cw=(wv+32)*K;
+function drawCard(c,cd){const vh=CARDH[cd.n],K=Math.min(cd.w/(cd.vw||392),cd.h/vh),wv=Math.min(cd.w/K-32,cd.n==='route'?840:cd.n==='head'?470:cd.vw>392?640:560),cw=(wv+32)*K;
   const ox=cd.x+(cd.w-cw)/2+16*K,oy=cd.y+Math.min((cd.h-vh*K)/2,cd.h*.06);glassBox(c,cd.x,cd.y,cd.w,cd.h);
   const n0=hits.length,d0=dyn.length;c.save();c.translate(ox,oy);c.scale(K,K);c.translate(-ox,-oy);CARD[cd.n](c,ox,oy,wv);c.restore();
   for(let i=n0;i<hits.length;i++){const h=hits[i];h.x=ox+(h.x-ox)*K;h.y=oy+(h.y-oy)*K;h.w*=K;h.h*=K;if(h.set){const f=h.set;h.set=(px,py)=>f(ox+(px-ox)/K,oy+(py-oy)/K)}if(h.kind==='fader'){h.x0=ox+(h.x0-ox)*K;h.w0*=K}}
@@ -975,7 +1410,7 @@ function buildStatic(){layout();const c=sctx;hits=[];dyn=[];ci=0;c.setTransform(
   hits.push({x:s.x,y:s.y,w:s.w,h:s.h,kind:'screen'})}
 /* the control section, drawn in its own coordinates and scaled up to fit the window */
 function column(c){const col=S.rainbow?'#bfeaff':S.theme,C=L.col,x=C.x,w=C.w;let y=C.y+36;
-  words(c,STYLES,x,y,27,nc(),STYLES.indexOf(S.style),'style',22);
+  words(c,STYLES,x,y,19,nc(),STYLES.indexOf(S.style),'style',9);
   y+=34;L.meters={x,y,w};['low','mid','high'].forEach((b,i)=>{word(c,b,x,y+i*26+5,15,col,false)});dyn.push(cx=>drawMeters(cx));
   y+=3*26+28;
   words(c,['controls','routing'],x,y,20,nc(),S.page==='routing'?1:0,'page',20);
@@ -984,11 +1419,11 @@ function column(c){const col=S.rainbow?'#bfeaff':S.theme,C=L.col,x=C.x,w=C.w;let
     vtube(c,'pulse',x+18,ty,th2,nc(),()=>M.pulse);vtube(c,'flash',x+18+g,ty,th2,nc(),()=>M.flash);vtube(c,'stir',x+18+g*2,ty,th2,nc(),()=>M.stir*.6);vtube(c,'react',x+18+g*3,ty,th2,nc(),()=>F.lvl,'gain');
     wheel(c,'speed',x+w-46,ty+th2*.46,38,nc(),()=>ph*1.3);y=ty+th2+62}
   word(c,S.style,x,y,20,nc(),true);
-  const wrow=(wd,lx,cc)=>{if(typeof wd==='string')wd=WORDS[S.style].find(o=>o.key===KK(wd));const kw=word(c,wd.key.replace(/^[tlsb](?=tones|trails|mirror)/,''),lx,y,15,cc,false);const end=words(c,wd.opts,lx+kw+14,y,17,cc,S.w[wd.key],'opt',12,wd.key);if(wd.key.endsWith('tones'))inkPal().forEach((h,i)=>bulb(c,end+4+i*16,y-6,h,1,5))};
+  const wrow=(wd,lx,cc)=>{if(typeof wd==='string')wd=WORDS[S.style].find(o=>o.key===KK(wd));const kw=word(c,wd.key.replace(/^[tlsbkzp](?=tones|trails|mirror)/,''),lx,y,15,cc,false);const end=words(c,wd.opts,lx+kw+14,y,17,cc,S.w[wd.key],'opt',12,wd.key);if(wd.key.endsWith('tones'))inkPal().forEach((h,i)=>bulb(c,end+4+i*16,y-6,h,1,5))};
   if(S.style!=='fractal'&&!L.strip){y+=45;iconRow(c,'surface',x,y,w/4,nc(),true);y+=84;iconRow(c,'form',x,y,w/4,nc(),true);y+=84}
   if(S.style!=='fractal'){const tabs=Object.keys(INKSEC);const ct=nc();words(c,tabs,x+70,y,19,ct,tabs.indexOf(S.tab),'tab',16);
     tube(c,[[x,y+12],[x+w,y+12]],ct,{off:true,w:.6});y+=46;const y0=y;
-    ({ink:inkTab,tunnel:tunTab,liquid:liqTab,sand:sandTab,bloom:bloomTab})[S.style](c,S.tab,x,y0,w,(k,lx,cc)=>{const yy=y;y=y0;wrow(k,lx,cc);y=yy});y=y0+250}
+    ({ink:inkTab,tunnel:tunTab,liquid:liqTab,sand:sandTab,bloom:bloomTab,kaleido:kalTab,lotus:lotusTab,picture:picTab})[S.style](c,S.tab,x,y0,w,(k,lx,cc)=>{const yy=y;y=y0;wrow(k,lx,cc);y=yy});y=y0+250}
   else{WORDS[S.style].forEach((wd,ri)=>{const lx=x+(ri?0:90);wrow(wd,lx,nc());y+=33});y+=24;
     if(S.style==='fractal'){bulbCount(c,'sym',10,x,y,w,nc(),3);y+=30;xyPad(c,'zoom','detail',x,y,w,96,nc());y+=140}
     else{wheel(c,'twist',x+58,y+44,44,nc(),()=>T*(S.v.twist*2-.4)*1.2,'twist');const rx=x+172,rw=w-172;sfader(c,'spacing',rx,y+14,rw,nc(),'rings');sfader(c,'stars',rx,y+70,rw,nc(),'comet');y+=140}}
@@ -1039,6 +1474,8 @@ cv.addEventListener('pointerdown',e=>{const[x,y]=pt(e);const h=hitAt(x,y);if(!h)
   else if(h.kind==='panel'){S.panel=!S.panel;resize()}
   else if(h.kind==='storing'){S.storing=!S.storing;S.last=S.storing?'pick a lamp to store this look':'';dirty=true}
   else if(h.kind==='scene'){if(S.storing){S.scenes[h.i]={style:S.style,v:{...S.v},w:{...S.w}};S.storing=false;S.scene=h.i;S.last='stored in scene '+(h.i+1);dirty=true;save()}else if(S.scenes[h.i]){const q=S.scenes[h.i];Object.assign(S.v,q.v);Object.assign(S.w,q.w);S.scene=h.i;setStyle(q.style);S.last='scene '+(h.i+1)}}
+  else if(h.kind==='picpick'){$('#picfile').click()}
+  else if(h.kind==='picsample'){picSample(h.i);S.last='';dirty=true}
   else if(h.kind==='stopx'){stopAll()}});
 cv.addEventListener('pointermove',e=>{const[x,y]=pt(e);if(drag&&drag.cell){const dy=drag.y0-y;if(Math.abs(dy)>3)drag.moved=true;if(drag.moved)setRoute(drag.cell.s,drag.cell.d,Math.max(0,drag.a0+dy/(70*(L.vt?L.vt.K:1))))}
   else if(drag&&'jack'in drag)drag.pos=toV(x,y);
@@ -1054,7 +1491,7 @@ if(drag&&drag.screen&&S.style==='tunnel'){const s0=steer.slice(),t0=performance.
 cv.addEventListener('pointerup',end);cv.addEventListener('pointercancel',end);
 cv.addEventListener('dblclick',e=>{const[x,y]=pt(e);const h=hitAt(x,y);if(h&&h.kind==='screen'){S.panel=!S.panel;resize()}});
 addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;if(e.key==='Escape'&&!S.panel){S.panel=true;resize()}
-  if(['1','2','3','4'].includes(e.key))setStyle(STYLES[+e.key-1]);if(e.key===' '){e.preventDefault();playing?stopAll():(fileBuf&&mode!=='demo'?startFile():startDemo())}});
+  if(['1','2','3','4','5','6','7'].includes(e.key))setStyle(STYLES[+e.key-1]);if(e.key===' '){e.preventDefault();playing?stopAll():(fileBuf&&mode!=='demo'?startFile():startDemo())}});
 function setStyle(st){S.style=st;S.last='';onsets=[];if(st==='ink'||st==='bloom')seed=true;if(st==='bloom')bclr=true;dirty=true;save()}
 function setView(v){S.view=v;save();resize()}
 const swEl=$('#sw');THEMES.forEach(t=>{const b=document.createElement('button');b.style.setProperty('--s',t);b.setAttribute('aria-label','Theme '+t);b.dataset.c=t;b.onclick=()=>{S.theme=t;S.rainbow=false;applyTheme()};swEl.appendChild(b)});

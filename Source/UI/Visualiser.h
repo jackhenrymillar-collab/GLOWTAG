@@ -5,8 +5,10 @@
 #include "AppContext.h"
 #include "NeonKit.h"
 #include "VisualiserParams.inc"
+#include "VisualiserPicture.h"
 
-// The visualiser: a moving picture that follows the song. Four modes (ink, liquid, sand, bloom),
+// The visualiser: a moving picture that follows the song. Seven modes (ink, liquid, sand, bloom,
+// kaleidoscope, lotus and picture, which works on a picture you drop in),
 // drawn on the graphics card, shown full window or behind the whole interface. It listens to the
 // master output or one channel, and a routing page wires sounds (kick, snare, levels and so on)
 // to reactions (pulse, flash, spin and so on). The look was settled in a mockup first:
@@ -26,7 +28,7 @@ namespace Vis
        #undef Y
         count }; };
 
-    enum Style { ink, liquid, sand, bloom, numStyles };
+    enum Style { ink, liquid, sand, bloom, kaleido, lotus, pictureStyle, numStyles };
     enum Source { sKick, sSnare, sHat, sBig, sTrans, sLow, sMid, sHigh, sLevel, numSources };
     enum Dest { dPulse, dFlash, dSpin, dStir, dBurst, dHue, numDests };
     enum View { off, full, behind };
@@ -73,6 +75,7 @@ namespace Vis
         int numLevels = 0;
         std::atomic<double> clock { 0.0 };
         std::atomic<float> turn { 0.0f }, flow { 0.0f };      // how far the picture has turned and flowed, for the dials
+        std::atomic<float> psyNow { 0.0f };                   // where the LFO and sway have psychedelic right now (kaleidoscope, lotus, picture)
         juce::String error;                    // a shader that would not build (guarded by lock)
     };
 
@@ -83,6 +86,7 @@ namespace Vis
 // In the full view it shows the controls and takes the pointer; in the behind view it is hidden and
 // only the picture is drawn.
 class Visualiser : public juce::Component,
+                   public juce::FileDragAndDropTarget,
                    private juce::OpenGLRenderer
 {
 public:
@@ -111,6 +115,11 @@ public:
     void mouseMove (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    bool isInterestedInFileDrag (const juce::StringArray&) override;     // a picture dropped on the visualiser goes to the Picture mode
+    void filesDropped (const juce::StringArray&, int, int) override;
+    void setPicture (std::shared_ptr<const Vis::Picture>, bool byHand = true);
+    void loadPicture (const juce::File&);
+    void choosePicture();
 
 private:
     void newOpenGLContextCreated() override;
@@ -151,6 +160,7 @@ private:
     struct Piece
     {
         juce::Rectangle<float> box;             // where it sits
+        float designWidth = 392.0f;             // how wide its contents were drawn for (the wider cards of some modes are more)
         juce::Rectangle<int> area;              // what its art covers (the box and the glow round it)
         juce::Image art;
         std::unique_ptr<Neon::GlowLayer> glow;
@@ -164,6 +174,7 @@ private:
         juce::Rectangle<float> screen;
         std::array<juce::Rectangle<float>, numPieces> box;
         std::array<bool, numPieces> shown {};
+        std::array<float, numPieces> designWidth {};
     };
     Layout layout() const;
     void rebuild (int piece, const Layout&, float scale);
@@ -184,6 +195,8 @@ private:
     juce::Rectangle<int> sharedArea;            // where the picture goes, in window points
     bool sharedOwnWindow = false, sharedBehind = false;
     double statSince = 0.0, statLast = 0.0, statWorst = 0.0, statWork = 0.0;    // drawing thread: the frame-rate readout
+    std::atomic<double> statPanel { 0.0 }, statPanelWorst { 0.0 };     // time spent drawing the panel, for the same printout
+    std::atomic<int> statPanels { 0 };
     int statFrames = 0;
     std::atomic<double> latency { 0.02 };
     std::atomic<float> dragX { -1.0f }, dragY { -1.0f };
@@ -213,6 +226,10 @@ private:
     bool saveDue = false, edited = false;
     int frameCount = 0;
     std::unique_ptr<juce::Component> picture;   // the picture's own window, when it sits behind the app's
+    std::shared_ptr<const Vis::Picture> pic;    // what the Picture mode works on
+    std::shared_ptr<const Vis::Picture> sharedPic;      // the drawing thread's (guarded by sharedLock)
+    juce::var picVar;                           // the same, as the song keeps it
+    std::unique_ptr<juce::FileChooser> chooser;
     juce::Colour windowColour;
     bool resizing = false;
 

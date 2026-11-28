@@ -40,9 +40,12 @@ static const char* const choiceNames[] = {
     VIS_CHOICES (Y)
    #undef Y
 };
-static const char* const styleNames[] = { "ink", "liquid", "sand", "bloom" };
+static const char* const styleNames[] = { "ink", "liquid", "sand", "bloom", "kaleido", "lotus", "picture" };
 
 const char* faderLabel (int fader) { return faderLabels[fader]; }
+
+// The psychedelic LFO: one swing takes 60 seconds at the bottom of its fader, down to 2 at the top
+static float lfoSeconds (float v) { return 60.0f * std::pow (1.0f / 30.0f, v); }
 
 juce::String faderText (int fader, float v)
 {
@@ -51,6 +54,7 @@ juce::String faderText (int fader, float v)
     if (f == "seg") return juce::String (juce::roundToInt (3.0f + v * 9.0f));
     if (f == "vort") return juce::String (juce::roundToInt (v * 6.0f));
     if (f == "cnt") return juce::String (4 + juce::roundToInt (v * 8.0f));
+    if (f == "lfo") { const float sec = lfoSeconds (v); return (sec < 10.0f ? juce::String (sec, 1) : juce::String (juce::roundToInt (sec))) + " s"; }
     if (f == "ms") { const int m = juce::roundToInt ((v - 0.5f) * 160.0f); return (m > 0 ? "+" : "") + juce::String (m) + " ms"; }
     return juce::String (juce::roundToInt (v * 100.0f)) + "%";
 }
@@ -135,17 +139,18 @@ void Settings::fromVar (const juce::var& var)
         }
 }
 
-int Settings::hueKey() const       { static const int k[] = { F::hue, F::lhue, F::shue, F::bhue };             return k[style]; }
-int Settings::tintKey() const      { static const int k[] = { F::tint, F::ltint, F::stint, F::btint };         return k[style]; }
-int Settings::psyKey() const       { static const int k[] = { F::psy, F::lpsy, F::spsy, F::bpsy };             return k[style]; }
-int Settings::trailsKey() const    { static const int k[] = { F::trails, F::ltrails, F::strails, F::btrails }; return k[style]; }
-int Settings::spinKey() const      { static const int k[] = { F::spin, F::lspin, F::sspin, F::bspin };         return k[style]; }
-int Settings::idleKey() const      { static const int k[] = { F::idle, F::lidle, F::sidle, F::bidle };         return k[style]; }
-int Settings::tonesKey() const     { static const int k[] = { C::tones, C::ltones, C::stones, C::btones };     return k[style]; }
-int Settings::trailModeKey() const { static const int k[] = { C::trails, C::ltrails, C::strails, C::btrails }; return k[style]; }
-int Settings::surfaceKey() const   { static const int k[] = { C::surface, C::lsurface, C::ssurface, C::bsurface }; return k[style]; }
-int Settings::mirrorKey() const    { static const int k[] = { C::mirror, C::lmirror, C::smirror, C::bmirror }; return k[style]; }
-int Settings::formKey() const      { static const int k[] = { C::form, C::lform, C::sform, C::btype };         return k[style]; }
+// Kaleidoscope and lotus have no mirror of their own (their mirrors are their form), so they answer with ink's
+int Settings::hueKey() const       { static const int k[] = { F::hue, F::lhue, F::shue, F::bhue, F::khue, F::zhue, F::phue };                         return k[style]; }
+int Settings::tintKey() const      { static const int k[] = { F::tint, F::ltint, F::stint, F::btint, F::ktint, F::ztint, F::ptint };                  return k[style]; }
+int Settings::psyKey() const       { static const int k[] = { F::psy, F::lpsy, F::spsy, F::bpsy, F::kpsy, F::zpsy, F::ppsy };                         return k[style]; }
+int Settings::trailsKey() const    { static const int k[] = { F::trails, F::ltrails, F::strails, F::btrails, F::ktrails, F::ztrails, F::ptrails };    return k[style]; }
+int Settings::spinKey() const      { static const int k[] = { F::spin, F::lspin, F::sspin, F::bspin, F::kspin, F::zspin, F::pspin };                  return k[style]; }
+int Settings::idleKey() const      { static const int k[] = { F::idle, F::lidle, F::sidle, F::bidle, F::kidle, F::zidle, F::pidle };                  return k[style]; }
+int Settings::tonesKey() const     { static const int k[] = { C::tones, C::ltones, C::stones, C::btones, C::ktones, C::ztones, C::ptones };           return k[style]; }
+int Settings::trailModeKey() const { static const int k[] = { C::trails, C::ltrails, C::strails, C::btrails, C::ktrails, C::ztrails, C::ptrails };    return k[style]; }
+int Settings::surfaceKey() const   { static const int k[] = { C::surface, C::lsurface, C::ssurface, C::bsurface, C::ksurface, C::zsurface, C::psurface }; return k[style]; }
+int Settings::mirrorKey() const    { static const int k[] = { C::mirror, C::lmirror, C::smirror, C::bmirror, C::mirror, C::mirror, C::pmirror };      return k[style]; }
+int Settings::formKey() const      { static const int k[] = { C::form, C::lform, C::sform, C::btype, C::kform, C::zform, C::pform };                  return k[style]; }
 
 static juce::Colour hsl (float h, float s, float l)
 {
@@ -262,6 +267,10 @@ void Renderer::create (juce::String& error)
     ok = sandProg.build (VisShaders::SAND, error) && ok;
     ok = bloomStep.build (VisShaders::BL_STEP, error) && ok;
     ok = bloomShow.build (VisShaders::BL_SHOW, error) && ok;
+    ok = kalProg.build (VisShaders::KAL, error) && ok;
+    ok = lotusProg.build (VisShaders::LOTUS, error) && ok;
+    ok = picStep.build (VisShaders::PIC_STEP, error) && ok;
+    ok = picShow.build (VisShaders::PIC_SHOW, error) && ok;
     ok = out.build (outShader, error) && ok;
     lastTime = juce::Time::getMillisecondCounterHiRes() * 0.001;
     seed = true;
@@ -269,9 +278,13 @@ void Renderer::create (juce::String& error)
 
 void Renderer::destroy()
 {
-    for (auto* p : { &inkStep, &inkShow, &trail, &liquidProg, &sandProg, &bloomStep, &bloomShow, &out })
+    for (auto* p : { &inkStep, &inkShow, &trail, &liquidProg, &sandProg, &bloomStep, &bloomShow, &kalProg, &lotusProg, &picStep, &picShow, &out })
         if (p->id != 0) { glDeleteProgram (p->id); p->id = 0; }
     for (auto* t : { &sim[0], &sim[1], &trails[0], &trails[1], &fresh }) t->release();
+    if (picTex != 0) glDeleteTextures (1, &picTex);
+    if (picDistTex != 0) glDeleteTextures (1, &picDistTex);
+    picTex = picDistTex = 0;
+    picture.reset();
     if (vbo != 0) glDeleteBuffers (1, &vbo);
     if (vao != 0) glDeleteVertexArrays (1, &vao);
     vbo = vao = 0;
@@ -285,6 +298,69 @@ void Renderer::ensureSim (float aspect)
     sim[1].make (w, h);
     simIndex = 0;
     seed = true;
+}
+
+void Renderer::clearSim()
+{
+    for (auto& t : sim)
+    {
+        if (t.fbo == 0) continue;
+        glBindFramebuffer (GL_FRAMEBUFFER, t.fbo);
+        glClearColor (0, 0, 0, 1);
+        glClear (GL_COLOR_BUFFER_BIT);
+    }
+}
+
+// The picture goes to the graphics card once, when it changes: its colours (with the shape in the fourth
+// channel) at several sizes, so the shaders can read it soft or sharp, and the distance from the shape's outline
+void Renderer::usePicture (const std::shared_ptr<const Picture>& p)
+{
+    if (p == picture || p == nullptr) return;
+    picture = p;
+    auto make = [] (GLuint& tex, bool sizes)
+    {
+        if (tex == 0) glGenTextures (1, &tex);
+        glBindTexture (GL_TEXTURE_2D, tex);
+        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, sizes ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    };
+    glPixelStorei (GL_UNPACK_ALIGNMENT, 4);
+    make (picTex, true);
+    glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, Picture::size, Picture::size, 0, GL_RGBA, GL_UNSIGNED_BYTE, p->pixels.data());
+    glGenerateMipmap (GL_TEXTURE_2D);
+    make (picDistTex, false);
+    glTexImage2D (GL_TEXTURE_2D, 0, GL_RG16F, Picture::grid, Picture::grid, 0, GL_RG, GL_FLOAT, p->distance.data());
+    glBindTexture (GL_TEXTURE_2D, 0);
+}
+
+void Renderer::Slow::follow (float dt, const float* bandsNow, float levelNow)
+{
+    auto ease = [dt] (float a, float b, float up, float down) { return a + (b - a) * (1.0f - std::exp (-dt * (b > a ? up : down))); };
+    for (int i = 0; i < 3; ++i) sb[i] = ease (sb[i], bandsNow[i], 2.2f, 0.8f);
+    level = ease (level, levelNow, 2.0f, 0.8f);
+    hit *= std::exp (-dt * 1.1f);
+    hitEased = ease (hitEased, hit, 3.0f, 1.2f);
+}
+
+// Psychedelic moves two ways: a slow triangle LFO swings it at a steady pace, evenly above and below the
+// fader, and sway lets the chosen part of the music push it up
+float Renderer::Slow::psy (float dt, float base, float lfoDepth, float rate, float sway, int swayWith)
+{
+    lfo = std::fmod (lfo + dt * juce::MathConstants<float>::twoPi / lfoSeconds (rate), juce::MathConstants<float>::twoPi);
+    const float with[] = { sb[0], sb[1], sb[2], hitEased };
+    psyNow = juce::jlimit (-1.0f, 1.0f, base + lfoDepth * std::asin (std::sin (lfo)) * 0.63662f + sway * with[juce::jlimit (0, 3, swayWith)] * 1.4f);
+    psyPhase += dt * 0.5f * psyNow;
+    return psyNow;
+}
+
+// Colour changes: swap counts the hits and eases from one to the next; flow drifts faster when the music is louder
+void Renderer::Slow::colours (float dt, float wash)
+{
+    if (swaps - swapEased > 2.0f) swaps = std::floor (swapEased) + 2.0f;
+    swapEased += juce::jmin (swaps - swapEased, dt * 1.5f);
+    flow += dt * wash * (0.03f + level * 0.9f);
 }
 
 void Renderer::ensureTrail (int w, int h)
@@ -312,6 +388,28 @@ void Renderer::burst (float strength, const Settings& S)
             do { next = random.nextInt (max); } while (next == sandB);
             sandA = sandB; sandB = next; sandTime = T;
         }
+    }
+    if (S.style == kaleido)
+    {
+        // Every burst turns the tube a notch, so the shards tumble into a new picture; now and then it turns back the other way
+        ++kal.count;
+        kal.s.swaps += 1.0f;
+        kal.s.hit = juce::jmin (1.0f, kal.s.hit + 0.45f + strength * 0.4f);
+        if (kal.count % 7 == 0) kal.dir = -kal.dir;
+        kal.turnTo += (0.3f + strength * 0.9f) * S.v[F::ktumble] * 1.5f * kal.dir;
+    }
+    else if (S.style == lotus)
+    {
+        // A hit pushes you deeper for a moment: the speed follows the push up and falls back, a lunge and never a jump
+        lot.push += strength * S.v[F::zlunge] * 1.2f;
+        lot.s.swaps += 1.0f;
+        lot.s.hit = juce::jmin (1.0f, lot.s.hit + 0.45f + strength * 0.4f);
+    }
+    else if (S.style == pictureStyle)
+    {
+        pic.s.hit = juce::jmin (1.0f, pic.s.hit + 0.45f + strength * 0.4f);
+        pic.puff = juce::jmin (1.6f, pic.puff + 0.4f + strength);
+        pic.beatSpeed += (0.4f + strength) * 11.0f;
     }
     onsets.insert (onsets.begin(), { T, strength, ph });
     if (onsets.size() > 6) onsets.resize (6);
@@ -521,7 +619,7 @@ void Renderer::trailOut (int W, int H, float dt, float aspect, float amount, boo
     glDrawArrays (GL_TRIANGLES, 0, 3);
 }
 
-void Renderer::frame (const Settings& S, VisListener& ear, double latency, const Out& o, juce::Point<float> drag, Readout& readout)
+void Renderer::frame (const Settings& S, VisListener& ear, double latency, const Out& o, juce::Point<float> drag, Readout& readout, const std::shared_ptr<const Picture>& image)
 {
     if (! ok || o.w < 8 || o.h < 8) return;
     const double wall = juce::Time::getMillisecondCounterHiRes() * 0.001;
@@ -529,6 +627,7 @@ void Renderer::frame (const Settings& S, VisListener& ear, double latency, const
     lastTime = wall;
     T += dt;
     if (S.style != lastStyle) { lastStyle = S.style; seed = true; onsets.clear(); splats.clear(); }
+    usePicture (image);
     analyse (dt, S, ear, latency, readout);
 
     GLint oldVao = 0;
@@ -750,7 +849,253 @@ void Renderer::frame (const Settings& S, VisListener& ear, double latency, const
         glDrawArrays (GL_TRIANGLES, 0, 3);
         trailOut (W, H, dt, aspect, trailAmount, echo, psy, 1.0f, o);
     }
-    else
+    else if (S.style == kaleido)
+    {
+        auto& p = kalProg;
+        auto& k = kal;
+        common (p, S, aspect);
+        ensureTrail (W, H);
+        glBindFramebuffer (GL_FRAMEBUFFER, fresh.fbo);
+        glViewport (0, 0, W, H);
+        k.turnTo += reaction[dStir] * S.v[F::stir] * S.v[F::ktumble] * dt * 0.9f * k.dir;
+        k.turn += (k.turnTo - k.turn) * (1.0f - std::exp (-dt * 3.5f));
+        k.s.follow (dt, band, level);
+        {
+            const float flashNow = reaction[dFlash] * S.v[F::flash] * 1.6f;
+            k.flash += (flashNow - k.flash) * (1.0f - std::exp (-dt * (flashNow > k.flash ? 1.8f : 0.7f)));
+        }
+        k.s.colours (dt, S.v[F::kwash]);
+        const float kpsy = k.s.psy (dt, S.v[F::kpsy], S.v[F::kplfo], S.v[F::kprate], S.v[F::kpsway], S.w[C::kpsyon]);
+        k.phase += dt * S.v[F::ktumble] * 2.8f * (0.4f + S.v[F::speed] * 1.4f) * (1.0f + k.s.sb[1] * 1.3f);
+        glUniform1f (p.u ("rot"), theta);
+        glUniform1f (p.u ("psy"), kpsy);
+        glUniform1f (p.u ("segs"), (float) juce::roundToInt (3.0f + S.v[F::kseg] * 9.0f));
+        glUniform1f (p.u ("size"), S.v[F::ksize]);
+        glUniform1f (p.u ("jag"), S.v[F::kjag]);
+        glUniform1f (p.u ("lead"), S.v[F::klead]);
+        glUniform1f (p.u ("light"), S.v[F::klight]);
+        glUniform1f (p.u ("spark"), S.v[F::kspark]);
+        glUniform1f (p.u ("frost"), S.v[F::kfrost]);
+        glUniform1f (p.u ("turn"), k.turn);
+        glUniform1f (p.u ("tph"), k.phase);
+        glUniform1i (p.u ("surf"), S.w[C::ksurface]);
+        glUniform1i (p.u ("form"), S.w[C::kform]);
+        glUniform1f (p.u ("breathe"), S.v[F::kbreathe]);
+        glUniform1f (p.u ("swell"), S.v[F::kswell]);
+        glUniform1f (p.u ("wash"), S.v[F::kwash]);
+        glUniform1f (p.u ("ripple"), S.v[F::kripple]);
+        glUniform1f (p.u ("sfl"), k.flash);
+        glUniform3fv (p.u ("sb"), 1, k.s.sb);
+        glUniform1f (p.u ("cstep"), k.s.swapEased);
+        glUniform1f (p.u ("cflow"), k.s.flow);
+        glUniform1i (p.u ("colm"), S.w[C::kcolour]);
+        glUniform1i (p.u ("cut"), S.w[C::kcut]);
+        glUniform1f (p.u ("twist"), S.v[F::ktwist]);
+        glUniform1f (p.u ("bulge"), S.v[F::kbulge]);
+        glUniform1f (p.u ("layer"), S.v[F::klayer]);
+        glUniform1f (p.u ("pph"), k.s.psyPhase);
+        float ages[6] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        for (size_t i = 0; i < onsets.size() && i < 6; ++i) ages[i] = (float) (T - onsets[i].time);
+        glUniform1fv (p.u ("ons"), 6, ages);
+        glDrawArrays (GL_TRIANGLES, 0, 3);
+        readout.psyNow.store (kpsy);
+        trailOut (W, H, dt, aspect, trailAmount, echo, std::abs (kpsy), 1.0f, o);
+    }
+    else if (S.style == lotus)
+    {
+        auto& p = lotusProg;
+        auto& z = lot;
+        common (p, S, aspect);
+        ensureTrail (W, H);
+        glBindFramebuffer (GL_FRAMEBUFFER, fresh.fbo);
+        glViewport (0, 0, W, H);
+        z.s.follow (dt, band, level);
+        z.push *= std::exp (-dt * 1.6f);
+        z.speed += (z.push - z.speed) * (1.0f - std::exp (-dt * 5.0f));
+        {
+            // How far in we are, counted in rings. Only the part of the depth that matters is kept (the rest
+            // repeats), so it can run for hours
+            const float N = (float) (4 + juce::roundToInt (S.v[F::zpetals] * 8.0f));
+            const float du = dt * ((0.03f + S.v[F::zspeed] * 0.75f) * (0.4f + S.v[F::speed] * 1.4f) + z.speed + reaction[dStir] * S.v[F::stir] * 0.25f) * N / juce::MathConstants<float>::twoPi;
+            z.depth += du;
+            z.wind = std::fmod (z.wind + S.v[F::ztwist] * 0.6f * du * (1.0f + z.s.sb[1] * 0.6f), N);
+            while (z.depth > 1.0f)
+            {
+                z.depth -= 1.0f;
+                z.ring = std::fmod (z.ring + 2.0f, 128.0f);
+                z.colour = std::fmod (std::fmod (z.colour - 0.46f, 3.0f) + 3.0f, 3.0f);
+            }
+        }
+        z.s.colours (dt, S.v[F::zwash]);
+        const float zpsy = z.s.psy (dt, S.v[F::zpsy], S.v[F::zplfo], S.v[F::zprate], S.v[F::zpsway], S.w[C::zpsyon]);
+        glUniform1f (p.u ("rot"), theta);
+        glUniform1f (p.u ("psy"), zpsy);
+        glUniform1f (p.u ("pph"), z.s.psyPhase);
+        glUniform1f (p.u ("zf"), z.depth);
+        glUniform1f (p.u ("zr"), z.wind);
+        glUniform1f (p.u ("zw"), z.ring);
+        glUniform1f (p.u ("zc"), z.colour);
+        glUniform1f (p.u ("fa"), S.v[F::zpetals]);
+        glUniform1f (p.u ("fb"), S.v[F::ztwist]);
+        glUniform1f (p.u ("fc"), S.v[F::zpoint]);
+        glUniform1f (p.u ("fo"), S.v[F::zopen]);
+        glUniform1f (p.u ("lead"), S.v[F::zlead]);
+        glUniform1f (p.u ("frost"), S.v[F::zfrost]);
+        glUniform1f (p.u ("light"), S.v[F::zlight]);
+        glUniform1f (p.u ("wash"), S.v[F::zwash]);
+        glUniform1f (p.u ("cstep"), z.s.swapEased);
+        glUniform1f (p.u ("cflow"), z.s.flow);
+        glUniform3fv (p.u ("sb"), 1, z.s.sb);
+        glUniform1i (p.u ("surf"), S.w[C::zsurface]);
+        glUniform1i (p.u ("form"), S.w[C::zform]);
+        glUniform1i (p.u ("colm"), S.w[C::zcolour]);
+        float ages[6] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        for (size_t i = 0; i < onsets.size() && i < 6; ++i) ages[i] = (float) (T - onsets[i].time);
+        glUniform1fv (p.u ("ons"), 6, ages);
+        glDrawArrays (GL_TRIANGLES, 0, 3);
+        readout.psyNow.store (zpsy);
+        trailOut (W, H, dt, aspect, trailAmount, echo, std::abs (zpsy), 1.0f, o);
+    }
+    else if (S.style == pictureStyle && picture != nullptr)
+    {
+        // Picture: the shape of a dropped picture works on smoke. The smoke is the same kind of flowing dye as
+        // ink, kept close to the shape; the shape is lit as a rounded 3D form.
+        auto& k = pic;
+        ensureSim (aspect);
+        if (seed) { seed = false; clearSim(); }
+        ensureTrail (W, H);
+        const float sw = (float) sim[0].w / (float) sim[0].h;
+        const int m = S.w[C::pmirror], act = S.w[C::pform];
+        k.s.follow (dt, band, level);
+        k.puff *= std::exp (-dt * 2.4f);            // the short push each hit gives
+        {
+            // The beat: a spring the lows lean on and every hit kicks
+            const float w = 13.0f, z = 0.32f, target = k.s.sb[0] * S.v[F::pfeed] * 0.9f;
+            k.beatSpeed += (-w * w * (k.beat - target) - 2.0f * z * w * k.beatSpeed) * dt;
+            k.beat += k.beatSpeed * dt;
+        }
+        const float ppsy = k.s.psy (dt, S.v[F::ppsy], S.v[F::pplfo], S.v[F::pprate], S.v[F::ppsway], S.w[C::ppsyon]);
+        // The picture stands upright: it only turns if spin is given to it, and comes back level when spin is taken away
+        if (T - k.lastTime > 0.3) k.lastTheta = theta;
+        k.lastTime = T;
+        k.angle += theta - k.lastTheta;
+        k.lastTheta = theta;
+        if (S.v[F::pspin] < 0.005f && S.v[F::pidle] < 0.005f) k.angle = std::atan2 (std::sin (k.angle), std::cos (k.angle)) * std::exp (-dt * 2.0f);
+        // With mirrors on, Offset slides the picture off the fold toward the middle of its slice, so the mirrors show whole copies of it
+        float cx = 0.0f, cy = 0.0f;
+        {
+            const float off = S.v[F::poff];
+            if (m == 1) cx = off * sw * 0.5f;
+            else if (m == 2) { cx = off * sw * 0.5f; cy = off * 0.5f; }
+            else if (m > 2)
+            {
+                const float a = juce::MathConstants<float>::twoPi / (m == 3 ? 3.0f : 4.0f) / 4.0f, r = off * 0.9f;
+                cx = std::sin (a) * r; cy = -0.5f + std::cos (a) * r;
+            }
+        }
+        // Dragging on the picture pushes the smoke along with the pointer (found through the same spin and mirror fold as the screen)
+        float dp[4] = {};
+        if (dragging)
+        {
+            float dx = (drag.x - 0.5f) * aspect, dy = drag.y - 0.5f;
+            const float ca = std::cos (k.angle), sa = std::sin (k.angle);
+            const float rx = ca * dx + sa * dy, ry = -sa * dx + ca * dy;
+            dx = rx; dy = ry;
+            if (m == 1) dx = std::abs (dx);
+            else if (m == 2) { dx = std::abs (dx); dy = std::abs (dy); }
+            else if (m > 2)
+            {
+                const float seg = juce::MathConstants<float>::twoPi / (m == 3 ? 3.0f : 4.0f), len = std::hypot (dx, dy);
+                float an = std::fmod (std::atan2 (dx, dy) + seg * 0.5f, seg);
+                if (an < 0.0f) an += seg;
+                an = std::abs (an - seg * 0.5f);
+                dx = len * std::sin (an); dy = len * std::cos (an);
+            }
+            const float qx = dx + sw * 0.5f, qy = dy + (m > 2 ? 0.0f : 0.5f);
+            if (k.dragging)
+            {
+                dp[0] = qx; dp[1] = qy;
+                dp[2] = juce::jlimit (-45.0f, 45.0f, (qx - k.dragX) / dt * 9.0f);
+                dp[3] = juce::jlimit (-45.0f, 45.0f, (qy - k.dragY) / dt * 9.0f);
+            }
+            k.dragging = true; k.dragX = qx; k.dragY = qy;
+        }
+        else k.dragging = false;
+        float ages[6] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        for (size_t i = 0; i < onsets.size() && i < 6; ++i) ages[i] = (float) (T - onsets[i].time);
+        auto shared = [&] (Program& p)
+        {
+            glActiveTexture (GL_TEXTURE1); glBindTexture (GL_TEXTURE_2D, picTex);     glUniform1i (p.u ("pic"), 1);
+            glActiveTexture (GL_TEXTURE2); glBindTexture (GL_TEXTURE_2D, picDistTex); glUniform1i (p.u ("pic2"), 2);
+            glActiveTexture (GL_TEXTURE0);
+            glUniform1f (p.u ("psz"), 0.3f + 0.62f * S.v[F::psize]);
+            glUniform1f (p.u ("pasp"), picture->aspect);
+            glUniform1f (p.u ("plain"), picture->plain ? 1.0f : 0.0f);
+            glUniform1f (p.u ("lifted"), picture->lifted ? 1.0f : 0.0f);
+            glUniform1f (p.u ("amt"), S.v[F::pamt]);
+            glUniform1i (p.u ("src"), S.w[C::psrc]);
+            glUniform1i (p.u ("act"), act);
+            glUniform2f (p.u ("pctr"), cx, cy);
+            glUniform1f (p.u ("reach"), 0.08f + S.v[F::preach] * 0.9f);
+            glUniform1fv (p.u ("ons"), 6, ages);
+        };
+        auto& p = picStep;
+        common (p, S, aspect);
+        glUniform1f (p.u ("asp"), sw);
+        shared (p);
+        glUniform1f (p.u ("dt"), dt);
+        glUniform1f (p.u ("fade"), std::pow (0.5f, dt / (0.4f * std::pow (20.0f, S.v[F::phang]))));
+        glUniform1f (p.u ("swirl"), (0.5f + S.v[F::pswirl] * 4.0f) * (0.6f + k.s.sb[1] * 1.1f + reaction[dStir] * S.v[F::stir] * 1.2f));
+        glUniform1f (p.u ("wisp"), S.v[F::pwisp] * 3.6f * (0.5f + k.s.sb[2] * 1.6f));
+        glUniform1f (p.u ("rise"), (0.4f + S.v[F::prise] * 4.6f) * (0.75f + k.s.sb[0] * (0.3f + S.v[F::pfeed] * 0.7f)));
+        glUniform1f (p.u ("wind"), S.v[F::pwind] * 2.2f);
+        glUniform1f (p.u ("puff"), k.puff * S.v[F::ppuff] * 4.0f);
+        glUniform1f (p.u ("emit"), (S.v[F::psmoke] * 1.6f + S.v[F::pfeed] * k.s.sb[0] * 3.2f + k.puff * S.v[F::ppuff] * 1.1f) * 0.45f);
+        glUniform1f (p.u ("cph"), (float) std::fmod (T, 3600.0) * 0.03f);
+        glUniform4fv (p.u ("dp"), 1, dp);
+        glUniform1i (p.u ("dir"), S.w[C::pdir]);
+        glUniform1i (p.u ("colm"), S.w[C::pcolour]);
+        // cloud: how thick the puff of cloud is (beats). heal: how fast the puff settles back (beats) or the picture re-forms (melts)
+        glUniform1f (p.u ("bv"), juce::jlimit (-3.5f, 3.5f, k.beatSpeed * 0.2f));
+        glUniform1f (p.u ("cloud"), 0.3f + S.v[F::psmoke]);
+        glUniform1f (p.u ("heal"), act == 3 ? 2.0f + S.v[F::psmoke] * 12.0f : 1.5f / (0.8f + S.v[F::phang] * 5.0f));
+        glUniform1f (p.u ("blow"), clamp01 (0.05f + k.s.sb[0] * S.v[F::pfeed] * 0.55f + k.puff * S.v[F::ppuff] * 0.5f));
+        glUniform1f (p.u ("ringk"), S.v[F::ppuff] * 3.0f);
+        glUniform3fv (p.u ("k1"), 1, picture->palette[0].data());
+        glUniform3fv (p.u ("k2"), 1, picture->palette[1].data());
+        glUniform3fv (p.u ("k3"), 1, picture->palette[2].data());
+        auto& a = sim[simIndex];
+        auto& b = sim[1 - simIndex];
+        glBindFramebuffer (GL_FRAMEBUFFER, b.fbo);
+        glViewport (0, 0, b.w, b.h);
+        glActiveTexture (GL_TEXTURE0); glBindTexture (GL_TEXTURE_2D, a.tex); glUniform1i (p.u ("prev"), 0);
+        glDrawArrays (GL_TRIANGLES, 0, 3);
+        simIndex = 1 - simIndex;
+
+        auto& s = picShow;
+        common (s, S, aspect);
+        shared (s);
+        glBindFramebuffer (GL_FRAMEBUFFER, fresh.fbo);
+        glViewport (0, 0, W, H);
+        glBindTexture (GL_TEXTURE_2D, b.tex); glUniform1i (s.u ("dye"), 0);
+        glUniform2f (s.u ("px"), 1.4f / (float) b.w, 1.4f / (float) b.h);
+        glUniform1f (s.u ("rot"), k.angle);
+        glUniform1f (s.u ("psy"), ppsy);
+        glUniform1f (s.u ("pph"), k.s.psyPhase);
+        glUniform1f (s.u ("vis"), S.v[F::pvis]);
+        glUniform1f (s.u ("haze"), S.v[F::phaze]);
+        glUniform1f (s.u ("ash"), S.v[F::pash]);
+        glUniform1i (s.u ("surf"), S.w[C::psurface]);
+        glUniform1i (s.u ("mir"), m);
+        glUniform1f (s.u ("bx"), k.beat);
+        glUniform1f (s.u ("dent"), S.v[F::pdent] * 1.1f);
+        glUniform1f (s.u ("ringk"), S.v[F::ppuff] * 0.35f);
+        glDrawArrays (GL_TRIANGLES, 0, 3);
+        readout.psyNow.store (ppsy);
+        trailOut (W, H, dt, aspect, trailAmount, echo, std::abs (ppsy), 1.0f, o);
+        glActiveTexture (GL_TEXTURE2); glBindTexture (GL_TEXTURE_2D, 0);
+    }
+    else if (S.style == bloom)
     {
         // Bloom: growth that forms, glows, dims and dissolves. Big hits plant new growth.
         ensureSim (aspect);

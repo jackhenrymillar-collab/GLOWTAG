@@ -16,7 +16,7 @@ public:
 
     void create (juce::String& error);
     void destroy();
-    void frame (const Settings&, VisListener&, double latencySeconds, const Out&, juce::Point<float> drag, Readout&);
+    void frame (const Settings&, VisListener&, double latencySeconds, const Out&, juce::Point<float> drag, Readout&, const std::shared_ptr<const Picture>&);
     bool ok = false;
 
 private:
@@ -47,7 +47,10 @@ private:
     void ensureSim (float aspect);
     void ensureTrail (int w, int h);
 
-    Program inkStep, inkShow, trail, liquidProg, sandProg, bloomStep, bloomShow, out;
+    void usePicture (const std::shared_ptr<const Picture>&);
+    void clearSim();
+
+    Program inkStep, inkShow, trail, liquidProg, sandProg, bloomStep, bloomShow, kalProg, lotusProg, picStep, picShow, out;
     Target sim[2], trails[2], fresh;
     int simIndex = 0, trailIndex = 0;
     unsigned int vao = 0, vbo = 0;
@@ -67,5 +70,23 @@ private:
     std::vector<Splat> splats;
     std::vector<Onset> onsets;
     juce::Random random;
+
+    // Kaleidoscope, lotus and picture hear the music slowed right down (about half a second to rise, over a
+    // second to fall), so it moves them without flashing. Each also keeps where its colour changes and its
+    // psychedelic swing have got to.
+    struct Slow
+    {
+        float sb[3] = {}, level = 0.0f, hit = 0.0f, hitEased = 0.0f;
+        float lfo = 0.0f, psyNow = 0.0f, psyPhase = 0.0f;
+        float swaps = 0.0f, swapEased = 0.0f, flow = 0.0f;
+        void follow (float dt, const float* bandsNow, float levelNow);
+        float psy (float dt, float base, float lfoDepth, float rate, float sway, int swayWith);
+        void colours (float dt, float wash);
+    };
+    struct { Slow s; float turn = 0.0f, turnTo = 0.0f, phase = 0.0f, dir = 1.0f, flash = 0.0f; int count = 0; } kal;
+    struct { Slow s; float push = 0.0f, speed = 0.0f, depth = 0.0f, wind = 0.0f, ring = 0.0f, colour = 0.0f; } lot;
+    struct { Slow s; float puff = 0.0f, angle = 0.0f, lastTheta = 0.0f, beat = 0.0f, beatSpeed = 0.0f, dragX = 0.0f, dragY = 0.0f; double lastTime = -9.0; bool dragging = false; } pic;
+    std::shared_ptr<const Picture> picture;     // the one whose textures are on the card
+    unsigned int picTex = 0, picDistTex = 0;
 };
 }

@@ -35,6 +35,8 @@ Visualiser::Visualiser (AppContext& c, juce::Component& w) : ctx (c), window (w)
     renderer = std::make_unique<Renderer>();
     shared = settings;
     seen = settings;
+    pic = sharedPic = Picture::builtIn (0);
+    picVar = pic->toVar();
     ctx.visParams = [this] { return automatableParams(); };
     ctx.visValue = [this] (const AutoTarget& t, float& out) { return readSetting (settings, t, out); };
 }
@@ -215,7 +217,7 @@ void Visualiser::toggleMaximised()
 void Visualiser::setup (const juce::String& words)
 {
     const auto w = juce::StringArray::fromTokens (words, " ,", {});
-    static const char* const styles[] = { "ink", "liquid", "sand", "bloom" };
+    static const char* const styles[] = { "ink", "liquid", "sand", "bloom", "kaleido", "lotus", "picture" };
     for (int i = 0; i < numStyles; ++i) if (w.contains (styles[i])) settings.style = i;
     page = w.contains ("routing") ? 1 : 0;
     for (auto& word : w)
@@ -226,6 +228,8 @@ void Visualiser::setup (const juce::String& words)
             if (key == "look") settings.w[(size_t) settings.surfaceKey()] = text.getIntValue();
             else if (key == "form") settings.w[(size_t) settings.formKey()] = text.getIntValue();
             else if (key == "mirror") settings.w[(size_t) settings.mirrorKey()] = juce::jlimit (0, 4, text.getIntValue());
+            else if (key == "sample") setPicture (Picture::builtIn (text.getIntValue()), false);       // one of the built-in pictures
+            else if (key == "file") { const int style = settings.style; loadPicture (juce::File (text)); settings.style = style; }
             else
             {
                 auto all = settings.toVar();
@@ -271,9 +275,68 @@ void Visualiser::projectReplaced()
     ctx.engine.visFeed = -1;
     seen = settings;
     for (int k = 0; k < 3; ++k) ctx.engine.visListener.setBand (k, settings.bandHz[(size_t) k][0], settings.bandHz[(size_t) k][1]);
+    // The song's picture, or the first built-in one
+    auto kept = Picture::fromVar (ctx.project.visualiser["picture"]);
+    if (kept != nullptr) setPicture (kept, false);
+    else if (pic == nullptr || pic->sample != 0) setPicture (Picture::builtIn (0), false);
     markAll();
     const juce::SpinLock::ScopedLockType lock (sharedLock);
     shared = settings;
+}
+
+//==============================================================================
+// The picture the Picture mode works on
+
+void Visualiser::setPicture (std::shared_ptr<const Picture> p, bool byHand)
+{
+    if (p == nullptr) return;
+    pic = std::move (p);
+    picVar = pic->toVar();
+    {
+        const juce::SpinLock::ScopedLockType lock (sharedLock);
+        sharedPic = pic;
+    }
+    if (byHand) { edited = true; saveDue = true; }
+    markAll();
+    repaint();
+}
+
+void Visualiser::loadPicture (const juce::File& file)
+{
+    auto read = Picture::from (juce::ImageFileFormat::loadFrom (file));
+    if (read == nullptr)
+    {
+        last = "that picture could not be read (it takes PNG, JPEG and GIF)";
+        relayout();
+        return;
+    }
+    setPicture (read);
+    settings.style = pictureStyle;
+    last = "picture: " + file.getFileName();
+    edited = true;
+    relayout();
+}
+
+void Visualiser::choosePicture()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Choose a picture", juce::File::getSpecialLocation (juce::File::userPicturesDirectory), "*.png;*.jpg;*.jpeg;*.gif");
+    juce::Component::SafePointer<Visualiser> safe (this);
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [safe] (const juce::FileChooser& fc)
+    {
+        if (safe != nullptr && fc.getResult().existsAsFile()) safe->loadPicture (fc.getResult());
+    });
+}
+
+bool Visualiser::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    for (auto& f : files) if (Picture::isPictureFile (f)) return true;
+    return false;
+}
+
+void Visualiser::filesDropped (const juce::StringArray& files, int, int)
+{
+    for (auto& f : files)
+        if (Picture::isPictureFile (f)) { loadPicture (juce::File (f)); return; }
 }
 
 void Visualiser::changed()
@@ -324,6 +387,7 @@ void Visualiser::tick()
         bool anyScene = false;
         for (auto& s : scenes) anyScene = anyScene || s.has_value();
         if (anyScene) now.getDynamicObject()->setProperty ("scenes", scenesVar());
+        if (pic != nullptr && pic->sample != 0) now.getDynamicObject()->setProperty ("picture", picVar);     // the first built-in picture needs no keeping
         if (juce::JSON::toString (now, true) != juce::JSON::toString (ctx.project.visualiser, true))
         {
             const bool had = ctx.project.visualiser.isObject();
@@ -368,11 +432,13 @@ void Visualiser::renderOpenGL()
 {
     using namespace juce::gl;
     Settings s;
+    std::shared_ptr<const Picture> image;
     juce::Rectangle<int> area;
     bool ownWindow = false, isBehind = false;
     {
         const juce::SpinLock::ScopedLockType lock (sharedLock);
         s = shared;
+        image = sharedPic;
         area = sharedArea;
         ownWindow = sharedOwnWindow;
         isBehind = sharedBehind;
@@ -391,10 +457,12 @@ void Visualiser::renderOpenGL()
         ++statFrames;
         if (frameStart - statSince >= 2000.0)
         {
-            std::fprintf (stderr, "visualiser: %s, %.1f frames a second, longest gap %.0f ms, picture takes %.2f ms a frame, %d x %d\n",
+            const int panels = statPanels.exchange (0);
+            std::fprintf (stderr, "visualiser: %s, %.1f frames a second, longest gap %.0f ms, picture takes %.2f ms a frame, %d x %d, panel redrawn %d times at %.2f ms each (slowest %.1f)\n",
                           isBehind ? (ownWindow ? "behind (own window)" : "behind (one window)") : "full window",
                           statFrames * 1000.0 / (frameStart - statSince), statWorst, statWork / statFrames,
-                          juce::roundToInt ((float) area.getWidth() * (float) gl.getRenderingScale()), juce::roundToInt ((float) area.getHeight() * (float) gl.getRenderingScale()));
+                          juce::roundToInt ((float) area.getWidth() * (float) gl.getRenderingScale()), juce::roundToInt ((float) area.getHeight() * (float) gl.getRenderingScale()),
+                          panels, statPanel.exchange (0.0) / juce::jmax (1, panels), statPanelWorst.exchange (0.0));
             statSince = frameStart; statFrames = 0; statWorst = 0.0; statWork = 0.0;
         }
     }
@@ -411,7 +479,7 @@ void Visualiser::renderOpenGL()
                         juce::roundToInt ((float) area.getHeight() * scale),
                         isBehind ? 1.0f - 0.5f * s.v[F::back] : 1.0f };
     const float dx = dragX.load(), dy = dragY.load();
-    renderer->frame (s, ctx.engine.visListener, latency.load(), out, { dx, dx < 0.0f ? -1.0f : 1.0f - dy }, readout);
+    renderer->frame (s, ctx.engine.visListener, latency.load(), out, { dx, dx < 0.0f ? -1.0f : 1.0f - dy }, readout, image);
     glBindFramebuffer (GL_FRAMEBUFFER, (GLuint) framebuffer);
     glViewport (viewport[0], viewport[1], viewport[2], viewport[3]);
     if (stats) { glFlush(); statWork += juce::Time::getMillisecondCounterHiRes() - frameStart; }
@@ -429,7 +497,13 @@ namespace
     constexpr float cardSpread[] = { 470.0f, 560.0f, 560.0f, 560.0f, 560.0f, 560.0f, 560.0f, 560.0f, 560.0f, 560.0f, 840.0f };
     constexpr float designWidth = 1700.0f, designHeight = 894.0f;       // smaller windows shrink the whole panel to fit
 
-    float cardScale (int card, juce::Rectangle<float> box) { return juce::jmin (box.getWidth() / panelWidth, box.getHeight() / cardHeight[card]); }
+    // Kaleidoscope, lotus and picture have more shape and colour controls: those cards are wider, and trails gives up the room
+    //                                  shape  colour motion trails special
+    constexpr float wideCards[3][5] = { { 1.35f, 1.45f, 0.9f, 0.42f, 0.88f },
+                                        { 1.08f, 1.45f, 1.0f, 0.42f, 1.05f },
+                                        { 1.05f, 1.4f,  1.1f, 0.42f, 1.03f } };
+
+    float cardScale (int card, juce::Rectangle<float> box, float drawnFor) { return juce::jmin (box.getWidth() / drawnFor, box.getHeight() / cardHeight[card]); }
 
     // Where a frequency sits along the listening bands' scale, and back
     float hzToT (float hz) { return std::log (hz / Settings::lowestHz) / std::log (Settings::highestHz / Settings::lowestHz); }
@@ -445,6 +519,7 @@ namespace
 Visualiser::Layout Visualiser::layout() const
 {
     Layout l;
+    l.designWidth.fill (panelWidth);
     const float w = (float) getWidth(), h = (float) getHeight();
     const float size = 19.0f;
     if (maximised || w < 80.0f || h < 80.0f)
@@ -480,6 +555,18 @@ Visualiser::Layout Visualiser::layout() const
         put (cBands, X0, ry, w1, rowHeight);
         put (cGates, X0 + w1 + g, ry, w2, rowHeight);
         put (cRoute, X0 + w1 + w2 + 2.0f * g, ry, AW - w1 - w2 - 2.0f * g, rowHeight);
+    }
+    else if (settings.style >= kaleido)
+    {
+        const auto& weight = wideCards[settings.style - kaleido];
+        const float unit = (AW - 4.0f * g) / 5.0f;
+        float x = X0;
+        for (int i = 0; i < 5; ++i)
+        {
+            put (cShape + i, x, ry, unit * weight[i], rowHeight);
+            l.designWidth[(size_t) (cShape + i)] = panelWidth * weight[i];
+            x += unit * weight[i] + g;
+        }
     }
     else
     {
@@ -815,10 +902,13 @@ struct Visualiser::Draw
     // Picture buttons: the look (row 0) and the form (row 1) of the mode
     void iconRow (int row, float x, float y, float bw, juce::Colour c)
     {
-        static const char* const names[4][2][4] = { { { "smoke", "oil", "neon", nullptr }, { "blot", "petals", "rays", "tiles" } },
-                                                    { { "lamp", "glass", "neon", nullptr }, { "drift", "lava", "orbit", "mirror" } },
-                                                    { { "grains", "dust", "bulbs", nullptr }, { "square", "round", "ripple", nullptr } },
-                                                    { { "glow", "lines", "relief", nullptr }, { "coral", "cells", "maze", nullptr } } };
+        static const char* const names[numStyles][2][4] = { { { "smoke", "oil", "neon", nullptr }, { "blot", "petals", "rays", "tiles" } },
+                                                            { { "lamp", "glass", "neon", nullptr }, { "drift", "lava", "orbit", "mirror" } },
+                                                            { { "grains", "dust", "bulbs", nullptr }, { "square", "round", "ripple", nullptr } },
+                                                            { { "glow", "lines", "relief", nullptr }, { "coral", "cells", "maze", nullptr } },
+                                                            { { "glass", "jewels", "neon", nullptr }, { "wheel", "tiles", "facets", nullptr } },
+                                                            { { "soft", "glass", "neon", nullptr }, { "petals", "scales", "spikes", nullptr } },
+                                                            { { "smoke", "oil", "neon", nullptr }, { "pours", "beats", "parts", "melts" } } };
         const int style = S().style, key = row == 0 ? S().surfaceKey() : S().formKey();
         for (int i = 0; i < 4 && names[style][row][i] != nullptr; ++i)
         {
@@ -852,6 +942,15 @@ struct Visualiser::Draw
         }
     }
     void mirrorRow (float x, float y) { wrow ("mirror", S().mirrorKey(), { "off", "2-way", "4-way", "6-way", "8-way" }, x, y, nc()); }
+    // The same, set a little tighter, for the wider cards of kaleidoscope, lotus and picture
+    void row (const juce::String& title, int key, const juce::StringArray& options, float x, float y)
+    {
+        const auto c = nc();
+        const float kw = word (title, x, y, 15.0f, c, false);
+        words (options, x + kw + 12.0f, y, 17.0f, c, S().w[(size_t) key], 11.0f,
+               [this_ = &v, key] (int i) { this_->settings.w[(size_t) key] = i; this_->edited = true; this_->changed(); });
+    }
+    void cap (const juce::String& t, float x, float y) { small (t, x, y, dim); }
 
     //==========================================================================
     // The one-of-a-kind controls of each mode
@@ -972,6 +1071,193 @@ struct Visualiser::Draw
         const char* const help[] = { "Drag the lamp in the ring:", "round for hue,", "in and out for tint." };
         for (int i = 0; i < 3; ++i) small (help[i], rx, y + 108.0f + (float) i * 15.0f, dim);
     }
+    // Kaleidoscope, lotus and picture: the ring, then psychedelic with its slow LFO, then what sways it.
+    // Returns where the last column starts; each mode puts its own colour controls under it (218 wide).
+    float wideColour (float x, float y, float w, int lfoKey, int rateKey, int swayKey, int swayWithKey)
+    {
+        wrow ("tones", S().tonesKey(), { "one", "complement", "split", "triad" }, x, y, nc(), true);
+        hueWheel (x + 56.0f, y + 98.0f, 48.0f);
+        cap ("round for hue,", x + 12.0f, y + 172.0f);
+        cap ("in and out for tint", x + 12.0f, y + 186.0f);
+        const float bx = x + 140.0f, cw = 218.0f, cx = x + w - cw, bw = cx - 26.0f - bx;
+        const int psyKey = S().psyKey();
+        sfader (psyKey, bx, y + 56.0f, bw, {}, rainbow);
+        sfader (lfoKey, bx, y + 110.0f, bw, nc(), wave);
+        sfader (rateKey, bx, y + 164.0f, bw, nc(), plain);
+        cap ("a triangle, round the fader", bx, y + 186.0f);
+        // A small ring rides the psychedelic fader to show where the LFO and sway have it right now
+        dyn ({ bx - 8.0f, y + 48.0f, bw + 16.0f, 16.0f }, [r = &v.readout, set = S().v[(size_t) psyKey], bx, bw, y] (juce::Graphics& gg)
+        {
+            const float now = r->psyNow.load();
+            if (std::abs (now - set) < 0.004f) return;
+            gg.setColour (juce::Colours::white.withAlpha (0.8f));
+            gg.drawEllipse (bx + juce::jmin (1.0f, std::abs (now)) * bw - 6.0f, y + 50.0f, 12.0f, 12.0f, 1.3f);
+        });
+        sfader (swayKey, cx, y + 56.0f, cw, nc(), wave);
+        row ("with", swayWithKey, { "lows", "mids", "highs", "hits" }, cx, y + 84.0f);
+        return cx;
+    }
+    void trailWords (float x, float y)
+    {
+        const int key = S().trailModeKey();
+        words ({ "smooth", "echo" }, x, y, 17.0f, nc(), S().w[(size_t) key], 12.0f,
+               [this_ = &v, key] (int i) { this_->settings.w[(size_t) key] = i; this_->edited = true; this_->changed(); });
+    }
+
+    void kaleidoSection (int which, float x, float y, float w)
+    {
+        const float hw = (w - 28.0f) / 2.0f, rx = x + 172.0f, rw = w - 172.0f;
+        if (which == 0)
+        {
+            const float tw = (w - 48.0f) / 3.0f, x2 = x + tw + 24.0f, x3 = x + 2.0f * (tw + 24.0f);
+            bulbCount (F::kseg, 10, x, y + 22.0f, w, nc(), false);
+            row ("cut", C::kcut, { "shards", "diamonds", "scales", "rose" }, x, y + 84.0f);
+            sfader (F::ksize, x, y + 128.0f, tw, nc(), plain);
+            sfader (F::kjag, x2, y + 128.0f, tw, nc(), jag);
+            sfader (F::klead, x3, y + 128.0f, tw, nc(), plain);
+            sfader (F::ktwist, x, y + 182.0f, tw, nc(), wave);    cap ("the mirrors wind into a spiral", x, y + 204.0f);
+            sfader (F::kbulge, x2, y + 182.0f, tw, nc(), rings);  cap ("a lens over the middle", x2, y + 204.0f);
+            sfader (F::klayer, x3, y + 182.0f, tw, nc(), plain);  cap ("a second sheet of glass", x3, y + 204.0f);
+        }
+        else if (which == 1)
+        {
+            static const char* const says[4][2] = { { "each hit sends a ring of new", "colour out through the glass" }, { "each hit, pieces trade", "to their next colour" },
+                                                    { "colours drift round, faster", "when the music is louder" }, { "lows, mids and highs each", "shift their own pieces" } };
+            const float cx = wideColour (x, y, w, F::kplfo, F::kprate, F::kpsway, C::kpsyon);
+            row ("colours", C::kcolour, { "ring", "swap", "flow", "bands" }, cx, y + 122.0f);
+            sfader (F::kwash, cx, y + 164.0f, 218.0f, nc(), rings);
+            for (int i = 0; i < 2; ++i) cap (says[juce::jlimit (0, 3, S().w[C::kcolour])][i], cx, y + 186.0f + (float) i * 14.0f);
+        }
+        else if (which == 2)
+        {
+            idleWheel (x, y);
+            sfader (F::kspin, rx, y + 24.0f, rw, nc(), plain);
+            sfader (F::ktumble, rx, y + 80.0f, rw, nc(), wave);
+            sfader (F::kswell, x, y + 164.0f, hw, nc(), plain);
+            sfader (F::kripple, x + hw + 28.0f, y + 164.0f, hw, nc(), rings);
+            cap ("lows swell the shards", x, y + 186.0f);
+            cap ("each hit bends the glass", x + hw + 28.0f, y + 186.0f);
+        }
+        else { trailWords (x, y); sfader (F::ktrails, x, y + 52.0f, w, nc(), comet); }
+    }
+
+    void lotusSection (int which, float x, float y, float w)
+    {
+        const float hw = (w - 28.0f) / 2.0f, x2 = x + hw + 28.0f, rx = x + 172.0f, rw = w - 172.0f;
+        if (which == 0)
+        {
+            bulbCount (F::zpetals, 9, x, y + 22.0f, w, nc(), false);
+            sfader (F::ztwist, x, y + 84.0f, hw, nc(), wave);   cap ("winds the rings into a spiral", x, y + 106.0f);
+            sfader (F::zpoint, x2, y + 84.0f, hw, nc(), jag);   cap ("from round to pointed", x2, y + 106.0f);
+            sfader (F::zopen, x, y + 158.0f, w, nc(), rings);   cap ("how far each ring of petals opens; lows open them wider", x, y + 180.0f);
+        }
+        else if (which == 1)
+        {
+            static const char* const says[4][2] = { { "each hit sends a ring of new", "colour out through the petals" }, { "each hit, petals trade", "to their next colour" },
+                                                    { "colours drift round, faster", "when the music is louder" }, { "lows, mids and highs each", "shift their own petals" } };
+            const float cx = wideColour (x, y, w, F::zplfo, F::zprate, F::zpsway, C::zpsyon);
+            row ("colours", C::zcolour, { "ring", "swap", "flow", "bands" }, cx, y + 122.0f);
+            sfader (F::zwash, cx, y + 164.0f, 218.0f, nc(), rings);
+            for (int i = 0; i < 2; ++i) cap (says[juce::jlimit (0, 3, S().w[C::zcolour])][i], cx, y + 186.0f + (float) i * 14.0f);
+        }
+        else if (which == 2)
+        {
+            idleWheel (x, y);
+            sfader (F::zspin, rx, y + 24.0f, rw, nc(), plain);
+            sfader (F::zspeed, rx, y + 80.0f, rw, nc(), plain);   cap ("how fast you fall inward", rx, y + 102.0f);
+            sfader (F::zlunge, x, y + 164.0f, w, nc(), rings);    cap ("each hit pushes you deeper for a moment", x, y + 186.0f);
+        }
+        else { trailWords (x, y); sfader (F::ztrails, x, y + 52.0f, w, nc(), comet); }
+    }
+
+    void pictureSection (int which, float x, float y, float w)
+    {
+        const float hw = (w - 28.0f) / 2.0f, x2 = x + hw + 28.0f;
+        if (which == 0)
+        {
+            mirrorRow (x, y);
+            row ("smoke from", C::psrc, { "shape", "edges", "lights" }, x, y + 34.0f);
+            sfader (F::psize, x, y + 84.0f, hw, nc(), plain);     cap ("how big the picture sits", x, y + 106.0f);
+            sfader (F::poff, x2, y + 84.0f, hw, nc(), plain);     cap ("slides it off the mirror fold", x2, y + 106.0f);
+            sfader (F::pvis, x, y + 146.0f, hw, nc(), plain);     cap ("how clearly the picture shows", x, y + 168.0f);
+            sfader (F::phaze, x2, y + 146.0f, hw, nc(), wave);    cap ("smoke bends it like heat", x2, y + 168.0f);
+            sfader (F::pamt, x, y + 208.0f, hw, nc(), rings);     cap ("how much of it smokes", x, y + 230.0f);
+            sfader (F::pdent, x2, y + 208.0f, hw, nc(), rings);   cap ("how far the shape stands out", x2, y + 230.0f);
+        }
+        else if (which == 1)
+        {
+            const float cx = wideColour (x, y, w, F::pplfo, F::pprate, F::ppsway, C::ppsyon);
+            row ("smoke", C::pcolour, { "picture", "ring" }, cx, y + 122.0f);
+            sfader (F::pash, cx, y + 164.0f, 218.0f, nc(), plain);
+            const bool ring = S().w[C::pcolour] != 0;
+            cap (ring ? "smoke takes its colours from" : "smoke takes the colours of the", cx, y + 186.0f);
+            cap (ring ? "the hue ring and tones here" : "picture, wherever it leaves it", cx, y + 200.0f);
+            cap ("Ash: thin smoke fades to grey.", cx, y + 214.0f);
+        }
+        else if (which == 2)
+        {
+            const float tw = (w - 40.0f) / 3.0f, xa = x + tw + 20.0f, xb = x + 2.0f * (tw + 20.0f);
+            row ("smoke will", C::pdir, { "rise", "spread", "fall" }, x, y);
+            sfader (F::prise, x, y + 52.0f, tw, nc(), plain);     cap ("how fast it travels", x, y + 74.0f);
+            sfader (F::pswirl, xa, y + 52.0f, tw, nc(), wave);    cap ("mids curl it more", xa, y + 74.0f);
+            sfader (F::pwisp, xb, y + 52.0f, tw, nc(), jag);      cap ("highs add threads", xb, y + 74.0f);
+            sfader (F::pwind, x, y + 116.0f, tw, nc(), wave);     cap ("a slow side breeze", x, y + 138.0f);
+            sfader (F::pspin, xa, y + 116.0f, tw, nc(), plain);   cap ("hits turn it", xa, y + 138.0f);
+            sfader (F::pidle, xb, y + 116.0f, tw, nc(), plain);   cap ("a steady turn", xb, y + 138.0f);
+            sfader (F::ppuff, x, y + 180.0f, w, nc(), rings);     cap ("each hit puffs smoke off the shape, or sends a ring through the puff", x, y + 202.0f);
+        }
+        else
+        {
+            trailWords (x, y);
+            sfader (F::ptrails, x, y + 52.0f, w, nc(), comet);
+            sfader (F::phang, x, y + 122.0f, w, nc(), plain);
+            cap ("how long smoke", x, y + 144.0f);
+            cap ("hangs in the air", x, y + 158.0f);
+        }
+    }
+
+    // The picture in use, how to choose another, and what the shape is doing to the smoke
+    void pictureSpecial (float x, float y, float w)
+    {
+        static const char* const acts[4][3] = { { "smoke pours out from behind the 3D shape", "how much pours", "lows pour more" },
+                                                { "a puff of cloud sits on the shape, and every beat punches it in", "how thick the puff is", "lows make it throb" },
+                                                { "one stream of smoke wraps round the 3D shape", "how thick the stream", "lows feed the stream" },
+                                                { "the picture is 3D smoke, and blows away", "how fast it re-forms", "lows blow it harder" } };
+        auto* self = &v;
+        const float ts = 104.0f;
+        const auto col = nc();
+        const auto* act = acts[juce::jlimit (0, 3, S().w[C::pform])];
+        const juce::Rectangle<float> frame (x, y - 6.0f, ts, ts);
+        {
+            juce::Graphics::ScopedSaveState state (g);
+            juce::Path round;
+            round.addRoundedRectangle (frame, 8.0f);
+            g.reduceClipRegion (round);
+            g.setColour (juce::Colour (0xff0a0a0c));
+            g.fillRect (frame);
+            if (v.pic != nullptr && v.pic->small.isValid())
+            {
+                const float a = v.pic->aspect, dw = a >= 1.0f ? ts : ts * a, dh = a >= 1.0f ? ts / a : ts;
+                g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
+                g.drawImage (v.pic->small, { x + (ts - dw) * 0.5f, y - 6.0f + (ts - dh) * 0.5f, dw, dh });
+            }
+        }
+        tube (Neon::roundRect (x, y - 6.0f, ts, ts, 8.0f), col, 0.6f);
+        ui (frame, [self] { self->choosePicture(); });
+        const float rx = x + ts + 22.0f, cw = word ("choose picture", rx, y + 14.0f, 20.0f, col, true);
+        ui ({ rx - 4.0f, y - 8.0f, cw + 8.0f, 28.0f }, [self] { self->choosePicture(); });
+        cap ("or drop one on the visualiser", rx, y + 34.0f);
+        const float tw0 = word ("try", rx, y + 66.0f, 15.0f, col, false);
+        words ({ "moon", "flower", "sunset" }, rx + tw0 + 12.0f, y + 66.0f, 17.0f, col, v.pic != nullptr ? v.pic->sample : -1, 11.0f,
+               [self] (int i) { self->setPicture (Picture::builtIn (i)); self->last = {}; }, false);
+        cap (v.pic != nullptr && ! v.pic->plain ? "fills its frame: what stands out is the shape" : "plain ground found: the shape is cut out", rx, y + 86.0f);
+        cap (juce::String ("Now: ") + act[0] + ".", x, y + 124.0f);
+        const float tw = (w - 40.0f) / 3.0f, xa = x + tw + 20.0f, xb = x + 2.0f * (tw + 20.0f);
+        sfader (F::psmoke, x, y + 166.0f, tw, nc(), plain);   cap (act[1], x, y + 188.0f);
+        sfader (F::pfeed, xa, y + 166.0f, tw, nc(), rings);   cap (act[2], xa, y + 188.0f);
+        sfader (F::preach, xb, y + 166.0f, tw, nc(), plain);  cap ("how far smoke strays", xb, y + 188.0f);
+    }
+
     void trailsRow (float x, float y) { wrow ("trails", S().trailModeKey(), { "smooth", "echo" }, x, y, nc()); }
     void idleWheel (float x, float y)
     {
@@ -986,6 +1272,9 @@ struct Visualiser::Draw
         const float y = y0 + 62.0f;
         const int style = S().style;
         const float hw = (w - 28.0f) / 2.0f, rx = x + 172.0f, rw = w - 172.0f;
+        if (style == kaleido)      { kaleidoSection (which, x, y, w); return; }
+        if (style == lotus)        { lotusSection (which, x, y, w); return; }
+        if (style == pictureStyle) { pictureSection (which, x, y, w); return; }
         if (which == 1) { colourSection (x, y, w); return; }
         if (style == ink)
         {
@@ -1067,11 +1356,26 @@ struct Visualiser::Draw
     // The controls only this mode has
     void special (float x, float y0, float w)
     {
-        static const char* const styles[] = { "ink", "liquid", "sand", "bloom" };
+        static const char* const styles[] = { "ink", "liquid", "sand", "bloom", "kaleido", "lotus", "picture" };
         heading (juce::String ("only in ") + styles[S().style], x, y0 + 28.0f);
-        const float y = y0 + 62.0f;
+        const float y = y0 + 62.0f, hw = (w - 28.0f) / 2.0f, x2 = x + hw + 28.0f;
         auto* r = &v.readout;
-        if (S().style == ink)
+        if (S().style == kaleido)
+        {
+            sfader (F::klight, x, y + 24.0f, hw, nc(), plain);     cap ("a steady lamp", x, y + 46.0f);
+            sfader (F::kbreathe, x2, y + 24.0f, hw, nc(), wave);   cap ("a slow swell with the sound", x2, y + 46.0f);
+            sfader (F::kfrost, x, y + 98.0f, hw, nc(), wave);      cap ("clear to seedy glass", x, y + 120.0f);
+            sfader (F::kspark, x2, y + 98.0f, hw, nc(), jag);      cap ("slow glints", x2, y + 120.0f);
+        }
+        else if (S().style == lotus)
+        {
+            cap ("These three shape the glass look.", x, y + 10.0f);
+            sfader (F::zlight, x, y + 50.0f, hw, nc(), plain);     cap ("a steady lamp", x, y + 72.0f);
+            sfader (F::zfrost, x2, y + 50.0f, hw, nc(), wave);     cap ("clear to seedy glass", x2, y + 72.0f);
+            sfader (F::zlead, x, y + 124.0f, hw, nc(), plain);     cap ("the lines between petals", x, y + 146.0f);
+        }
+        else if (S().style == pictureStyle) pictureSpecial (x, y, w);
+        else if (S().style == ink)
         {
             breatheRing (F::breathe, x + 58.0f, y + 50.0f, 44.0f, nc());
             const float rx = x + 150.0f, rw = w - 150.0f;
@@ -1088,7 +1392,7 @@ struct Visualiser::Draw
             const float rx = x + 84.0f, rw = w - 84.0f;
             mergeBlobs (F::lmerge, rx, y + 74.0f, rw, nc());
             sfader (F::lshim, rx, y + 156.0f, rw, nc(), jag);
-            small ("sparkle on the oil, brighter on highs", rx, y + 178.0f, dim);
+            small ("light rippling through the oil, brighter on highs", rx, y + 178.0f, dim);
         }
         else if (S().style == sand)
         {
@@ -1117,7 +1421,7 @@ struct Visualiser::Draw
         const bool rainbowOn = Theme::get().isRainbow();
         const auto col = rainbowOn ? juce::Colour (0xffbfeaff) : Theme::get().themeColour();
         float y = y0 + 40.0f;
-        words ({ "ink", "liquid", "sand", "bloom" }, x, y, 27.0f, nc(), S().style, 22.0f,
+        words ({ "ink", "liquid", "sand", "bloom", "kaleido", "lotus", "picture" }, x, y, 19.0f, nc(), S().style, 9.0f,
                [self] (int i) { self->settings.style = i; self->last = {}; self->edited = true; self->changed(); });
         y += 34.0f;
         static const char* const rows[] = { "low", "mid", "high" };
@@ -1154,7 +1458,7 @@ struct Visualiser::Draw
         const float bw = juce::jmin (w / 4.0f, 124.0f);
         heading ("look", x, y + 28.0f);
         iconRow (0, x, y + 66.0f, bw, nc());
-        heading (style == bloom ? "kind" : style == sand ? "plate" : "form", x, y + 146.0f);
+        heading (style == bloom ? "kind" : style == sand ? "plate" : style == kaleido ? "mirrors" : style == lotus ? "petals" : style == pictureStyle ? "the shape" : "form", x, y + 146.0f);
         iconRow (1, x, y + 184.0f, bw, nc());
     }
 
@@ -1189,6 +1493,18 @@ struct Visualiser::Draw
 
     // A strip of recent hits or levels with a line you drag: only what reaches the line gets through.
     // which: 0 loudest lows, 1 transients, 2 low, 3 mid, 4 high
+    // An upright bar with round ends, for the parts that move. Its body is a plain rectangle, which costs one
+    // quad, and its two ends join `caps`, filled once for all the bars: a whole bar as a shape is cut into rows.
+    static void pill (juce::Graphics& gg, juce::Path& caps, float x, float y, float w, float h)
+    {
+        if (h > w)
+        {
+            gg.fillRect (x, y + w * 0.5f, w, h - w);
+            caps.addEllipse (x, y + h - w, w, w);
+        }
+        caps.addEllipse (x, y, w, w);
+    }
+
     void gateStrip (int which, float x, float y, float w, float h, juce::Colour c)
     {
         static const int keys[] = { F::gate, F::tgate, F::lgate, F::mgate, F::hgate };
@@ -1212,6 +1528,7 @@ struct Visualiser::Draw
             const juce::SpinLock::ScopedLockType lock (r->lock);
             if (which < 2)
             {
+                juce::Path over, under;         // the round ends of every bar of one colour, as a single shape
                 const auto* list = which == 0 ? r->kicks.data() : r->sharps.data();
                 const int count = which == 0 ? r->numKicks : r->numSharps;
                 for (int i = 0; i < count; ++i)
@@ -1219,11 +1536,18 @@ struct Visualiser::Draw
                     const float age = (float) (now - list[i].time);
                     if (age > 5.0f) continue;
                     const float bx = x + w - 14.0f - age / 5.0f * span, bh = juce::jmax (3.0f, (h - 8.0f) * list[i].rel);
-                    gg.setColour (list[i].rel >= val - 0.001f ? lit : juce::Colour (0xff55585f));
-                    gg.fillRoundedRectangle (bx - 1.5f, base - bh, 3.0f, bh, 1.5f);
+                    const bool counts = list[i].rel >= val - 0.001f;
+                    gg.setColour (counts ? lit : juce::Colour (0xff55585f));
+                    pill (gg, counts ? over : under, bx - 1.5f, base - bh, 3.0f, bh);
                 }
+                gg.setColour (juce::Colour (0xff55585f));
+                gg.fillPath (under);
+                gg.setColour (lit);
+                gg.fillPath (over);
             }
             else
+            {
+                // Plain rectangles one at a time: each is a single quad, where a list of them is cut into rows
                 for (int i = 0; i < r->numLevels; ++i)
                 {
                     const auto& q = r->levels[(size_t) i];
@@ -1233,6 +1557,7 @@ struct Visualiser::Draw
                     gg.setColour (lv >= val ? lit : juce::Colour (0xff4a4d55));
                     gg.fillRect (bx - 1.0f, base - bh, 2.0f, bh);
                 }
+            }
         });
     }
 
@@ -1256,17 +1581,25 @@ struct Visualiser::Draw
         {
             const int n = VisListener::spectrumBars;
             const float bar = juce::jmax (2.0f, sw / (float) n - 3.0f);
+            std::array<juce::Path, 4> bars;         // the bars' round ends, one shape a colour: outside every band, then low, mid and high
+            const std::array<juce::Colour, 4> colours { juce::Colour (0xff4a4d55), bc[0].interpolatedWith (juce::Colours::white, 0.3f),
+                                                        bc[1].interpolatedWith (juce::Colours::white, 0.3f), bc[2].interpolatedWith (juce::Colours::white, 0.3f) };
             for (int i = 0; i < n; ++i)
             {
                 const float fc = tToHz (((float) i + 0.5f) / (float) n);
                 auto& shown = self->spectrumShown[(size_t) i];
                 shown = juce::jmax (self->ctx.engine.visListener.spectrum[(size_t) i].load (std::memory_order_relaxed), shown * 0.86f);
-                auto colour = juce::Colour (0xff4a4d55);
+                size_t in = 0;
                 for (size_t k = 0; k < 3; ++k)
-                    if (fc >= range[k][0] && fc <= range[k][1]) colour = bc[k].interpolatedWith (juce::Colours::white, 0.3f);
+                    if (fc >= range[k][0] && fc <= range[k][1]) in = k + 1;
                 const float bx = sx + sw * ((float) i + 0.5f) / (float) n, bh = juce::jmax (bar, shown * (sh - 16.0f));
-                gg.setColour (colour);
-                gg.fillRoundedRectangle (bx - bar * 0.5f, sy + sh - 6.0f - bh, bar, bh, bar * 0.5f);
+                gg.setColour (colours[in]);
+                pill (gg, bars[in], bx - bar * 0.5f, sy + sh - 6.0f - bh, bar, bh);
+            }
+            for (size_t k = 0; k < bars.size(); ++k)
+            {
+                gg.setColour (colours[k]);
+                gg.fillPath (bars[k]);
             }
         });
         static const char* const names[] = { "low", "mid", "high" };
@@ -1419,7 +1752,7 @@ struct Visualiser::Draw
     void drawCard()
     {
         const auto box = piece.box;
-        const float K = cardScale (card, box), w = juce::jmin (box.getWidth() / K - 32.0f, cardSpread[card]);
+        const float K = cardScale (card, box, piece.designWidth), w = juce::jmin (box.getWidth() / K - 32.0f, piece.designWidth > panelWidth ? 640.0f : cardSpread[card]);
         const float ox = box.getX() + (box.getWidth() - (w + 32.0f) * K) * 0.5f + 16.0f * K;
         const float oy = box.getY() + juce::jmin ((box.getHeight() - cardHeight[card] * K) * 0.5f, box.getHeight() * 0.06f);
         setPlace ({});
@@ -1496,7 +1829,7 @@ void Visualiser::rebuild (int n, const Layout& l, float scale)
         steady (dg);
     }
     glow.collecting = false;
-    p.glow->build (p.area.getWidth(), p.area.getHeight(), n == cChrome ? l.Z : cardScale (n, p.box));
+    p.glow->build (p.area.getWidth(), p.area.getHeight(), n == cChrome ? l.Z : cardScale (n, p.box, p.designWidth));
 
     // Then for real, into a picture (a new picture each time: one drawn over in place can show stale on the Mac)
     juce::Image image (juce::Image::ARGB, juce::jmax (1, juce::roundToInt ((float) p.area.getWidth() * scale)), juce::jmax (1, juce::roundToInt ((float) p.area.getHeight() * scale)), true);
@@ -1523,6 +1856,18 @@ void Visualiser::relayout()
 
 void Visualiser::paint (juce::Graphics& g)
 {
+    struct Timed          // GLOWTAG_VIS_STATS=1 also prints how long the panel takes to draw
+    {
+        Visualiser& v;
+        const double from = juce::Time::getMillisecondCounterHiRes();
+        ~Timed()
+        {
+            const double took = juce::Time::getMillisecondCounterHiRes() - from;
+            v.statPanel = v.statPanel.load() + took;
+            v.statPanelWorst = juce::jmax (v.statPanelWorst.load(), took);
+            ++v.statPanels;
+        }
+    } timed { *this };
     juce::String error;
     {
         const juce::SpinLock::ScopedLockType lock (readout.lock);
@@ -1540,18 +1885,29 @@ void Visualiser::paint (juce::Graphics& g)
     }
 
     // The dark surround, with a rounded window in it for the picture the graphics card draws underneath
+    // A shape is worked out against everything being drawn again, so the plain part of the surround is laid
+    // as rectangles, and the screen's frame (its round corners and two outlines) only when it needs drawing.
     if (! maximised)
     {
-        juce::Path surround;
-        surround.addRectangle (getLocalBounds().toFloat());
-        surround.addRoundedRectangle (l.screen, 12.0f * l.Z);
-        surround.setUsingNonZeroWinding (false);
+        const auto frame = l.screen.expanded (7.0f).getSmallestIntegerContainer();
         g.setColour (juce::Colour (0xff141416));
-        g.fillPath (surround);
-        g.setColour (juce::Colour (0xff3a3c42));
-        g.drawRoundedRectangle (l.screen.expanded (0.5f), 12.0f * l.Z, 1.0f);
-        g.setColour (juce::Colour (0xff26282d));
-        g.drawRoundedRectangle (l.screen.expanded (5.5f), 16.0f * l.Z, 1.0f);
+        juce::RectangleList<int> outside (getLocalBounds());
+        outside.subtract (frame);
+        g.fillRectList (outside);
+        if (g.clipRegionIntersects (frame))
+        {
+            juce::Graphics::ScopedSaveState state (g);
+            g.reduceClipRegion (frame);
+            juce::Path surround;
+            surround.addRectangle (frame.toFloat());
+            surround.addRoundedRectangle (l.screen, 12.0f * l.Z);
+            surround.setUsingNonZeroWinding (false);
+            g.fillPath (surround);
+            g.setColour (juce::Colour (0xff3a3c42));
+            g.drawRoundedRectangle (l.screen.expanded (0.5f), 12.0f * l.Z, 1.0f);
+            g.setColour (juce::Colour (0xff26282d));
+            g.drawRoundedRectangle (l.screen.expanded (5.5f), 16.0f * l.Z, 1.0f);
+        }
     }
     if (error.isNotEmpty())
     {
@@ -1565,10 +1921,11 @@ void Visualiser::paint (juce::Graphics& g)
     for (int n = 0; n < numPieces; ++n)
     {
         auto& p = pieces[(size_t) n];
-        if (p.shown != l.shown[(size_t) n] || p.box != l.box[(size_t) n])
+        if (p.shown != l.shown[(size_t) n] || p.box != l.box[(size_t) n] || ! juce::approximatelyEqual (p.designWidth, l.designWidth[(size_t) n]))
         {
             p.shown = l.shown[(size_t) n];
             p.box = l.box[(size_t) n];
+            p.designWidth = l.designWidth[(size_t) n];
             p.dirty = true;
         }
         if (! p.shown) { p.hits.clear(); p.live.clear(); p.art = {}; continue; }
@@ -1580,6 +1937,7 @@ void Visualiser::paint (juce::Graphics& g)
         {
             if (! g.clipRegionIntersects (part.box)) continue;
             juce::Graphics::ScopedSaveState state (g);
+            g.reduceClipRegion (part.box);          // so each lamp and bar is worked out against its own box, not the whole panel
             g.addTransform (part.place);
             part.draw (g);
         }
@@ -1717,7 +2075,7 @@ bool Visualiser::readSetting (const Settings& s, const AutoTarget& t, float& out
     {
         case 0: if (t.param < 0 || t.param >= F::count) return false; out = s.v[(size_t) t.param]; return true;
         case 1: if (t.param < 0 || t.param >= C::count) return false; out = (float) s.w[(size_t) t.param]; return true;
-        case 2: if (t.param < 0 || t.param >= numSources * numDests) return false; out = s.route[(size_t) (t.param / numDests)][(size_t) (t.param % numDests)]; return true;
+        case 2: if (t.param < 0 || t.param >= (int) numSources * (int) numDests) return false; out = s.route[(size_t) (t.param / numDests)][(size_t) (t.param % numDests)]; return true;
         case 3: out = (float) s.style; return true;
         default: return false;
     }
@@ -1730,7 +2088,7 @@ void Visualiser::writeSetting (Settings& s, const AutoTarget& t, float raw)
     {
         case 0: if (t.param >= 0 && t.param < F::count) s.v[(size_t) t.param] = juce::jlimit (0.0f, 1.0f, raw); break;
         case 1: if (t.param >= 0 && t.param < C::count) s.w[(size_t) t.param] = juce::jmax (0, juce::roundToInt (raw)); break;
-        case 2: if (t.param >= 0 && t.param < numSources * numDests) s.route[(size_t) (t.param / numDests)][(size_t) (t.param % numDests)] = juce::jlimit (0.0f, 1.0f, raw); break;
+        case 2: if (t.param >= 0 && t.param < (int) numSources * (int) numDests) s.route[(size_t) (t.param / numDests)][(size_t) (t.param % numDests)] = juce::jlimit (0.0f, 1.0f, raw); break;
         case 3: s.style = juce::jlimit (0, numStyles - 1, juce::roundToInt (raw)); break;
         default: break;
     }
@@ -1772,6 +2130,25 @@ std::vector<AppContext::ParamInfo> Visualiser::automatableParams() const
         fader ("bloom", k);
     choice ("bloom", "look", C::bsurface, 3); choice ("bloom", "kind", C::btype, 3); choice ("bloom", "mirror", C::bmirror, 5);
     choice ("bloom", "tones", C::btones, 4); choice ("bloom", "trail kind", C::btrails, 2);
+    for (int k : { F::khue, F::ktint, F::kpsy, F::kplfo, F::kprate, F::kpsway, F::kwash, F::kseg, F::ksize, F::kjag, F::klead, F::ktwist, F::kbulge, F::klayer,
+                   F::kspin, F::kidle, F::ktumble, F::kswell, F::kripple, F::ktrails, F::klight, F::kbreathe, F::kfrost, F::kspark })
+        fader ("kaleidoscope", k);
+    choice ("kaleidoscope", "look", C::ksurface, 3); choice ("kaleidoscope", "mirrors", C::kform, 3); choice ("kaleidoscope", "cut", C::kcut, 4);
+    choice ("kaleidoscope", "tones", C::ktones, 4); choice ("kaleidoscope", "colours", C::kcolour, 4); choice ("kaleidoscope", "sway with", C::kpsyon, 4);
+    choice ("kaleidoscope", "trail kind", C::ktrails, 2);
+    for (int k : { F::zhue, F::ztint, F::zpsy, F::zplfo, F::zprate, F::zpsway, F::zwash, F::zpetals, F::ztwist, F::zpoint, F::zopen,
+                   F::zspin, F::zidle, F::zspeed, F::zlunge, F::ztrails, F::zlight, F::zfrost, F::zlead })
+        fader ("lotus", k);
+    choice ("lotus", "look", C::zsurface, 3); choice ("lotus", "petals", C::zform, 3);
+    choice ("lotus", "tones", C::ztones, 4); choice ("lotus", "colours", C::zcolour, 4); choice ("lotus", "sway with", C::zpsyon, 4);
+    choice ("lotus", "trail kind", C::ztrails, 2);
+    for (int k : { F::phue, F::ptint, F::ppsy, F::pplfo, F::pprate, F::ppsway, F::pash, F::psize, F::poff, F::pvis, F::phaze, F::pamt, F::pdent,
+                   F::prise, F::pswirl, F::pwisp, F::pwind, F::pspin, F::pidle, F::ppuff, F::ptrails, F::phang, F::psmoke, F::pfeed, F::preach })
+        fader ("picture", k);
+    choice ("picture", "look", C::psurface, 3); choice ("picture", "the shape", C::pform, 4); choice ("picture", "mirror", C::pmirror, 5);
+    choice ("picture", "smoke from", C::psrc, 3); choice ("picture", "smoke will", C::pdir, 3);
+    choice ("picture", "tones", C::ptones, 4); choice ("picture", "smoke colour", C::pcolour, 2); choice ("picture", "sway with", C::ppsyon, 4);
+    choice ("picture", "trail kind", C::ptrails, 2);
     for (int s = 0; s < numSources; ++s)
         for (int d = 0; d < numDests; ++d)
         {
