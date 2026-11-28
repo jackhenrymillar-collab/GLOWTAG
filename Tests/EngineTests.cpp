@@ -11,6 +11,7 @@
 #include "Engine/DrumKit.h"
 #include "Engine/NoteEdit.h"
 #include "UI/DeviceWallModel.h"
+#include "UI/VisualiserPicture.h"
 #include <iostream>
 
 namespace
@@ -1474,6 +1475,75 @@ int main()
         float loudest = 0.0f;
         for (auto& bar : l.spectrum) loudest = juce::jmax (loudest, bar.load());
         check (loudest < 0.05f, "Visualiser listener: the spectrum falls flat in silence");
+    }
+
+    // The Picture mode reads a picture once: a shape on a plain ground is cut out, a photo keeps what stands out
+    std::cout << "Visualiser picture\n";
+    {
+        using Vis::Picture;
+        // A red disc on white, twice as wide as it is tall
+        juce::Image disc (juce::Image::RGB, 400, 200, true);
+        {
+            juce::Graphics g (disc);
+            g.fillAll (juce::Colours::white);
+            g.setColour (juce::Colour (0xffd02020));
+            g.fillEllipse (140.0f, 40.0f, 120.0f, 120.0f);
+        }
+        const auto cut = Picture::from (disc);
+        check (cut != nullptr && cut->plain && cut->sample == -1, "Visualiser picture: a shape on a plain ground is found as one");
+        check (cut != nullptr && std::abs (cut->aspect - 2.0f) < 0.01f, "Visualiser picture: keeps the picture's own shape");
+        check (cut != nullptr && cut->inside (0.5f, 0.5f) && ! cut->inside (0.05f, 0.05f) && ! cut->inside (0.9f, 0.5f), "Visualiser picture: the shape is in, the ground is out");
+        check (cut != nullptr && cut->pixels.size() == (size_t) Picture::size * Picture::size * 4 && cut->distance.size() == (size_t) Picture::grid * Picture::grid * 2,
+               "Visualiser picture: holds its points and its outline distances");
+        bool reds = cut != nullptr, strongRed = false;
+        if (cut != nullptr)
+            for (auto& c : cut->palette) { reds = reds && c[0] > c[1] && c[0] > c[2]; strongRed = strongRed || c[0] > c[2] * 2.0f; }
+        check (reds && strongRed, "Visualiser picture: its main colours are the shape's (reds), not the ground's");
+        if (cut != nullptr)
+        {
+            const auto& d = cut->distance;
+            const size_t mid = ((size_t) (Picture::grid / 2) * Picture::grid + Picture::grid / 2) * 2, corner = ((size_t) 4 * Picture::grid + 4) * 2;
+            check (d[mid + 1] > 0.05f && d[mid] <= 0.0f && d[corner] > 0.1f && d[corner + 1] <= 0.0f, "Visualiser picture: distances run inward inside the shape and outward outside it");
+
+            // What the song keeps brings the same picture back
+            const auto kept = cut->toVar();
+            const auto back = Picture::fromVar (juce::JSON::parse (juce::JSON::toString (kept)));
+            check (kept["data"].toString().length() > 100 && back != nullptr && back->plain && back->inside (0.5f, 0.5f) && ! back->inside (0.05f, 0.05f)
+                   && std::abs (back->aspect - 2.0f) < 0.01f, "Visualiser picture: a picture saved in a song comes back the same");
+        }
+
+        // A see-through picture: whatever is drawn is the shape
+        juce::Image clear (juce::Image::ARGB, 200, 200, true);
+        {
+            juce::Graphics g (clear);
+            g.setColour (juce::Colours::skyblue);
+            g.fillRect (60, 60, 80, 80);
+        }
+        const auto alpha = Picture::from (clear);
+        check (alpha != nullptr && alpha->plain && alpha->inside (0.5f, 0.5f) && ! alpha->inside (0.1f, 0.1f), "Visualiser picture: see-through parts are the ground");
+        const auto alphaBack = alpha != nullptr ? Picture::fromVar (alpha->toVar()) : nullptr;
+        check (alphaBack != nullptr && alphaBack->inside (0.5f, 0.5f) && ! alphaBack->inside (0.1f, 0.1f), "Visualiser picture: a see-through picture stays see-through in a song");
+
+        // A photo that fills its frame
+        juce::Image photo (juce::Image::RGB, 300, 300, true);
+        {
+            juce::Graphics g (photo);
+            g.setGradientFill (juce::ColourGradient (juce::Colour (0xff203060), 0.0f, 0.0f, juce::Colour (0xffc06020), 300.0f, 300.0f, false));
+            g.fillAll();
+            g.setColour (juce::Colour (0xfff8f0d0));
+            g.fillEllipse (110.0f, 110.0f, 80.0f, 80.0f);
+        }
+        const auto full = Picture::from (photo);
+        check (full != nullptr && ! full->plain && full->inside (0.5f, 0.5f), "Visualiser picture: a photo fills its frame, and what stands out is the shape");
+
+        for (int i = 0; i < Picture::numBuiltIn; ++i)
+        {
+            const auto b = Picture::builtIn (i);
+            const auto again = b != nullptr ? Picture::fromVar (b->toVar()) : nullptr;
+            check (b != nullptr && b->sample == i && again != nullptr && again->sample == i && ! b->toVar().hasProperty ("data"), "Visualiser picture: a built-in picture is kept by its number");
+        }
+        check (Picture::from ({}) == nullptr && Picture::fromVar ({}) == nullptr, "Visualiser picture: nothing comes of no picture");
+        check (Picture::isPictureFile ("cover.JPG") && Picture::isPictureFile ("/a/b/c.png") && ! Picture::isPictureFile ("song.wav"), "Visualiser picture: knows a picture file by its name");
     }
 
     std::cout << "Automation\n";

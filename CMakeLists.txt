@@ -46,6 +46,7 @@ target_sources(Glowtag PRIVATE
     Source/Engine/Automation.cpp
     Source/UI/Visualiser.cpp
     Source/UI/VisualiserRender.cpp
+    Source/UI/VisualiserPicture.cpp
     Source/UI/GlowLookAndFeel.cpp
     Source/UI/Icons.cpp
     Source/UI/TopBar.cpp
@@ -127,7 +128,8 @@ if(GLOWTAG_TESTS)
         Source/Engine/VisListener.cpp
     Source/Engine/Automation.cpp
         Source/Engine/NoteEdit.cpp
-        Source/UI/DeviceWallModel.cpp)
+        Source/UI/DeviceWallModel.cpp
+        Source/UI/VisualiserPicture.cpp)
     target_include_directories(GlowtagTests PRIVATE Source)
     target_compile_definitions(GlowtagTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_PLUGINHOST_VST3=1 JUCE_PLUGINHOST_AU=1)
     target_link_libraries(GlowtagTests PRIVATE
